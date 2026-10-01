@@ -198,6 +198,16 @@ function cleanName(value) {
   return cleanText(value, 40).replace(/\s+/g, ' ').trim();
 }
 
+/** Name für temporäre Sitzungen ohne eigenen Alias, etwa „Nebelluchs“. */
+const NAME_A = ['Nacht', 'Nebel', 'Sturm', 'Stern', 'Wald', 'Berg', 'Fluss', 'Schatten', 'Funken', 'Eis',
+  'Mond', 'Sonnen', 'Wind', 'Regen', 'Feuer', 'Moor', 'Fels', 'Silber', 'Kupfer', 'Morgen'];
+const NAME_B = ['falke', 'fuchs', 'luchs', 'rabe', 'wolf', 'otter', 'kauz', 'dachs', 'igel', 'hirsch',
+  'marder', 'biber', 'adler', 'specht', 'reiher', 'bär', 'kranich', 'uhu', 'hase', 'elch'];
+function randomAlias() {
+  const r = crypto.getRandomValues(new Uint32Array(2));
+  return NAME_A[r[0] % NAME_A.length] + NAME_B[r[1] % NAME_B.length];
+}
+
 /** Text mit anklickbaren Links – ohne HTML, nur Textknoten und <a>. */
 function linkify(text) {
   const frag = document.createDocumentFragment();
@@ -214,11 +224,12 @@ function linkify(text) {
 }
 
 /* ---------- Meldungen ---------------------------------------------------- */
-function toast(message, kind) {
+function toast(message, kind, ms) {
   const box = el('div', { class: 'sc-toast' + (kind ? ' sc-toast--' + kind : ''), text: message });
   $('sc-toasts').appendChild(box);
-  setTimeout(() => box.classList.add('is-out'), kind === 'error' ? 6000 : 3800);
-  setTimeout(() => box.remove(), kind === 'error' ? 6600 : 4400);
+  const life = ms || (kind === 'error' ? 6000 : 3800);
+  setTimeout(() => box.classList.add('is-out'), life);
+  setTimeout(() => box.remove(), life + 600);
 }
 
 /* ---------- Dialoge ------------------------------------------------------ */
@@ -415,7 +426,7 @@ function idbSet(key, value) {
    Tresor: Kontakte, Raumschlüssel, Gelesen-Stand, Einstellungen
    ========================================================================== */
 function emptyVault() {
-  return { v: 1, contacts: {}, rooms: {}, blocked: {}, reads: {}, settings: { hideIp: false, sound: true, mic: '' } };
+  return { v: 1, contacts: {}, rooms: {}, blocked: {}, reads: {}, cleared: {}, settings: { hideIp: false, sound: true, mic: '' } };
 }
 
 function mergeVault(a, b) {
@@ -434,6 +445,7 @@ function mergeVault(a, b) {
     }
     Object.assign(out.blocked, src.blocked || {});
     for (const [k, t] of Object.entries(src.reads || {})) out.reads[k] = Math.max(out.reads[k] || 0, t || 0);
+    for (const [k, t] of Object.entries(src.cleared || {})) out.cleared[k] = Math.max(out.cleared[k] || 0, t || 0);
   }
   return out;
 }
@@ -763,18 +775,19 @@ function gateIdle(button) {
 }
 
 function gateTemp(panel) {
-  const alias = el('input', { type: 'text', maxlength: '40', placeholder: 'z. B. Nachtfalke', autocomplete: 'off' });
+  const suggestion = randomAlias();
+  const alias = el('input', { type: 'text', maxlength: '40', placeholder: suggestion, autocomplete: 'off' });
   const code = accessField();
   const go = el('button', { type: 'submit', class: 'btn btn--primary btn--block', text: 'Temporäre Sitzung starten' });
   const form = el('form', { class: 'sc-gate-form' },
-    field('Alias (optional)', alias, 'So sehen dich andere. Geht auch später noch.'),
+    field('Alias (optional)', alias, 'So sehen dich andere. Ohne Eingabe heißt du „' + suggestion + '“ – ändern geht auch später.'),
     code, go,
     el('p', { class: 'sc-gate-note', text: 'Ohne Konto: Ein neues PGP-Schlüsselpaar entsteht jetzt ' + (DESKTOP ? 'in der App' : 'in deinem Browser') + ' und lebt nur ' + KEY_HOME + '. Nach ' + (S.cfg ? S.cfg.temp_hours : 24) + ' Stunden ohne Nutzung – oder wenn du die Sitzung beendest – löscht der Server alles, was dazugehört.' }));
   form.addEventListener('submit', async (ev) => {
     ev.preventDefault();
     gateBusy(go, 'Schlüssel wird ' + LOCAL + ' erzeugt …');
     try {
-      await startTemp(cleanName(alias.value), code ? code.querySelector('input').value : '');
+      await startTemp(cleanName(alias.value) || suggestion, code ? code.querySelector('input').value : '');
     } catch (e) {
       gateIdle(go);
       toast(e.message, 'error');
@@ -1040,6 +1053,7 @@ async function enterApp() {
   renderAll();
   bootDone();
   refreshOnline();
+  loadIce();
   await loadRooms().catch(() => {});
   if (S.view.kind === 'room' && !S.rooms.has(S.view.rid)) S.view = { kind: 'home' };
   if (S.view.kind === 'dm') await ensureIds([S.view.peer]);
@@ -1273,9 +1287,94 @@ function renderHomeSide(head, body) {
       sub: lastMsg ? (lastMsg.from === S.me.id ? 'Du: ' : '') + lastMsg.body.replace(/\s+/g, ' ').slice(0, 60) : null,
       unread: conv.unread
     });
+    withMenu(row, () => convMenuItems(conv));
     cl.appendChild(row);
   }
   body.appendChild(cl);
+}
+
+/* ---------- Kontextmenü: Rechtsklick, auf dem Handy langes Drücken -------- */
+let ctxMenu = null;
+let ctxOpened = 0;
+
+function closeContextMenu() {
+  if (ctxMenu) { ctxMenu.remove(); ctxMenu = null; }
+}
+
+function openContextMenu(x, y, items) {
+  closeContextMenu();
+  const menu = el('div', { class: 'sc-ctx', role: 'menu' });
+  for (const it of items) {
+    if (!it) continue;
+    menu.appendChild(el('button', {
+      type: 'button', role: 'menuitem', class: 'sc-ctx-item' + (it.danger ? ' is-danger' : ''), disabled: !!it.disabled,
+      onclick: () => { closeContextMenu(); it.run(); }
+    }, icon(it.icon, 15), el('span', { text: it.label })));
+  }
+  document.body.appendChild(menu);
+  menu.style.left = Math.max(8, Math.min(x, window.innerWidth - menu.offsetWidth - 8)) + 'px';
+  menu.style.top = Math.max(8, Math.min(y, window.innerHeight - menu.offsetHeight - 8)) + 'px';
+  ctxMenu = menu;
+  ctxOpened = Date.now();
+}
+
+/** Menü an ein Element hängen: Rechtsklick, Taste "Kontextmenü" oder langes Drücken. */
+function withMenu(node, items) {
+  let timer = 0;
+  let start = null;
+  node.addEventListener('contextmenu', (ev) => {
+    ev.preventDefault();
+    clearTimeout(timer);
+    timer = 0;
+    if (Date.now() - ctxOpened < 700) return;   // schon per langem Drücken geöffnet
+    const r = node.getBoundingClientRect();
+    openContextMenu(ev.clientX || r.left + 24, ev.clientY || r.bottom, items());
+  });
+  node.addEventListener('pointerdown', (ev) => {
+    if (ev.pointerType !== 'touch') return;
+    start = { x: ev.clientX, y: ev.clientY };
+    timer = setTimeout(() => { timer = 0; openContextMenu(start.x, start.y, items()); }, 550);
+  });
+  const cancel = () => { clearTimeout(timer); timer = 0; };
+  node.addEventListener('pointerup', cancel);
+  node.addEventListener('pointercancel', cancel);
+  node.addEventListener('pointermove', (ev) => { if (start && Math.hypot(ev.clientX - start.x, ev.clientY - start.y) > 10) cancel(); });
+  // Nach langem Drücken nicht auch noch öffnen.
+  node.addEventListener('click', (ev) => { if (Date.now() - ctxOpened < 700) { ev.preventDefault(); ev.stopImmediatePropagation(); } }, true);
+}
+
+function convMenuItems(conv) {
+  return [
+    { icon: 'check', label: 'Als gelesen markieren', disabled: !conv.unread, run: () => markConvRead(conv) },
+    { icon: 'users', label: 'Profil anzeigen', run: () => showProfile(conv.peer) },
+    { icon: 'trash', label: 'Unterhaltung löschen', danger: true, run: () => deleteConversation(conv) }
+  ];
+}
+
+function markConvRead(conv) {
+  conv.unread = 0;
+  S.vault.reads['dm:' + conv.peer] = serverNow();
+  saveVault();
+  renderAll();
+}
+
+/**
+ * Löscht den Verlauf nur bei dir (bei Konten auf allen Geräten, über den
+ * Tresor). Beim Gegenüber bleibt er; neue Nachrichten erscheinen wieder.
+ */
+async function deleteConversation(conv) {
+  const who = displayName(S.ids.get(conv.peer));
+  const ok = await confirmBox('Unterhaltung löschen',
+    'Der Verlauf mit ' + who + ' verschwindet ' + (S.mode === 'account' ? 'auf all deinen Geräten' : 'hier') +
+    '. Bei ' + who + ' bleibt er erhalten, neue Nachrichten erscheinen wieder.', 'Löschen', true);
+  if (!ok) return;
+  let last = serverNow();
+  for (const m of conv.msgs) last = Math.max(last, m.ts || 0);
+  S.vault.cleared[conv.peer] = last;
+  saveVault();
+  S.convs.delete(conv.peer);
+  if (S.view.kind === 'dm' && S.view.peer === conv.peer) setView({ kind: 'home' });
+  renderAll();
 }
 
 function personRow(ident, onclick, opts) {
@@ -1300,7 +1399,7 @@ function personRow(ident, onclick, opts) {
 
 function renderRoomSide(head, body, room) {
   const isOwner = room.owner === S.me.id;
-  head.append(room.meta.img ? el('img', { class: 'sc-side-pic', src: room.meta.img, alt: '' }) : null,
+  appendAll(head, room.meta.img ? el('img', { class: 'sc-side-pic', src: room.meta.img, alt: '' }) : null,
     el('span', { class: 'sc-side-title', text: room.meta.name, title: room.meta.name }),
     iconBtn('more', 'Raum-Menü', () => roomMenu(room)));
 
@@ -1380,8 +1479,11 @@ function renderVoicebar() {
 /* ---------- Eigenes Profil unten links ------------------------------------ */
 function renderUser() {
   const box = $('sc-user');
-  box.textContent = '';
   const me = S.ids.get(S.me.id);
+  const sig = [S.me.name, avatarUrl(me) || '', S.me.vis, S.mode, S.me.fp, S.offline, M.micOn, M.deaf].join('|');
+  if (box.dataset.sig === sig && box.firstChild) return;
+  box.dataset.sig = sig;
+  box.textContent = '';
   box.append(
     el('button', { type: 'button', class: 'sc-user-info', title: 'Dein Profil', onclick: () => showProfile(S.me.id) },
       el('span', { class: 'sc-row-av' }, avatar(me), el('span', { class: 'sc-on' + (S.me.vis ? '' : ' is-hidden'), title: S.me.vis ? 'sichtbar' : 'unsichtbar' })),
@@ -1911,8 +2013,9 @@ async function handleInboxEntry(e) {
 function handleDm(obj, from, e) {
   const peer = from.id === S.me.id ? obj.to : from.id;
   if (typeof peer !== 'string') return;
-  const conv = convOf(peer);
   const ts = e.t * 1000;
+  if ((S.vault.cleared[peer] || 0) >= ts) return;   // Unterhaltung hier gelöscht
+  const conv = convOf(peer);
   if (from.id !== S.me.id) noteContact(from);
   const ref = typeof obj.ref === 'string' ? conv.byId.get(obj.ref) : null;
 
@@ -2694,10 +2797,37 @@ async function ensureMic() {
     meter('local', new MediaStream([M.mic]));
     return M.mic;
   } catch (e) {
-    toast('Kein Zugriff aufs Mikrofon – du bist dabei, aber stumm.', 'error');
+    toast(micError(e), 'error', 10000);
     M.micOn = false;
     return silentTrack();
   }
+}
+
+/** Warum es kein Mikrofon gibt – mit dem, was hilft. */
+function micError(e) {
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+    return 'Dieser Browser gibt hier kein Mikrofon frei. Öffne SecureCom direkt in Chrome, Safari, Firefox oder Edge – nicht im Browser einer anderen App.';
+  }
+  const name = e && e.name;
+  if (name === 'NotAllowedError' || name === 'SecurityError') {
+    return 'Das Mikrofon ist für diese Seite gesperrt. Erlaube es in den Seiteneinstellungen des Browsers (Schloss neben der Adresse) und tippe dann auf das Mikrofon.';
+  }
+  if (name === 'NotFoundError' || name === 'OverconstrainedError') return 'Kein Mikrofon gefunden – du bist dabei, aber stumm.';
+  if (name === 'NotReadableError') return 'Das Mikrofon benutzt gerade eine andere App. Schließ sie und tippe dann auf das Mikrofon.';
+  return 'Kein Zugriff aufs Mikrofon – du bist dabei, aber stumm.';
+}
+
+/** Handys spielen Ton erst nach einem Tippen ab: dann einmal nachholen. */
+let audioWaiting = false;
+function audioBlocked() {
+  if (audioWaiting) return;
+  audioWaiting = true;
+  toast('Tippe einmal irgendwohin, damit du die anderen hörst.', null, 8000);
+  document.addEventListener('pointerdown', () => {
+    audioWaiting = false;
+    audioCtx();
+    for (const a of $('sc-audio').querySelectorAll('audio')) a.play().catch(() => {});
+  }, { once: true, capture: true });
 }
 
 function silentTrack() {
@@ -2739,9 +2869,16 @@ async function pushTrack(slot) {
   renderUser();
 }
 
-function toggleMic() {
+async function toggleMic() {
   M.micOn = !M.micOn;
   if (M.micOn && M.deaf) M.deaf = false;
+  // Noch kein Mikrofon (abgelehnt oder nie gefragt): jetzt holen – auf dem
+  // Handy erscheint die Rückfrage nur nach einem Tippen.
+  if (M.micOn && (S.call || S.voice) && !(M.mic && M.mic.readyState === 'live')) {
+    audioCtx();
+    await ensureMic();
+    if (!M.micOn) { renderAll(); return; }
+  }
   if (M.mic) M.mic.enabled = M.micOn && !M.deaf;
   applyDeaf();
   pushTrack('mic');
@@ -3015,7 +3152,7 @@ function attachAudio(peer, slot, stream) {
   }
   a.srcObject = stream;
   a.muted = M.deaf;
-  a.play().catch(() => {});
+  a.play().catch(audioBlocked);
   if (slot === 'mic') meter(peer.remoteId, stream);
 }
 
@@ -3035,6 +3172,43 @@ function detachAudio(peer) {
    tauschen" – ohne erneutes Aushandeln über den Server. Ein Datenkanal
    (ebenfalls DTLS-verschlüsselt) meldet, was gerade an ist.
    ========================================================================== */
+/**
+ * Verbindungsserver nach der Anmeldung: Erst hier gibt der Server die
+ * Zugangsdaten eines Relay-Servers (TURN) heraus. Vorher – und bei älteren
+ * Servern – bleibt es bei den öffentlichen aus "config".
+ */
+async function loadIce() {
+  try {
+    const r = await api('ice');
+    if (Array.isArray(r.ice)) S.cfg.ice = r.ice;
+    S.cfg.relay = !!r.relay;
+  } catch (e) { /* bleibt bei STUN */ }
+}
+
+/** Einmal je Sitzung erklären, warum eine Verbindung nicht zustande kommt. */
+let routeHint = false;
+function noDirectRoute(id) {
+  if (routeHint || (S.cfg && S.cfg.relay)) return;
+  routeHint = true;
+  toast('Zu ' + displayName(S.ids.get(id)) + ' kommt keine direkte Verbindung zustande. Das ist typisch für Mobilfunk und strenge Netze – ' +
+    'dafür braucht SecureCom einen Relay-Server (TURN), der hier noch nicht eingerichtet ist.', 'error', 14000);
+}
+
+/** Wie läuft eine Verbindung? Direkt im Netz, übers Internet oder über das Relay. */
+async function routeOf(pc) {
+  try {
+    const stats = await pc.getStats();
+    let pair = null;
+    stats.forEach((s) => { if (s.type === 'transport' && s.selectedCandidatePairId) pair = stats.get(s.selectedCandidatePairId); });
+    if (!pair) stats.forEach((s) => { if (!pair && s.type === 'candidate-pair' && s.nominated && s.state === 'succeeded') pair = s; });
+    if (!pair) return null;
+    const types = [stats.get(pair.localCandidateId), stats.get(pair.remoteCandidateId)].map((c) => c && c.candidateType);
+    if (types.includes('relay')) return 'verbunden über den Relay-Server';
+    if (types.every((t) => t === 'host')) return 'direkt verbunden (selbes Netz)';
+    return 'direkt verbunden (übers Internet)';
+  } catch (e) { return null; }
+}
+
 function rtcConfig() {
   const relayOnly = S.vault.settings.hideIp && S.cfg.relay;
   return { iceServers: S.cfg.ice || [], iceTransportPolicy: relayOnly ? 'relay' : 'all', bundlePolicy: 'max-bundle' };
@@ -3157,7 +3331,8 @@ class Peer {
 
   onConn() {
     const st = this.pc.connectionState;
-    if (st === 'connected') { this.restarting = false; this.tune(); }
+    if (st === 'connected') { this.restarting = false; this.failed = false; this.tune(); }
+    if (st === 'failed') { this.failed = true; noDirectRoute(this.remoteId); }
     if (st === 'failed' && this.initiator && !this.restarting && this.opts.onRestart) {
       this.restarting = true;
       this.opts.onRestart(this);
@@ -3340,8 +3515,9 @@ function endCall(reason, remote) {
   if (!S.voice) stopLocalMedia();
   if (call.state === 'incoming') closeModal();
   const dur = call.started ? fmtDuration(Date.now() - call.started) : null;
-  logCall(call, dur ? 'Anruf · ' + dur : (reason || 'Anruf beendet'));
-  if (reason && !dur) toast(reason);
+  logCall(call, dur ? 'Anruf beendet · Dauer ' + dur : (reason || 'Anruf beendet'));
+  if (dur) toast('Anruf beendet · Dauer ' + dur, 'ok');
+  else if (reason) toast(reason);
   renderAll();
 }
 
@@ -3485,7 +3661,10 @@ async function leaveVoice(silent) {
     setVoiceState(room, left);
   }
   if (!S.call) stopLocalMedia();
-  if (!silent) playJoinTone(false);
+  if (!silent) {
+    playJoinTone(false);
+    toast('Sprachkanal verlassen · Dauer ' + fmtDuration(Date.now() - v.since), 'ok');
+  }
   renderAll();
   try { await api('room.voice', { id: v.rid, on: false, ch: v.ch }); } catch (e) { /* läuft ohnehin ab */ }
 }
@@ -3634,7 +3813,7 @@ function renderStage() {
 
   for (const p of people.peers) {
     const ident = S.ids.get(p.remoteId);
-    const conn = p.pc.connectionState;
+    const conn = p.failed && p.pc.connectionState !== 'connected' ? 'nodirect' : p.pc.connectionState;
     want.push({
       key: p.remoteId + ':cam', ident: ident, stream: p.remote.cam, video: p.remoteState.cam && !!p.remote.cam,
       muted: !p.remoteState.mic, speak: p.remoteId, conn: conn, code: p.code
@@ -3675,7 +3854,11 @@ function renderStage() {
     if (sc) focusKey = sc.key;
   }
   grid.classList.toggle('has-focus', !!focusKey);
+  stage.classList.toggle('has-focus', !!focusKey);
   grid.dataset.count = String(want.length);
+  // Mit Mittelpunkt: die übrigen Kacheln in eine Leiste daneben (Handy: darunter).
+  let side = grid.querySelector(':scope > .sc-tiles-side');
+  if (focusKey && !side) side = el('div', { class: 'sc-tiles-side' });
   for (const w of want) {
     let t = tiles.get(w.key);
     if (!t) {
@@ -3683,21 +3866,58 @@ function renderStage() {
       tiles.set(w.key, t);
     }
     updateTile(t, w);
-    grid.appendChild(t.node);
+    const box = focusKey && w.key !== focusKey ? side : grid;
+    if (t.node.parentNode !== box || box.lastElementChild !== t.node) box.appendChild(t.node);
+  }
+  if (side) {
+    if (focusKey && side.firstChild) { if (grid.lastElementChild !== side) grid.appendChild(side); } else side.remove();
   }
   renderControls();
 }
 
+/**
+ * Vollbild für ein Video. Handys: wenn möglich quer drehen (Bildschirme sind
+ * meist breiter als hoch); iPhones kennen nur das eigene Vollbild für Videos.
+ */
+function fullscreenVideo(video) {
+  if (video.requestFullscreen) {
+    video.requestFullscreen().then(() => {
+      if (video.videoWidth > video.videoHeight && screen.orientation && screen.orientation.lock) {
+        screen.orientation.lock('landscape').catch(() => { /* Desktop: geht nicht, egal */ });
+      }
+    }, () => {});
+  } else if (video.webkitEnterFullscreen) {
+    try { video.webkitEnterFullscreen(); } catch (e) { /* nicht möglich */ }
+  }
+}
+
+/**
+ * Kachel: außen der Platz im Raster, innen ein Rahmen. Bei Bildschirmen hat
+ * der Rahmen das Seitenverhältnis der Übertragung – so gibt es keine
+ * schwarzen Ränder, und Name und Vollbild-Knopf sitzen auf dem Bild.
+ */
 function makeTile(key) {
   const video = el('video', { autoplay: true, playsinline: true, muted: true });
   video.muted = true;
   const node = el('div', { class: 'sc-tile', dataset: { key: key } });
+  const frame = el('div', { class: 'sc-tile-frame' });
   const face = el('div', { class: 'sc-tile-face' });
   const label = el('div', { class: 'sc-tile-label' });
-  const full = iconBtn('expand', 'Vollbild', () => { (video.requestFullscreen ? video.requestFullscreen() : Promise.reject()).catch(() => {}); }, { class: 'sc-ibtn sc-tile-full' });
-  node.append(video, face, label, full);
+  const full = iconBtn('expand', 'Vollbild', () => fullscreenVideo(video), { class: 'sc-ibtn sc-tile-full' });
+  frame.append(video, label, full);
+  node.append(frame, face);
+  const ratio = () => {
+    if (video.videoWidth && video.videoHeight) node.style.setProperty('--ar', String(video.videoWidth / video.videoHeight));
+  };
+  video.addEventListener('loadedmetadata', ratio);
+  video.addEventListener('resize', ratio);
   node.addEventListener('click', (ev) => {
     if (ev.target.closest('button')) return;
+    // Die Übertragung im Mittelpunkt: direkt Vollbild. Sonst in den Mittelpunkt holen – oder zurück.
+    if (node.classList.contains('is-screen') && node.classList.contains('has-video') && focusKey === key) {
+      fullscreenVideo(video);
+      return;
+    }
     focusKey = focusKey === key ? null : key;
     renderStage();
   });
@@ -3705,7 +3925,8 @@ function makeTile(key) {
 }
 
 function updateTile(t, w) {
-  t.node.className = 'sc-tile' + (w.screen ? ' is-screen' : '') + (w.video ? ' has-video' : '') + (focusKey === t.key ? ' is-focus' : '') + (w.self ? ' is-self' : '');
+  t.node.className = 'sc-tile' + (w.screen ? ' is-screen' : '') + (w.video ? ' has-video' : '') + (focusKey === t.key ? ' is-focus' : '') + (w.self ? ' is-self' : '')
+    + (w.conn && w.conn !== 'connected' ? ' is-waiting' : '');
   if (w.speak) t.node.dataset.speak = w.speak; else delete t.node.dataset.speak;
   const src = w.video ? (w.track || w.stream || null) : null;
   if (src !== t.src) {
@@ -3725,7 +3946,7 @@ function updateTile(t, w) {
 }
 
 function connText(st) {
-  return { new: 'verbindet …', connecting: 'verbindet …', disconnected: 'Verbindung wackelt …', failed: 'keine Verbindung', closed: 'getrennt', klingelt: 'klingelt …', eingehend: 'ruft an …' }[st] || st;
+  return { new: 'verbindet …', connecting: 'verbindet …', disconnected: 'Verbindung wackelt …', failed: 'keine Verbindung', nodirect: S.cfg && S.cfg.relay ? 'keine Verbindung' : 'keine direkte Verbindung', closed: 'getrennt', klingelt: 'klingelt …', eingehend: 'ruft an …' }[st] || st;
 }
 
 function detachTile(t) {
@@ -3734,8 +3955,14 @@ function detachTile(t) {
 
 function renderControls() {
   const box = $('sc-controls');
-  box.textContent = '';
+  if (!box) return;
   const canScreen = !!(navigator.mediaDevices && navigator.mediaDevices.getDisplayMedia);
+  // Nur bei Änderungen neu bauen – sonst flackert auf dem Handy der eben
+  // getippte Knopf bei jedem Abruf.
+  const sig = [M.micOn, M.deaf, !!M.cam, !!M.screen, canScreen, screenQuality().id, !!S.voice].join('|');
+  if (box.dataset.sig === sig && box.firstChild) return;
+  box.dataset.sig = sig;
+  box.textContent = '';
   const ctl = (name, title, on, fn, extra) => el('button', {
     type: 'button', class: 'sc-ctl' + (on ? '' : ' is-off') + (extra ? ' ' + extra : ''), title: title, 'aria-label': title, onclick: fn
   }, icon(name, 20));
@@ -3763,10 +3990,15 @@ function showCodeInfo() {
         el('p', { class: 'sc-p', text: 'Aus den Zertifikaten beider Seiten entsteht der Sicherheitscode. Lest ihn euch gegenseitig vor: Seht ihr dieselbe Zahl, sitzt niemand dazwischen – auch nicht der Server.' }));
       const peers = S.call && S.call.peer ? [S.call.peer] : S.voice ? [...S.voice.peers.values()] : [];
       for (const p of peers) {
+        const route = el('span', { class: 'sc-code-route', text: connText(p.failed && p.pc.connectionState !== 'connected' ? 'nodirect' : p.pc.connectionState) });
         body.appendChild(el('div', { class: 'sc-code-row' },
           avatar(S.ids.get(p.remoteId), 'sm'),
-          el('span', { text: displayName(S.ids.get(p.remoteId)) }),
+          el('span', { class: 'sc-code-who' }, el('span', { text: displayName(S.ids.get(p.remoteId)) }), route),
           el('span', { class: 'sc-code-big', text: p.code || '…' })));
+        if (p.pc.connectionState === 'connected') routeOf(p.pc).then((text) => { if (text) route.textContent = text; });
+      }
+      if (peers.some((p) => p.failed) && !S.cfg.relay) {
+        body.appendChild(el('p', { class: 'sc-note', text: 'Ohne direkte Verbindung hilft nur ein Relay-Server (TURN). Er leitet die weiterhin verschlüsselten Daten weiter; eingerichtet wird er in der config.php des Servers.' }));
       }
     }
   });
@@ -4019,10 +4251,11 @@ function editAlias() {
   openModal({
     title: 'ALIAS',
     build: (body, close) => {
-      const input = el('input', { type: 'text', maxlength: '40', value: S.me.name || '' });
+      const suggestion = randomAlias();
+      const input = el('input', { type: 'text', maxlength: '40', value: S.me.name || '', placeholder: suggestion });
       const go = el('button', { type: 'button', class: 'btn btn--primary btn--block', text: 'Speichern' });
       go.addEventListener('click', async () => {
-        const name = cleanName(input.value);
+        const name = cleanName(input.value) || suggestion;
         go.disabled = true;
         try {
           const card = await C.signCard(S.me.priv, { v: 1, id: S.me.id, kind: 'temp', name: name, ts: Date.now() });
@@ -4199,7 +4432,17 @@ function bind() {
   });
 
   document.addEventListener('keydown', (ev) => {
+    if (ev.key === 'Escape' && ctxMenu) { ev.preventDefault(); closeContextMenu(); return; }
     if (ev.key === 'Escape' && modalClose) { ev.preventDefault(); closeModal(); }
+  });
+  document.addEventListener('pointerdown', (ev) => { if (ctxMenu && !ctxMenu.contains(ev.target)) closeContextMenu(); }, true);
+  document.addEventListener('scroll', closeContextMenu, true);
+  window.addEventListener('resize', closeContextMenu);
+  window.addEventListener('blur', closeContextMenu);
+  document.addEventListener('fullscreenchange', () => {
+    if (!document.fullscreenElement && screen.orientation && screen.orientation.unlock) {
+      try { screen.orientation.unlock(); } catch (e) { /* nicht gesperrt */ }
+    }
   });
   // Einladungslink in einen schon offenen SecureCom-Tab eingefügt: Die Seite
   // lädt dann nicht neu, nur der Teil hinter "#" ändert sich.

@@ -32,6 +32,9 @@ Chiffretext, öffentliche Schlüssel und Signaturen.
   Windows-App auch mit dem Ton des Computers. Ein Sicherheitscode zeigt, dass
   niemand dazwischensitzt.
 - **Benachrichtigungen** nennen nur Absender oder Anrufer, nie den Inhalt.
+- **Kleinigkeiten:** Unterhaltungen per Rechtsklick (Handy: lange drücken) als
+  gelesen markieren oder löschen; temporäre Sitzungen ohne Alias bekommen einen
+  Zufallsnamen; nach einem Anruf steht die Dauer im Verlauf.
 
 ## So schützt SecureCom
 
@@ -84,7 +87,9 @@ Cloudflare-TURN.
 **Anrufe über Mobilfunk** brauchen oft einen Relay-Server (TURN), weil sich
 die Geräte sonst nicht direkt erreichen. In `config.php` entweder einen eigenen
 eintragen (`securecom_turn`) oder Cloudflare Realtime TURN (`securecom_cf_turn`).
-Mit TURN funktioniert auch die Einstellung „IP-Adresse verbergen“.
+Mit TURN funktioniert auch die Einstellung „IP-Adresse verbergen“. Die
+Zugangsdaten bekommen nur angemeldete Sitzungen, damit niemand Fremdes das
+TURN-Kontingent nutzt.
 
 Außerdem in `config.sample.php`: Zugangscode für neue Konten, wie lange
 Nachrichten liegen bleiben, Lebensdauer temporärer Sitzungen, Obergrenze der
