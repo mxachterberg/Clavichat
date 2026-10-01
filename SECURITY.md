@@ -34,6 +34,11 @@ erfunden.
   einen zweiten Weg geprüft hat, markiert den Kontakt als verifiziert.
 - Der Export zum Sichern ist mit einer Passphrase geschützt (Iterated+Salted
   S2K, AES-256) und lässt sich in GnuPG einlesen.
+- Profilbilder gibt es nur für Konten. Sie sind öffentlich wie der Name und
+  liegen unverschlüsselt beim Server. Die signierte Karte nennt den
+  SHA-256-Wert des Bildes, Browser zeigen nur ein Bild, das genau dazu passt.
+  Der Browser schneidet es zu und kodiert es neu (Metadaten wie Ort oder Kamera
+  fallen weg); der Server nimmt nur JPEG, PNG und WebP an.
 
 ### Direktnachrichten und Anruf-Signale
 
@@ -62,7 +67,8 @@ erfunden.
 - Verlässt jemand den Raum oder wird entfernt, erzeugt der Besitzer einen neuen
   Schlüssel (nächste Generation) und verschlüsselt ihn per PGP für alle
   verbliebenen Mitglieder. Alte Einladungen werden ungültig.
-- Raumname und Kanäle sind mit dem Raumschlüssel verschlüsselt.
+- Raumname, Text- und Sprachkanäle und das Raumbild sind mit dem Raumschlüssel
+  verschlüsselt. Der Server kennt von Sprachkanälen nur zufällige Kennungen.
 
 ### Anrufe und Bildschirm
 
@@ -73,8 +79,11 @@ erfunden.
   über den Server und verfallen nach zwei Minuten.
 - Sicherheitscode: SHA-256 über die beiden DTLS-Fingerabdrücke, daraus sechs
   Ziffern. Sehen beide dieselbe Zahl, sitzt niemand dazwischen.
-- In Räumen ist jeder mit jedem verbunden (bis 8 Personen), es gibt keinen
-  Server, der Ton oder Bild mischt.
+- Für Stereo-Ton ergänzt SecureCom vor dem Übernehmen der Verbindungsangaben
+  des Gegenübers `stereo=1`. Der Sicherheitscode rechnet weiter mit den
+  unveränderten, signierten Angaben.
+- In einem Sprachkanal ist jeder mit jedem verbunden (bis 8 Personen), es gibt
+  keinen Server, der Ton oder Bild mischt.
 
 ### Konten
 
@@ -117,8 +126,9 @@ erfunden.
 ## Was der Server trotzdem sieht
 
 - IP-Adressen und Zeitpunkte der Anfragen (der Webserver protokolliert sie).
-- Wer gerade online ist, welche öffentlichen Schlüssel und Namen es gibt, wer in
-  welchem Raum ist und wer im Sprachkanal.
+- Wer gerade online ist, welche öffentlichen Schlüssel, Namen und Profilbilder
+  (nur Konten) es gibt, wer in welchem Raum ist und wer in welchem Sprachkanal
+  (ohne dessen Namen).
 - Welcher Briefkasten wann wie viele Einträge bekommt. Wer eine Nachricht
   abschickt, sieht er im Moment der Anfrage, speichert es aber nicht.
 - Bei Anrufen ohne Relay sehen sich die Gesprächspartner gegenseitig die

@@ -19,17 +19,18 @@ Chiffretext, öffentliche Schlüssel und Signaturen.
 - **Ohne E-Mail:** Konto mit Name und Passwort – oder eine temporäre Sitzung,
   für die der Browser ein frisches PGP-Schlüsselpaar erzeugt. Wahlweise mit
   Alias. Eigene PGP-Schlüssel (GnuPG, Kleopatra) lassen sich übernehmen und mit
-  Passphrase gesichert exportieren.
+  Passphrase gesichert exportieren. Konten können ein Profilbild festlegen.
 - **Wer ist da:** Online-Liste mit Alias, Kontoname und Fingerabdruck.
   Verbinden per öffentlichem Schlüssel oder Fingerabdruck.
-- **Schreiben:** Direktnachrichten und Räume mit Textkanälen. Einladung per
-  Link oder direkt; wer den Raum verlässt oder entfernt wird, löst einen neuen
-  Raumschlüssel aus.
-- **Sprechen und zeigen:** Sprach- und Videoanrufe, Sprachkanal in Räumen (bis
-  8 Personen), Bildschirm teilen in wählbarer Qualität (von „Sparsam“ bis
-  1440p mit 60 fps, auch während der Übertragung) – in der Windows-App auch mit
-  dem Ton des Computers. Ein Sicherheitscode zeigt, dass niemand
-  dazwischensitzt.
+- **Schreiben:** Direktnachrichten und Räume mit Textkanälen und Raumbild.
+  Einladung per Link oder direkt; wer den Raum verlässt oder entfernt wird,
+  löst einen neuen Raumschlüssel aus.
+- **Sprechen und zeigen:** Sprach- und Videoanrufe in wählbarer Tonqualität
+  (bis 128 kbit/s in Stereo), mehrere Sprachkanäle je Raum (je bis 8 Personen),
+  Bildschirm teilen in wählbarer Qualität (von „Sparsam“ bis „Quelle“:
+  Originalauflösung mit 60 fps, auch während der Übertragung) – in der
+  Windows-App auch mit dem Ton des Computers. Ein Sicherheitscode zeigt, dass
+  niemand dazwischensitzt.
 - **Benachrichtigungen** nennen nur Absender oder Anrufer, nie den Inhalt.
 
 ## So schützt SecureCom
@@ -38,7 +39,8 @@ Chiffretext, öffentliche Schlüssel und Signaturen.
 |---|---|
 | Identität | OpenPGP-Schlüsselpaar (Ed25519 signiert, X25519 verschlüsselt), entsteht im Browser |
 | Direktnachrichten, Anruf-Signale | OpenPGP (RFC 9580): neuer AES-256-Schlüssel pro Nachricht, für Empfänger und Absender eingepackt, AEAD (OCB), signiert |
-| Räume | gemeinsamer Raumschlüssel, AES-256-GCM, jede Nachricht zusätzlich signiert. Im Einladungslink steht er hinter dem `#` und geht nie an einen Server |
+| Räume | gemeinsamer Raumschlüssel, AES-256-GCM, jede Nachricht zusätzlich signiert; Name, Kanäle und Raumbild ebenfalls verschlüsselt. Im Einladungslink steht der Schlüssel hinter dem `#` und geht nie an einen Server |
+| Profilbilder | nur Konten, öffentlich wie der Name; die signierte Karte nennt den SHA-256-Wert, angezeigt wird nur ein passendes Bild |
 | Anrufe, Bildschirm | WebRTC direkt zwischen den Geräten (DTLS-SRTP). Verbindungsangaben signiert und verschlüsselt, Sicherheitscode aus den DTLS-Fingerabdrücken |
 | Konten | PBKDF2-SHA-256 (600.000 Runden) → HKDF → Anmeldeschlüssel (beim Server nur als bcrypt-Hash) und ein Schlüssel, der den privaten PGP-Schlüssel einpackt |
 | Länge | jeder Klartext wird vor dem Verschlüsseln auf feste Größen aufgefüllt |

@@ -385,6 +385,26 @@
 .sc-av--lg { width: 64px; height: 64px; font-size: 20px; }
 .sc-av--xl { width: 84px; height: 84px; font-size: 26px; }
 
+/* ---- Profil- und Raumbilder ---------------------------------------------- */
+.sc-av.has-img { overflow: hidden; }
+.sc-av img,
+.sc-rail-pic img { display: block; width: 100%; height: 100%; object-fit: cover; }
+.sc-rail-pic { display: block; width: 100%; height: 100%; }
+.sc-side-pic { flex: none; width: 22px; height: 22px; margin-right: 10px; border: 1px solid var(--border); object-fit: cover; }
+.sc-pic-row { display: flex; align-items: center; gap: 16px; margin: 0 0 16px; }
+.sc-pic-row .sc-note { margin: 0; }
+.sc-pic-big { flex: none; width: 84px; height: 84px; border: 1px solid var(--border); object-fit: cover; }
+.sc-pic-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--panel);
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 22px;
+  font-weight: 600;
+}
+
 /* ==========================================================================
    Hauptbereich
    ========================================================================== */

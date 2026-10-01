@@ -33,8 +33,10 @@
  *    accounts/<sha256>.json  Konto: Name, Hash des Anmeldeschlüssels,
  *                            eingepackter privater Schlüssel, Tresor
  *    inbox/<id>.jsonl|.n     Briefkasten (Einträge + Zähler)
- *    rooms/<rid>.json        Raum: Mitglieder, Einladungen, Sprachkanal
+ *    rooms/<rid>.json        Raum: Mitglieder, Einladungen, wer in welchem
+ *                            Sprachkanal ist (Namen der Kanäle: verschlüsselt)
  *    feeds/<rid>.jsonl|.n    Verlauf eines Raums
+ *    avatars/<id>.json       Profilbild eines Kontos (öffentlich wie der Name)
  *    mem/<id>.json           Räume einer Identität
  *    presence.json           zuletzt gesehen, Kartenversion, sichtbar
  *    temp.json               temporäre Identitäten (für das Aufräumen)
@@ -68,7 +70,8 @@ class SecureCom
     const MAX_PUB       = 16384;
     const MAX_WRAPPED   = 65536;
     const MAX_VAULT     = 524288;
-    const MAX_META      = 16384;
+    const MAX_META      = 65536;     // Raumdaten samt Raumbild (verschlüsselt)
+    const MAX_AVATAR    = 65536;     // Profilbild (Base64)
     const MAX_INBOX     = 8388608;   // 8 MB je Briefkasten
     const MAX_FEED      = 16777216;  // 16 MB je Raum
     const MAX_ROOMS     = 20;        // Räume je Identität
@@ -523,7 +526,7 @@ class SecureCom
             if (in_array($rid, $voice, true)) {
                 $room = self::refreshVoice($rid, $me['id']) ?: $room;
             }
-            $rooms[$rid] = ['rev' => (int)$room['rev'], 'vc' => self::voiceList($room)];
+            $rooms[$rid] = ['rev' => (int)$room['rev'], 'vc' => self::voiceList($room), 'vcs' => (object)self::voiceMap($room)];
 
             if (isset($want[$rid]) && is_array($want[$rid])) {
                 $c = $want[$rid];
@@ -724,28 +727,87 @@ class SecureCom
         return ['s' => self::append(self::dir('feeds') . '/' . $rid, $entry, self::MAX_FEED)];
     }
 
-    /** Sprachkanal betreten oder verlassen. */
+    /**
+     * Sprachkanal betreten oder verlassen. "ch" wählt den Kanal: "" ist der
+     * erste, den jeder Raum hat (und den ältere App-Fassungen kennen), sonst
+     * eine Kennung aus den verschlüsselten Raumdaten. Wer einen Kanal
+     * betritt, verlässt damit den bisherigen im selben Raum.
+     */
     public static function voice(array $me, array $b)
     {
         $rid = self::idOf(self::str($b, 'id'));
         $on  = !empty($b['on']);
-        $room = self::roomMutate($rid, function (&$room) use ($me, $on) {
+        $ch  = self::channelOf(self::str($b, 'ch'));
+        $room = self::roomMutate($rid, function (&$room) use ($me, $on, $ch) {
             self::requireMember($room, $me['id']);
             $now = time();
             foreach ($room['vc'] as $id => $seen) {
-                if ($now - (int)$seen > self::VOICE_WINDOW || !isset($room['mem'][$id])) unset($room['vc'][$id]);
+                if ($now - (int)$seen > self::VOICE_WINDOW || !isset($room['mem'][$id])) {
+                    unset($room['vc'][$id], $room['vch'][$id]);
+                }
             }
             if ($on) {
-                if (!isset($room['vc'][$me['id']]) && count($room['vc']) >= self::MAX_VOICE) {
+                $here = isset($room['vc'][$me['id']]) && (string)($room['vch'][$me['id']] ?? '') === $ch;
+                if (!$here && count(self::voiceList($room, $ch)) >= self::MAX_VOICE) {
                     throw new SecureComException('Im Sprachkanal sind schon ' . self::MAX_VOICE . ' Personen.', 409);
                 }
                 $room['vc'][$me['id']] = $now;
+                if ($ch === '') unset($room['vch'][$me['id']]);
+                else $room['vch'][$me['id']] = $ch;
             } else {
-                unset($room['vc'][$me['id']]);
+                unset($room['vc'][$me['id']], $room['vch'][$me['id']]);
             }
             return $room;
         }, true);
-        return ['vc' => self::voiceList($room)];
+        return ['vc' => self::voiceList($room, $ch), 'vcs' => (object)self::voiceMap($room)];
+    }
+
+    /* ======================================================================
+       Profilbild (nur Konten)
+       ====================================================================== */
+    /**
+     * Profilbild setzen oder entfernen. Es ist öffentlich wie der Name. Die
+     * mitgeschickte, signierte Karte trägt seinen SHA-256-Wert: Browser
+     * zeigen das Bild nur, wenn beides zusammenpasst – austauschen kann der
+     * Server es also nicht.
+     */
+    public static function setAvatar(array $me, array $b)
+    {
+        if ($me['k'] !== 'account') throw new SecureComException('Profilbilder gibt es nur für Konten.', 403);
+        $card = self::b64(self::str($b, 'card'), self::MAX_CARD, 'Karte');
+        $data = self::str($b, 'd');
+        $file = self::dir('avatars') . '/' . $me['id'] . '.json';
+        if ($data === '') {
+            @unlink($file);
+        } else {
+            $data = self::b64($data, self::MAX_AVATAR, 'Bild');
+            if (!self::isImage(base64_decode($data, true))) {
+                throw new SecureComException('Das ist kein Bild (JPEG, PNG oder WebP).', 422);
+            }
+            self::writeJson($file, ['d' => $data, 't' => time()]);
+        }
+        return self::updateCard($me, ['card' => $card]);
+    }
+
+    /** Profilbilder mehrerer Identitäten – nur die, die eins haben. */
+    public static function avatars(array $me, array $b)
+    {
+        $ids = isset($b['ids']) && is_array($b['ids']) ? array_slice($b['ids'], 0, 50) : [];
+        $out = [];
+        foreach ($ids as $id) {
+            if (!is_string($id) || !preg_match('/^[A-Za-z0-9_-]{22}$/', $id)) continue;
+            $av = self::readJson(self::dir('avatars') . '/' . $id . '.json', true);
+            if ($av && !empty($av['d'])) $out[] = ['id' => $id, 'd' => (string)$av['d']];
+        }
+        return $out;
+    }
+
+    private static function isImage($bytes)
+    {
+        if (!is_string($bytes) || strlen($bytes) < 12) return false;
+        return strncmp($bytes, "\xFF\xD8\xFF", 3) === 0                                   // JPEG
+            || strncmp($bytes, "\x89PNG\r\n\x1A\n", 8) === 0                               // PNG
+            || (strncmp($bytes, 'RIFF', 4) === 0 && substr($bytes, 8, 4) === 'WEBP');     // WebP
     }
 
     /* ======================================================================
@@ -856,6 +918,7 @@ class SecureCom
         }
         foreach (['.jsonl', '.n'] as $ext) @unlink(self::dir('inbox') . '/' . $id . $ext);
         @unlink(self::dir('mem') . '/' . $id . '.json');
+        @unlink(self::dir('avatars') . '/' . $id . '.json');
         @unlink(self::idFile($id));
         self::mutate(self::dir() . '/presence.json', function (&$p) use ($id) {
             if (is_array($p)) unset($p[$id]);
@@ -930,18 +993,42 @@ class SecureCom
             'me'      => (int)$room['me'],
             'rev'     => (int)$room['rev'],
             'members' => $members,
-            'vc'      => self::voiceList($room),
+            'vc'      => self::voiceList($room),            // erster Sprachkanal (ältere Apps)
+            'vcs'     => (object)self::voiceMap($room),     // alle: Kanal => wer drin ist
         ];
     }
 
-    private static function voiceList(array $room)
+    /** Wer gerade in einem Sprachkanal ist ("" = der erste). */
+    private static function voiceList(array $room, $ch = '')
     {
         $now = time();
         $out = [];
+        $where = (array)($room['vch'] ?? []);
         foreach ((array)$room['vc'] as $id => $seen) {
-            if ($now - (int)$seen <= self::VOICE_WINDOW && isset($room['mem'][$id])) $out[] = $id;
+            if ($now - (int)$seen > self::VOICE_WINDOW || !isset($room['mem'][$id])) continue;
+            if ((string)($where[$id] ?? '') === $ch) $out[] = $id;
         }
         return $out;
+    }
+
+    /** Alle besetzten Sprachkanäle eines Raums: Kanal => wer drin ist. */
+    private static function voiceMap(array $room)
+    {
+        $now = time();
+        $out = [];
+        $where = (array)($room['vch'] ?? []);
+        foreach ((array)$room['vc'] as $id => $seen) {
+            if ($now - (int)$seen > self::VOICE_WINDOW || !isset($room['mem'][$id])) continue;
+            $out[(string)($where[$id] ?? '')][] = $id;
+        }
+        return $out;
+    }
+
+    /** Sprachkanal: "" (der erste) oder eine Kennung wie bei den Textkanälen. */
+    private static function channelOf($ch)
+    {
+        if ($ch === '' || preg_match('/^[A-Za-z0-9_-]{1,22}$/', $ch)) return $ch;
+        throw new SecureComException('Ungültiger Kanal.', 422);
     }
 
     private static function refreshVoice($rid, $id)
@@ -970,7 +1057,7 @@ class SecureCom
         $destroy = false;
         $room = self::roomMutate($rid, function (&$room) use ($member, &$destroy) {
             if (!isset($room['mem'][$member])) return $room;
-            unset($room['mem'][$member], $room['vc'][$member]);
+            unset($room['mem'][$member], $room['vc'][$member], $room['vch'][$member]);
             if (!$room['mem']) { $destroy = true; return $room; }
             if ($room['o'] === $member) {
                 asort($room['mem']);
