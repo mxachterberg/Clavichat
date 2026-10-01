@@ -26,8 +26,10 @@ Chiffretext, öffentliche Schlüssel und Signaturen.
   Link oder direkt; wer den Raum verlässt oder entfernt wird, löst einen neuen
   Raumschlüssel aus.
 - **Sprechen und zeigen:** Sprach- und Videoanrufe, Sprachkanal in Räumen (bis
-  8 Personen), Bildschirm teilen – in der Windows-App auch mit dem Ton des
-  Computers. Ein Sicherheitscode zeigt, dass niemand dazwischensitzt.
+  8 Personen), Bildschirm teilen in wählbarer Qualität (von „Sparsam“ bis
+  1440p mit 60 fps, auch während der Übertragung) – in der Windows-App auch mit
+  dem Ton des Computers. Ein Sicherheitscode zeigt, dass niemand
+  dazwischensitzt.
 - **Benachrichtigungen** nennen nur Absender oder Anrufer, nie den Inhalt.
 
 ## So schützt SecureCom
@@ -109,8 +111,9 @@ Unterschiede zur Web-Fassung:
 
 - Die Oberfläche steckt in der App. Der Server kann den Programmcode nicht
   austauschen, er reicht nur Chiffretext weiter.
-- Bildschirm teilen mit Auswahl von Bildschirm oder Fenster und auf Wunsch mit
-  dem Ton des Computers.
+- Bildschirm teilen mit Auswahl von Bildschirm oder Fenster, Qualität und auf
+  Wunsch dem Ton des Computers.
+- Eigene Titelleiste im Stil der App; die Fensterknöpfe folgen Hell und Dunkel.
 - Benachrichtigungen sind von Anfang an an, eingehende Anrufe lassen das
   Fenster in der Taskleiste blinken.
 

@@ -5,6 +5,36 @@
   var selected = null;
   var share = document.getElementById('pk-share');
 
+  /* ---- Qualität ---------------------------------------------------------
+     Dieselben Kennungen wie SCREEN_QUALITY in server/assets/securecom.js.
+     Die Wahl landet in localStorage; das Hauptfenster (gleiche Herkunft)
+     liest sie, sobald die Übertragung startet. */
+  var QUALITY = [
+    { id: 'normal', name: 'Ausgewogen', info: '1080p · 30 fps', note: 'Für das meiste genau richtig.' },
+    { id: 'text', name: 'Text & Code', info: 'volle Auflösung · 15 fps', note: 'Gestochen scharf für Code, Dokumente und Tabellen.' },
+    { id: 'smooth', name: 'Flüssig', info: '720p · 60 fps', note: 'Für Videos und Spiele: Bewegung vor Schärfe.' },
+    { id: 'max', name: 'Maximal', info: '1440p · 60 fps', note: 'Beste Qualität, braucht einen schnellen Upload.' },
+    { id: 'low', name: 'Sparsam', info: '720p · 10 fps', note: 'Für schwache Leitungen und Mobilfunk.' }
+  ];
+  var KEY = 'sc-screen-quality';
+  var quality = document.getElementById('pk-quality');
+  var note = document.getElementById('pk-quality-note');
+  var current = null;
+  try { current = localStorage.getItem(KEY); } catch (e) { /* gesperrt: Standard */ }
+  QUALITY.forEach(function (q) {
+    var option = document.createElement('option');
+    option.value = q.id;
+    option.textContent = q.name + ' – ' + q.info;
+    option.selected = q.id === current;
+    quality.appendChild(option);
+  });
+  function showNote() {
+    var q = QUALITY.filter(function (x) { return x.id === quality.value; })[0];
+    note.textContent = q ? q.note : '';
+  }
+  quality.addEventListener('change', showNote);
+  showNote();
+
   function card(source) {
     var button = document.createElement('button');
     button.type = 'button';
@@ -34,6 +64,7 @@
 
   function done() {
     if (!selected) return;
+    try { localStorage.setItem(KEY, quality.value); } catch (e) { /* dann Standard */ }
     window.picker.choose({ id: selected, audio: document.getElementById('pk-audio').checked });
   }
 
