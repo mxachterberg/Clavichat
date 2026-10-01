@@ -115,6 +115,11 @@ try {
             sc_limit('avatar:' . $me['id'], 20, 3600);
             json_out(['ok' => true] + SecureCom::setAvatar($me, $body));
 
+        case 'ice':
+            // Relay-Zugangsdaten nur für Angemeldete (siehe SecureCom::config).
+            sc_limit('ice:' . $me['id'], 60, 3600);
+            json_out(['ok' => true, 'ice' => SecureCom::iceServers(true), 'relay' => SecureCom::hasRelay()]);
+
         case 'avatars':
             json_out(['ok' => true, 'list' => SecureCom::avatars($me, $body)]);
 

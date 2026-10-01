@@ -98,7 +98,14 @@ const TB = await makeTemp('Bob');
 ok(TA.res.ok && TA.token && TA.res.kind === 'temp', 'Anna: temporäre Sitzung (' + TA.res._status + ')');
 ok(TB.res.ok && TB.token, 'Bob: temporäre Sitzung');
 
-let r = await call('poll', { i: { s: 0, o: 0, g: 0 }, tail: 300 }, TA.token);
+let r = await call('config');
+ok(r.ok && Array.isArray(r.ice) && !r.ice.some((s) => s.credential), 'öffentliche Angaben: keine Relay-Zugangsdaten');
+r = await call('ice');
+ok(!r.ok && r._status === 401, 'Relay-Zugangsdaten nur nach Anmeldung');
+r = await call('ice', {}, TA.token);
+ok(r.ok && Array.isArray(r.ice) && typeof r.relay === 'boolean', 'angemeldet: Verbindungsserver abrufbar');
+
+r = await call('poll', { i: { s: 0, o: 0, g: 0 }, tail: 300 }, TA.token);
 ok(r.ok && Array.isArray(r.i.e) && r.pv, 'Anna: erster Abruf');
 r = await call('online', {}, TA.token);
 const bobOnline = r.list && r.list.find(x => x.id === TB.id);

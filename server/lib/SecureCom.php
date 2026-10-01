@@ -112,18 +112,16 @@ class SecureCom
     }
 
     /** Öffentliche Angaben für den Browser: Verbindungsserver und Grenzen. */
+    /**
+     * Öffentliche Angaben (vor der Anmeldung): nur STUN. Zugangsdaten eines
+     * Relay-Servers (TURN) gibt es erst nach der Anmeldung über "ice" – sonst
+     * könnte jeder fremde Datenverkehr über das eigene TURN-Kontingent leiten.
+     */
     public static function config()
     {
-        $ice   = self::iceServers();
-        $relay = false;
-        foreach ($ice as $server) {
-            foreach ((array)$server['urls'] as $url) {
-                if (stripos($url, 'turn') === 0) $relay = true;
-            }
-        }
         return [
-            'ice'            => $ice,
-            'relay'          => $relay,
+            'ice'            => self::iceServers(false),
+            'relay'          => self::hasRelay(),
             'retention_days' => self::retentionDays(),
             'temp_hours'     => self::tempHours(),
             'access'         => self::accessCode() !== '' ? 'code' : 'open',
@@ -143,13 +141,15 @@ class SecureCom
      *   'securecom_turn'    => [['urls' => 'turn:…', 'username' => '…', 'credential' => '…']]
      *   'securecom_cf_turn' => ['key_id' => '…', 'api_token' => '…']   Cloudflare Realtime
      */
-    public static function iceServers()
+    /** Verbindungsserver; mit $withTurn auch Relay-Server samt Zugangsdaten. */
+    public static function iceServers($withTurn = true)
     {
         $list = [];
         $stun = cfg('securecom_stun', ['stun:stun.cloudflare.com:3478']);
         if (is_string($stun)) $stun = [$stun];
         $stun = array_values(array_filter((array)$stun, 'is_string'));
         if ($stun) $list[] = ['urls' => $stun];
+        if (!$withTurn) return $list;
 
         foreach ((array)cfg('securecom_turn', []) as $turn) {
             if (!is_array($turn) || empty($turn['urls'])) continue;
@@ -161,19 +161,33 @@ class SecureCom
 
         $cf = cfg('securecom_cf_turn', null);
         if (is_array($cf) && !empty($cf['key_id']) && !empty($cf['api_token'])) {
-            $server = self::cloudflareTurn((string)$cf['key_id'], (string)$cf['api_token']);
-            if ($server) $list[] = $server;
+            foreach (self::cloudflareTurn((string)$cf['key_id'], (string)$cf['api_token']) as $server) $list[] = $server;
         }
         return $list;
     }
 
+    /** Ist ein Relay-Server eingetragen? (ohne Cloudflare zu fragen) */
+    public static function hasRelay()
+    {
+        foreach ((array)cfg('securecom_turn', []) as $turn) {
+            if (is_array($turn) && !empty($turn['urls'])) return true;
+        }
+        $cf = cfg('securecom_cf_turn', null);
+        return is_array($cf) && !empty($cf['key_id']) && !empty($cf['api_token']);
+    }
+
     /** Kurzlebige TURN-Zugangsdaten bei Cloudflare holen und 12 h merken. */
+    /**
+     * Kurzlebige Zugangsdaten von Cloudflare Realtime TURN (12 Stunden
+     * zwischengespeichert). Cloudflare antwortet je nach Schnittstelle mit
+     * einem Server-Eintrag oder einer Liste – beides wird zu einer Liste.
+     */
     private static function cloudflareTurn($keyId, $token)
     {
         $cache = self::dir() . '/turn-cache.json';
         $data  = self::readJson($cache);
-        if ($data && ($data['x'] ?? 0) > time() && isset($data['server'])) return $data['server'];
-        if (!function_exists('curl_init')) return null;
+        if ($data && ($data['x'] ?? 0) > time() && isset($data['list'])) return (array)$data['list'];
+        if (!function_exists('curl_init')) return [];
 
         $ch = curl_init('https://rtc.live.cloudflare.com/v1/turn/keys/' . rawurlencode($keyId) . '/credentials/generate');
         curl_setopt_array($ch, [
@@ -189,17 +203,20 @@ class SecureCom
         $json = is_string($raw) ? json_decode($raw, true) : null;
         if ($code < 200 || $code >= 300 || !is_array($json) || empty($json['iceServers'])) {
             error_log('[securecom] Cloudflare TURN: HTTP ' . $code);
-            return null;
+            return [];
         }
-        $server = $json['iceServers'];
-        if (isset($server['urls'])) {
+        $servers = isset($json['iceServers']['urls']) ? [$json['iceServers']] : (array)$json['iceServers'];
+        $list = [];
+        foreach ($servers as $server) {
+            if (!is_array($server) || empty($server['urls']) || empty($server['username'])) continue;
             // Nur die TURN-Adressen – STUN steht schon in der Liste.
-            $server['urls'] = array_values(array_filter((array)$server['urls'], function ($u) {
-                return stripos($u, 'turn') === 0;
+            $urls = array_values(array_filter((array)$server['urls'], function ($u) {
+                return is_string($u) && stripos($u, 'turn') === 0;
             }));
+            if ($urls) $list[] = ['urls' => $urls, 'username' => (string)$server['username'], 'credential' => (string)($server['credential'] ?? '')];
         }
-        self::writeJson($cache, ['x' => time() + 43200, 'server' => $server]);
-        return $server;
+        if ($list) self::writeJson($cache, ['x' => time() + 43200, 'list' => $list]);
+        return $list;
     }
 
     /* ======================================================================

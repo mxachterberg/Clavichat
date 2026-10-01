@@ -117,6 +117,8 @@ erfunden.
 - Kennungen sind zufällig. Sitzungs-Token liegen beim Server nur als
   SHA-256-Hash, die Ratenbegrenzung arbeitet mit einem HMAC der IP-Adresse statt
   mit der Adresse selbst.
+- Zugangsdaten eines Relay-Servers (TURN) gibt der Server nur angemeldeten
+  Sitzungen heraus, nicht der öffentlichen Seite.
 - Keine Cookies, keine Anfragen an fremde Server (Schriften liegen bei), strenge
   Content-Security-Policy ohne Inline-Skripte.
 - Anruf-Signale verfallen nach zwei Minuten, Nachrichten nach 30 Tagen,
