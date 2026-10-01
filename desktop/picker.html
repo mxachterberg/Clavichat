@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html lang="de" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<title>Bildschirm teilen</title>
+<link rel="stylesheet" href="assets/securecom-base.css">
+<link rel="stylesheet" href="picker.css">
+<script src="assets/securecom-boot.js"></script>
+</head>
+<body>
+<main class="pk">
+  <p class="section-head"><span class="sq"></span><span class="label">BILDSCHIRM TEILEN</span><span class="rule"></span></p>
+  <p class="pk-intro">Was sollen die anderen sehen? Übertragen wird nur, was du hier wählst – Ende-zu-Ende verschlüsselt.</p>
+  <div class="pk-scroll">
+    <p class="pk-group" id="pk-screens-head">BILDSCHIRME</p>
+    <div class="pk-grid" id="pk-screens"></div>
+    <p class="pk-group" id="pk-windows-head">FENSTER</p>
+    <div class="pk-grid" id="pk-windows"></div>
+  </div>
+  <footer class="pk-foot">
+    <label class="pk-audio" id="pk-audio-row" hidden><input type="checkbox" id="pk-audio" checked> Ton des Computers mitsenden</label>
+    <span class="pk-spacer"></span>
+    <button type="button" class="btn" id="pk-cancel">Abbrechen</button>
+    <button type="button" class="btn btn--primary" id="pk-share" disabled>Teilen</button>
+  </footer>
+</main>
+<script src="picker.js"></script>
+</body>
+</html>

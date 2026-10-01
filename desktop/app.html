@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html lang="de" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SecureCom</title>
+<link rel="stylesheet" href="assets/securecom-base.css">
+<link rel="stylesheet" href="assets/securecom.css">
+<link rel="modulepreload" href="assets/securecom-core.js">
+<link rel="modulepreload" href="assets/vendor/openpgp-6.3.2.min.js">
+<script src="assets/securecom-boot.js"></script>
+</head>
+<body class="sc-body sc-in-frame">
+
+<div class="sc" id="sc" hidden>
+  <nav class="sc-rail" id="sc-rail" aria-label="Räume">
+    <button type="button" class="sc-rail-btn sc-rail-home" id="sc-home" aria-current="true" title="Direktnachrichten">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="10.5" width="14" height="10" rx="1"/><path d="M8 10.5V7a4 4 0 0 1 8 0v3.5"/></svg>
+      <span class="sc-rail-badge" id="sc-home-badge" hidden></span>
+    </button>
+    <span class="sc-rail-sep" aria-hidden="true"></span>
+    <div class="sc-rail-rooms" id="sc-rail-rooms"></div>
+    <button type="button" class="sc-rail-btn sc-rail-add" id="sc-add-room" title="Raum erstellen oder beitreten">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+    </button>
+  </nav>
+
+  <aside class="sc-side" id="sc-side">
+    <header class="sc-side-head" id="sc-side-head"></header>
+    <div class="sc-side-body" id="sc-side-body"></div>
+    <div class="sc-voicebar" id="sc-voicebar" hidden></div>
+    <footer class="sc-user" id="sc-user"></footer>
+  </aside>
+
+  <main class="sc-main" id="sc-main">
+    <header class="sc-main-head" id="sc-main-head"></header>
+    <div class="sc-banner" id="sc-banner" hidden></div>
+    <section class="sc-stage" id="sc-stage" hidden aria-label="Anruf"></section>
+    <div class="sc-thread" id="sc-thread" role="log" aria-live="polite"></div>
+    <div class="sc-typing" id="sc-typing" aria-live="polite"></div>
+    <form class="sc-compose" id="sc-compose" hidden autocomplete="off">
+      <textarea id="sc-input" rows="1" maxlength="8000" placeholder="Nachricht" spellcheck="true"></textarea>
+      <button type="submit" class="sc-send" id="sc-send" title="Senden (Enter)">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12l16-8-6 16-2.5-6.5z"/><path d="M11.5 13.5L20 4"/></svg>
+      </button>
+      <p class="sc-compose-note"><span class="sc-lock" aria-hidden="true"></span>Ende-zu-Ende verschlüsselt &middot; Enter senden, Umschalt+Enter neue Zeile</p>
+    </form>
+  </main>
+
+  <aside class="sc-members" id="sc-members" hidden></aside>
+  <div class="sc-scrim" id="sc-scrim" hidden></div>
+</div>
+
+<div class="sc-gate" id="sc-gate" hidden>
+  <div class="sc-gate-card tickbox" id="sc-gate-card"></div>
+</div>
+
+<div class="sc-boot" id="sc-boot" role="status" aria-live="polite">
+  <div class="sc-boot-box">
+    <p class="sc-boot-head"><span class="sc-boot-sq"></span>SECURECOM</p>
+    <div class="sc-boot-bar"><span id="sc-boot-fill"></span></div>
+    <p class="sc-boot-status" id="sc-boot-status">WIRD GELADEN</p>
+    <p class="sc-boot-error" id="sc-boot-error" hidden></p>
+    <button class="sc-boot-retry" id="sc-boot-retry" type="button">NEU LADEN</button>
+  </div>
+</div>
+
+<div class="sc-modal" id="sc-modal" hidden>
+  <div class="sc-modal-panel tickbox" id="sc-modal-panel" role="dialog" aria-modal="true"></div>
+</div>
+<div class="sc-toasts" id="sc-toasts" aria-live="polite"></div>
+<div id="sc-audio" hidden></div>
+
+<!-- data-api: die App reicht /api an den Server weiter (main.js).
+     data-web: dorthin zeigen Einladungslinks (setzt main.js ein). -->
+<script type="module" id="sc-script" src="assets/securecom.js"
+        data-core="assets/securecom-core.js" data-api="/api" data-web="{{WEB_URL}}"></script>
+</body>
+</html>

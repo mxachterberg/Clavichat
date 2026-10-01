@@ -1,0 +1,51 @@
+/* SecureCom — Bildschirmauswahl (Windows-App) */
+html, body { height: 100%; }
+body { overflow: hidden; }
+[hidden] { display: none !important; }
+
+.pk { display: flex; flex-direction: column; height: 100%; padding: 22px 24px 18px; }
+.pk .section-head { margin-bottom: 10px; }
+.pk-intro { margin: 0 0 16px; font-size: 13px; line-height: 1.55; color: var(--text-body); }
+.pk-scroll { flex: 1; min-height: 0; overflow-y: auto; padding: 4px 6px 10px 2px; }
+.pk-group {
+  margin: 6px 0 10px;
+  font-family: var(--mono);
+  font-size: 10.5px;
+  letter-spacing: .16em;
+  color: var(--muted);
+}
+.pk-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 12px; margin-bottom: 18px; }
+.pk-card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 8px;
+  border: 1px solid var(--border);
+  background: var(--panel);
+  color: var(--text-body);
+  text-align: left;
+  cursor: pointer;
+  transition: border-color .15s ease, background .15s ease;
+}
+.pk-card:hover { border-color: var(--accent); }
+.pk-card[aria-pressed="true"] { border-color: var(--accent); background: var(--accent-soft); color: var(--text); }
+.pk-thumb {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  aspect-ratio: 16 / 9;
+  overflow: hidden;
+  background: #000;
+}
+.pk-thumb img { width: 100%; height: 100%; object-fit: contain; }
+.pk-name {
+  overflow: hidden;
+  font-family: var(--mono);
+  font-size: 11.5px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.pk-foot { display: flex; align-items: center; gap: 10px; padding-top: 14px; border-top: 1px solid var(--border-soft); }
+.pk-spacer { flex: 1; }
+.pk-audio { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--text-body); cursor: pointer; }
+.pk-audio input { accent-color: var(--accent); }

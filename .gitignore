@@ -1,0 +1,12 @@
+# Abhängigkeiten und Build-Ergebnisse
+node_modules/
+desktop/dist/
+
+# Server: echte Einstellungen und Daten gehören nie ins Repository
+server/config.php
+server/storage/
+
+# Sonstiges
+*.log
+.DS_Store
+Thumbs.db

@@ -1,0 +1,22 @@
+Options -Indexes
+
+# Nur index.php, api.php und assets/ sind öffentlich.
+<FilesMatch "^(config\.php|config\.sample\.php)$|\.(md|log|key|json|jsonl|n|lock)$">
+  <IfModule mod_authz_core.c>
+    Require all denied
+  </IfModule>
+  <IfModule !mod_authz_core.c>
+    Order allow,deny
+    Deny from all
+  </IfModule>
+</FilesMatch>
+
+<IfModule mod_alias.c>
+  RedirectMatch 404 ^(.*/)?(lib|storage)(/|$)
+</IfModule>
+
+# Moderne Skripte mit dem richtigen Typ ausliefern.
+<IfModule mod_mime.c>
+  AddType text/javascript .js .mjs
+  AddType font/ttf .ttf
+</IfModule>

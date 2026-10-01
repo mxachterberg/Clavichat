@@ -1,0 +1,33 @@
+# Baut die Windows-App, sobald ein Versions-Tag (z. B. v1.0.0) hochgeladen
+# wird, und legt sie als Entwurf unter "Releases" ab. Keine Bausteine von
+# Dritten – nur die offiziellen GitHub-Actions und die GitHub-Kommandozeile.
+name: Windows-App
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: desktop
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+      - run: npm ci
+      - run: npx electron-builder --win nsis portable --publish never
+      - name: Release-Entwurf anlegen
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" dist/*.exe \
+            --draft --title "SecureCom $GITHUB_REF_NAME" \
+            --notes "Windows-App, gebaut von GitHub Actions aus genau diesem Stand. Nicht signiert: Windows SmartScreen fragt beim ersten Start nach."
