@@ -1,0 +1,38 @@
+/* ==========================================================================
+   SecureCom — Fenster der Windows-App
+   --------------------------------------------------------------------------
+   Eigene Titelleiste statt der hellen von Windows. Windows zeichnet rechts
+   nur noch Minimieren, Maximieren und Schließen, und zwar in den Farben,
+   die preload.js aus --bg und --text-body meldet. Die Leiste belegt den
+   Platz, den securecom.css oben für die Kopfzeile der Website freihält
+   (--nav-h). Die Website lädt diese Datei nicht.
+   ========================================================================== */
+:root { --nav-h: 36px; }
+
+.sc-titlebar {
+  position: relative;
+  z-index: 110;                       /* über Dialogen (90) und Meldungen (100) */
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  height: var(--nav-h);
+  padding: 0 16px 0 26px;             /* Symbol mittig über der Raumleiste */
+  border-bottom: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text-body);
+  font-family: var(--mono);
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: .16em;
+  white-space: nowrap;
+  user-select: none;
+  -webkit-app-region: drag;           /* ziehen, Doppelklick maximiert */
+  app-region: drag;
+}
+.sc-titlebar svg { flex: none; color: var(--accent); }
+.sc-window-blur .sc-titlebar { color: var(--muted); }
+.sc-window-blur .sc-titlebar svg { opacity: .55; }
+
+/* Dialoge beginnen unter der Leiste – sie bleibt sichtbar und greifbar. */
+.sc-modal { inset: var(--nav-h) 0 0 0; }
+.sc-modal-panel { max-height: calc(100dvh - var(--nav-h) - 40px); }

@@ -25,6 +25,8 @@ const WEB_URL  = (SCRIPT && SCRIPT.dataset.web) || (location.origin + '/app/secu
 const DESKTOP  = window.securecomDesktop || null;   // nur in der Windows-App
 // Wo ein temporärer Schlüssel lebt – im Browser-Tab oder in der laufenden App.
 const KEY_HOME = DESKTOP ? 'solange die App läuft' : 'in diesem Tab';
+// Wo Schlüssel entstehen und Passwörter bleiben.
+const LOCAL    = DESKTOP ? 'in der App' : 'im Browser';
 const SS_KEY   = 'securecom.session';
 const JOIN_KEY = 'securecom.join';
 const SLOTS    = ['mic', 'cam', 'screen', 'screenAudio'];
@@ -93,6 +95,8 @@ function el(tag, attrs) {
 
 const ICONS = {
   lock: '<rect x="5" y="10.5" width="14" height="10" rx="1"/><path d="M8 10.5V7a4 4 0 0 1 8 0v3.5"/>',
+  radio: '<path d="M9 8V3M15 8V6"/><rect x="6" y="8" width="12" height="14" rx="2"/><path d="M9.5 12h5M9.5 15h5M12 18.5h.01"/>',
+  sliders: '<path d="M4 7h10M18 7h2M4 17h4M12 17h8"/><circle cx="16" cy="7" r="2"/><circle cx="10" cy="17" r="2"/>',
   phone: '<path d="M5 4h4l2 5-2.5 1.5a11 11 0 0 0 5 5L15 13l5 2v4a2 2 0 0 1-2 2A16 16 0 0 1 3 6a2 2 0 0 1 2-2z"/>',
   video: '<rect x="3" y="6" width="13" height="12" rx="1"/><path d="M16 10l5-3v10l-5-3z"/>',
   videoOff: '<rect x="3" y="6" width="13" height="12" rx="1"/><path d="M16 10l5-3v10l-5-3z"/><path d="M2 2l20 20"/>',
@@ -592,7 +596,7 @@ function renderGate(tab, message) {
   card.append(
     el('p', { class: 'section-head' }, el('span', { class: 'sq' }), el('span', { class: 'label', text: 'SECURECOM' }), el('span', { class: 'rule' })),
     el('h1', { class: 'sc-gate-title', text: 'Sicher schreiben & telefonieren' }),
-    el('p', { class: 'sc-gate-sub', text: 'Ende-zu-Ende verschlüsselt: Deine Schlüssel entstehen in diesem Browser. Der Server leitet nur Verschlüsseltes weiter – auch der Hoster kann nicht mitlesen oder mithören.' })
+    el('p', { class: 'sc-gate-sub', text: 'Ende-zu-Ende verschlüsselt: Deine Schlüssel entstehen ' + (DESKTOP ? 'in dieser App' : 'in diesem Browser') + '. Der Server leitet nur Verschlüsseltes weiter – auch der Hoster kann nicht mitlesen oder mithören.' })
   );
   if (S.pendingJoin) {
     card.appendChild(el('p', { class: 'sc-gate-invite' }, icon('link', 15), 'Du wurdest in einen Raum eingeladen. Melde dich an oder starte eine temporäre Sitzung – danach trittst du bei.'));
@@ -639,7 +643,7 @@ function gateTemp(panel) {
     el('p', { class: 'sc-gate-note', text: 'Ohne Konto: Ein neues PGP-Schlüsselpaar entsteht jetzt ' + (DESKTOP ? 'in der App' : 'in deinem Browser') + ' und lebt nur ' + KEY_HOME + '. Nach ' + (S.cfg ? S.cfg.temp_hours : 24) + ' Stunden ohne Nutzung – oder wenn du die Sitzung beendest – löscht der Server alles, was dazugehört.' }));
   form.addEventListener('submit', async (ev) => {
     ev.preventDefault();
-    gateBusy(go, 'Schlüssel wird im Browser erzeugt …');
+    gateBusy(go, 'Schlüssel wird ' + LOCAL + ' erzeugt …');
     try {
       await startTemp(cleanName(alias.value), code ? code.querySelector('input').value : '');
     } catch (e) {
@@ -695,7 +699,7 @@ function gateRegister(panel) {
     field('Passwort wiederholen', pass2),
     el('fieldset', { class: 'sc-fieldset' },
       el('legend', { class: 'field-label', text: 'Dein PGP-Schlüssel' }),
-      el('label', { class: 'sc-check' }, keyNew, el('span', { text: 'Neues Schlüsselpaar im Browser erzeugen (empfohlen)' })),
+      el('label', { class: 'sc-check' }, keyNew, el('span', { text: 'Neues Schlüsselpaar ' + LOCAL + ' erzeugen (empfohlen)' })),
       el('label', { class: 'sc-check' }, keyOwn, el('span', { text: 'Eigenen PGP-Schlüssel verwenden' })),
       ownBox),
     code,
@@ -711,7 +715,7 @@ function gateRegister(panel) {
       toast('Der Name braucht 3–24 Zeichen: Buchstaben, Ziffern, Punkt, Strich, Unterstrich.', 'error');
       return;
     }
-    gateBusy(go, keyOwn.checked ? 'Schlüssel wird geprüft …' : 'Schlüssel wird im Browser erzeugt …');
+    gateBusy(go, keyOwn.checked ? 'Schlüssel wird geprüft …' : 'Schlüssel wird ' + LOCAL + ' erzeugt …');
     try {
       const identity = keyOwn.checked
         ? await C.importPrivateKey(armored.value, passphrase.value)
@@ -1286,7 +1290,7 @@ function renderMainHead() {
       iconBtn('users', 'Mitglieder', () => { S.membersOpen = !S.membersOpen; renderAll(); }, { 'aria-pressed': S.membersOpen ? 'true' : 'false' }));
   } else {
     head.append(el('span', { class: 'sc-head-text' },
-      el('span', { class: 'sc-head-title' }, icon('lock', 15), 'SecureCom'),
+      el('span', { class: 'sc-head-title' }, icon('radio', 15), 'SecureCom'),
       el('span', { class: 'sc-head-sub', text: 'Ende-zu-Ende verschlüsselt' })),
       el('span', { class: 'sc-head-spacer' }),
       iconBtn('info', 'Wie SecureCom schützt', showSecurityInfo));
@@ -2543,6 +2547,73 @@ async function toggleCam() {
   pushTrack('cam');
 }
 
+/* ---------- Bildschirm teilen: Qualität ----------------------------------- */
+/**
+ * rate gilt je Gegenüber im Anruf, mesh im Sprachkanal: Dort geht der
+ * Stream an jeden einzeln, also mal Zahl der Leute. Die Kennungen stehen
+ * genauso in desktop/picker.js (Auswahlfenster der Windows-App).
+ */
+const SCREEN_QUALITY = [
+  { id: 'normal', name: 'Ausgewogen', info: '1080p · 30 fps', note: 'Für das meiste genau richtig.', w: 1920, h: 1080, fps: 30, rate: 3000000, mesh: 1500000, hint: 'detail' },
+  { id: 'text', name: 'Text & Code', info: 'volle Auflösung · 15 fps', note: 'Gestochen scharf für Code, Dokumente und Tabellen.', w: 3840, h: 2160, fps: 15, rate: 4000000, mesh: 2000000, hint: 'text' },
+  { id: 'smooth', name: 'Flüssig', info: '720p · 60 fps', note: 'Für Videos und Spiele: Bewegung vor Schärfe.', w: 1280, h: 720, fps: 60, rate: 4000000, mesh: 2000000, hint: 'motion' },
+  { id: 'max', name: 'Maximal', info: '1440p · 60 fps', note: 'Beste Qualität, braucht einen schnellen Upload.', w: 2560, h: 1440, fps: 60, rate: 10000000, mesh: 4000000, hint: 'motion' },
+  { id: 'low', name: 'Sparsam', info: '720p · 10 fps', note: 'Für schwache Leitungen und Mobilfunk.', w: 1280, h: 720, fps: 10, rate: 800000, mesh: 500000, hint: 'detail' }
+];
+const SQ_KEY = 'sc-screen-quality';   // je Gerät, nicht im Tresor: der Upload hängt am Anschluss
+let screenQualityId = null;           // falls localStorage gesperrt ist
+
+function screenQuality() {
+  let id = screenQualityId;
+  try { id = localStorage.getItem(SQ_KEY) || id; } catch (e) { /* privater Modus */ }
+  return SCREEN_QUALITY.find((q) => q.id === id) || SCREEN_QUALITY[0];
+}
+
+function screenConstraints(q) {
+  return { width: { max: q.w }, height: { max: q.h }, frameRate: { ideal: q.fps, max: q.fps } };
+}
+
+function setScreenQuality(id) {
+  if (!SCREEN_QUALITY.some((q) => q.id === id)) return;
+  screenQualityId = id;
+  try { localStorage.setItem(SQ_KEY, id); } catch (e) { /* gilt dann nur bis zum Neuladen */ }
+  applyScreenQuality();
+}
+
+/** Läuft gerade eine Übertragung, gilt die gewählte Qualität sofort. */
+async function applyScreenQuality() {
+  const q = screenQuality();
+  if (M.screen && M.screen.readyState === 'live') {
+    M.screen.contentHint = q.hint;
+    try { await M.screen.applyConstraints(screenConstraints(q)); } catch (e) { /* der Browser bleibt bei der alten */ }
+  }
+  for (const p of activePeers()) p.tune();
+  if ($('sc-controls')) renderControls();
+}
+
+// Geändert in einem anderen Fenster – in der Windows-App im Auswahlfenster.
+window.addEventListener('storage', (ev) => { if (ev.key === SQ_KEY) applyScreenQuality(); });
+
+function showScreenQuality() {
+  openModal({
+    title: 'QUALITÄT DER ÜBERTRAGUNG',
+    build: (body, close) => {
+      const cur = screenQuality();
+      const list = el('div', { class: 'sc-quality' });
+      for (const q of SCREEN_QUALITY) {
+        list.appendChild(el('button', {
+          type: 'button', class: 'sc-quality-opt', 'aria-pressed': q.id === cur.id ? 'true' : 'false',
+          onclick: () => { setScreenQuality(q.id); close(); }
+        },
+        el('span', { class: 'sc-quality-name', text: q.name }),
+        el('span', { class: 'sc-quality-info', text: q.info }),
+        el('span', { class: 'sc-quality-note', text: q.note })));
+      }
+      body.append(list, el('p', { class: 'sc-note', text: 'Gilt sofort und für alle weiteren Übertragungen auf diesem Gerät. Im Sprachkanal bekommt jeder einen eigenen Stream, deshalb mit kleinerer Datenrate.' }));
+    }
+  });
+}
+
 async function toggleScreen() {
   if (M.screen) {
     stopScreen();
@@ -2553,15 +2624,16 @@ async function toggleScreen() {
     return;
   }
   try {
-    const stream = await navigator.mediaDevices.getDisplayMedia({ video: { frameRate: { ideal: 30, max: 30 } }, audio: true });
+    const stream = await navigator.mediaDevices.getDisplayMedia({ video: screenConstraints(screenQuality()), audio: true });
     M.screen = stream.getVideoTracks()[0];
-    M.screen.contentHint = 'detail';
     M.screenAudio = stream.getAudioTracks()[0] || null;
     M.screen.addEventListener('ended', stopScreen);
   } catch (e) {
     if (e && e.name !== 'NotAllowedError') toast('Bildschirm teilen ging nicht: ' + e.message, 'error');
     return;
   }
+  // In der Windows-App kann das Auswahlfenster die Qualität eben noch geändert haben.
+  await applyScreenQuality();
   pushTrack('screen');
   pushTrack('screenAudio');
 }
@@ -2786,16 +2858,24 @@ class Peer {
     this.changed();
   }
 
-  /** Datenraten deckeln – im Sprachkanal (jeder mit jedem) etwas knapper. */
+  /**
+   * Datenraten deckeln – im Sprachkanal (jeder mit jedem) knapper. Für den
+   * Bildschirm gelten Datenrate und Bildrate der gewählten Qualität.
+   */
   tune() {
     const mesh = this.opts.mesh;
-    const caps = { cam: mesh ? 500000 : 900000, screen: mesh ? 1500000 : 2500000 };
+    const q = screenQuality();
     for (const slot of ['cam', 'screen']) {
       const tx = this.tx[slot];
       if (!tx || !tx.sender.track) continue;
       const p = tx.sender.getParameters();
       if (!p.encodings || !p.encodings.length) p.encodings = [{}];
-      p.encodings[0].maxBitrate = caps[slot];
+      if (slot === 'cam') {
+        p.encodings[0].maxBitrate = mesh ? 500000 : 900000;
+      } else {
+        p.encodings[0].maxBitrate = mesh ? q.mesh : q.rate;
+        p.encodings[0].maxFramerate = q.fps;
+      }
       tx.sender.setParameters(p).catch(() => {});
     }
   }
@@ -3334,10 +3414,12 @@ function renderControls() {
   const ctl = (name, title, on, fn, extra) => el('button', {
     type: 'button', class: 'sc-ctl' + (on ? '' : ' is-off') + (extra ? ' ' + extra : ''), title: title, 'aria-label': title, onclick: fn
   }, icon(name, 20));
+  const q = screenQuality();
   appendAll(box,
     ctl(M.micOn ? 'mic' : 'micOff', M.micOn ? 'Stummschalten' : 'Mikrofon an', M.micOn && !M.deaf, toggleMic),
     ctl(M.cam ? 'video' : 'videoOff', M.cam ? 'Kamera aus' : 'Kamera an', !!M.cam, toggleCam),
     canScreen ? ctl(M.screen ? 'screen' : 'screenOff', M.screen ? 'Teilen beenden' : 'Bildschirm teilen', !!M.screen, toggleScreen) : null,
+    canScreen && M.screen ? ctl('sliders', 'Qualität: ' + q.name + ' (' + q.info + ')', true, showScreenQuality) : null,
     ctl(M.deaf ? 'headOff' : 'head', M.deaf ? 'Ton an' : 'Nichts hören', !M.deaf, toggleDeaf),
     ctl('hangup', S.voice ? 'Sprachkanal verlassen' : 'Auflegen', true, () => (S.voice ? leaveVoice() : endCall()), 'sc-ctl--hangup'));
 }
@@ -3530,8 +3612,13 @@ function showSettings() {
         }).catch(() => {});
       }
       micSel.addEventListener('change', () => { S.vault.settings.mic = micSel.value; saveVault(); });
+      const qualSel = el('select');
+      const curQ = screenQuality();
+      for (const q of SCREEN_QUALITY) qualSel.appendChild(el('option', { value: q.id, text: q.name + ' – ' + q.info, selected: q.id === curQ.id }));
+      qualSel.addEventListener('change', () => setScreenQuality(qualSel.value));
       body.append(
         field('Mikrofon', micSel, 'Namen erscheinen, sobald du einmal das Mikrofon erlaubt hast.'),
+        field('Bildschirm teilen', qualSel, 'Gilt für dieses Gerät. Während einer Übertragung lässt sie sich über den Regler-Knopf neben „Bildschirm teilen“ ändern.'),
         el('label', { class: 'sc-check' + (S.cfg.relay ? '' : ' is-disabled') }, hide, el('span', { text: S.cfg.relay
           ? 'IP-Adresse verbergen: Anrufe nur über den Relay-Server. Dein Gegenüber sieht deine IP dann nicht.'
           : 'IP-Adresse verbergen – braucht einen Relay-Server (TURN), der auf diesem Server noch nicht eingerichtet ist.' })),
@@ -3707,11 +3794,11 @@ function showSecurityInfo() {
         body.appendChild(ul);
       };
       block('VERSCHLÜSSELUNG', [
-        'Deine Identität ist ein OpenPGP-Schlüsselpaar (Curve25519: Ed25519 signiert, X25519 verschlüsselt). Es entsteht in deinem Browser.',
+        'Deine Identität ist ein OpenPGP-Schlüsselpaar (Curve25519: Ed25519 signiert, X25519 verschlüsselt). Es entsteht ' + (DESKTOP ? 'in der App' : 'in deinem Browser') + '.',
         'Direktnachrichten: Für jede Nachricht ein neuer, zufälliger AES-256-Schlüssel, der mit den öffentlichen Schlüsseln von Empfänger und Absender eingepackt wird. Dazu deine Signatur.',
         'Räume: ein gemeinsamer Raumschlüssel (AES-256-GCM). Er steht im Einladungslink hinter dem „#“ – dieser Teil einer Adresse geht nie an einen Server – oder kommt PGP-verschlüsselt vom Besitzer. Verlässt jemand den Raum, gibt es einen neuen.',
         'Anrufe und Bildschirm: WebRTC direkt zwischen den Geräten, verschlüsselt mit DTLS-SRTP. Die Schlüssel dafür handeln nur die beiden Browser aus; die Verbindungsangaben sind signiert und verschlüsselt, der Sicherheitscode zeigt, dass niemand dazwischensitzt.',
-        'Konten: Aus deinem Passwort entstehen im Browser (PBKDF2, 600.000 Runden, dann HKDF) ein Anmeldeschlüssel – beim Server nur als Hash – und ein Schlüssel, der deinen privaten Schlüssel einpackt. Das Passwort selbst verlässt den Browser nie.'
+        'Konten: Aus deinem Passwort entstehen ' + LOCAL + ' (PBKDF2, 600.000 Runden, dann HKDF) ein Anmeldeschlüssel – beim Server nur als Hash – und ein Schlüssel, der deinen privaten Schlüssel einpackt. Das Passwort selbst verlässt ' + (DESKTOP ? 'die App' : 'den Browser') + ' nie.'
       ]);
       block('VERSCHLEIERUNG', [
         'Alle Klartexte werden vor dem Verschlüsseln auf feste Größen aufgefüllt – „ok“ und ein langer Absatz sind gleich groß.',

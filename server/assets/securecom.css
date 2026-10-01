@@ -892,6 +892,28 @@ html[data-theme="light"] .sc-modal { background: rgba(40, 40, 40, .3); }
 .sc-found-actions { display: flex; flex-wrap: wrap; gap: 6px; padding: 6px 8px 4px; }
 .sc-found-actions .btn { padding: 7px 11px; }
 
+/* ---- Qualität beim Bildschirmteilen ------------------------------------- */
+.sc-quality { display: flex; flex-direction: column; gap: 8px; margin: 0 0 14px; }
+.sc-quality-opt {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 3px 12px;
+  padding: 11px 14px;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text-body);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: border-color .15s ease, background .15s ease;
+}
+.sc-quality-opt:hover { border-color: var(--accent); }
+.sc-quality-opt[aria-pressed="true"] { border-color: var(--accent); background: var(--accent-soft); }
+.sc-quality-name { font-size: 14px; font-weight: 600; color: var(--text); }
+.sc-quality-info { align-self: center; font-family: var(--mono); font-size: 11px; letter-spacing: .06em; color: var(--muted); }
+.sc-quality-opt[aria-pressed="true"] .sc-quality-info { color: var(--accent); }
+.sc-quality-note { grid-column: 1 / -1; font-size: 12.5px; line-height: 1.5; }
+
 .sc-toasts {
   position: fixed;
   right: 18px;

@@ -4,12 +4,16 @@
 <meta charset="UTF-8">
 <title>Bildschirm teilen</title>
 <link rel="stylesheet" href="assets/securecom-base.css">
+<link rel="stylesheet" href="window.css">
 <link rel="stylesheet" href="picker.css">
 <script src="assets/securecom-boot.js"></script>
 </head>
 <body>
+<header class="sc-titlebar">
+  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 8V3M15 8V6"/><rect x="6" y="8" width="12" height="14" rx="2"/><path d="M9.5 12h5M9.5 15h5M12 18.5h.01"/></svg>
+  <span>BILDSCHIRM TEILEN</span>
+</header>
 <main class="pk">
-  <p class="section-head"><span class="sq"></span><span class="label">BILDSCHIRM TEILEN</span><span class="rule"></span></p>
   <p class="pk-intro">Was sollen die anderen sehen? Übertragen wird nur, was du hier wählst – Ende-zu-Ende verschlüsselt.</p>
   <div class="pk-scroll">
     <p class="pk-group" id="pk-screens-head">BILDSCHIRME</p>
@@ -18,10 +22,15 @@
     <div class="pk-grid" id="pk-windows"></div>
   </div>
   <footer class="pk-foot">
-    <label class="pk-audio" id="pk-audio-row" hidden><input type="checkbox" id="pk-audio" checked> Ton des Computers mitsenden</label>
-    <span class="pk-spacer"></span>
-    <button type="button" class="btn" id="pk-cancel">Abbrechen</button>
-    <button type="button" class="btn btn--primary" id="pk-share" disabled>Teilen</button>
+    <div class="pk-options">
+      <label class="pk-quality"><span class="pk-label">QUALITÄT</span><select id="pk-quality"></select></label>
+      <label class="pk-audio" id="pk-audio-row" hidden><input type="checkbox" id="pk-audio" checked> Ton des Computers mitsenden</label>
+    </div>
+    <div class="pk-actions">
+      <span class="pk-note" id="pk-quality-note"></span>
+      <button type="button" class="btn" id="pk-cancel">Abbrechen</button>
+      <button type="button" class="btn btn--primary" id="pk-share" disabled>Teilen</button>
+    </div>
   </footer>
 </main>
 <script src="picker.js"></script>

@@ -1,7 +1,7 @@
 /* ==========================================================================
    SecureCom — App-Symbol zeichnen (build/icon.png, 512 × 512)
    Gleiches Motiv wie server/assets/securecom-icon.svg: dunkles Quadrat,
-   orangefarbene Eckmarken, Schloss. Ohne Grafikprogramm: Pixel per
+   orangefarbene Eckmarken, Funkgerät. Ohne Grafikprogramm: Pixel per
    Hand, vierfach überabgetastet (glatte Kanten), PNG mit zlib.
    Aufruf: npm run icon
    ========================================================================== */
@@ -30,6 +30,14 @@ function inRect(x, y, x0, y0, w, h) {
   return x >= x0 && y >= y0 && x <= x0 + w && y <= y0 + h;
 }
 
+/** Strich von (x1, y1) nach (x2, y2) mit runden Enden, halbe Breite r. */
+function onLine(x, y, x1, y1, x2, y2, r) {
+  const dx = x2 - x1;
+  const dy = y2 - y1;
+  const t = Math.max(0, Math.min(1, ((x - x1) * dx + (y - y1) * dy) / (dx * dx + dy * dy)));
+  return Math.hypot(x - (x1 + t * dx), y - (y1 + t * dy)) <= r;
+}
+
 /** Farbe am Punkt (x, y) im 64er-Raster – oder null (durchsichtig). */
 function shade(x, y) {
   if (!inRoundRect(x, y, 0, 0, 64, 64, 10)) return null;
@@ -42,18 +50,18 @@ function shade(x, y) {
   ];
   for (const r of ticks) if (inRect(x, y, r[0], r[1], r[2], r[3])) return ORANGE;
 
-  // Schlüsselloch
-  if (inRect(x, y, 30.4, 35, 3.2, 7)) return ORANGE;
+  // Lämpchen
+  if (Math.hypot(x - 32, y - 43.5) <= 2.6) return ORANGE;
 
-  const s = 1.7;   // halbe Strichstärke des Schlosses (3,4)
-  // Körper: Rahmen eines Rechtecks
-  const outer = inRoundRect(x, y, 19.5 - s, 29.5 - s, 25 + 2 * s, 18 + 2 * s, 2 + s);
-  const inner = inRect(x, y, 19.5 + s, 29.5 + s, 25 - 2 * s, 18 - 2 * s);
+  const s = 1.7;   // halbe Strichstärke des Funkgeräts (3,4)
+  // Antenne und Drehknopf
+  if (onLine(x, y, 26, 12.5, 26, 22.5, s) || onLine(x, y, 38, 18, 38, 22.5, s)) return WHITE;
+  // Gehäuse: Rahmen eines abgerundeten Rechtecks (24 × 29, Radius 4)
+  const outer = inRoundRect(x, y, 20 - s, 22.5 - s, 24 + 2 * s, 29 + 2 * s, 4 + s);
+  const inner = inRoundRect(x, y, 20 + s, 22.5 + s, 24 - 2 * s, 29 - 2 * s, 4 - s);
   if (outer && !inner) return WHITE;
-  // Bügel: Halbkreis um (32, 23.5) mit Radius 7,5, darunter zwei Striche bis 29,5
-  const d = Math.hypot(x - 32, y - 23.5);
-  if (y <= 23.5 && d >= 7.5 - s && d <= 7.5 + s) return WHITE;
-  if (y > 23.5 && y <= 29.5 && (Math.abs(x - 24.5) <= s || Math.abs(x - 39.5) <= s)) return WHITE;
+  // Lautsprecher: zwei Striche
+  if (onLine(x, y, 26.5, 30.5, 37.5, 30.5, 1.5) || onLine(x, y, 26.5, 36, 37.5, 36, 1.5)) return WHITE;
 
   return BG;
 }

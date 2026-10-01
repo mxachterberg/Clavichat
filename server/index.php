@@ -64,7 +64,7 @@ $core = 'assets/securecom-core.js?v=' . $v('securecom-core.js');
 <div class="sc" id="sc" hidden>
   <nav class="sc-rail" id="sc-rail" aria-label="Räume">
     <button type="button" class="sc-rail-btn sc-rail-home" id="sc-home" aria-current="true" title="Direktnachrichten">
-      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="10.5" width="14" height="10" rx="1"/><path d="M8 10.5V7a4 4 0 0 1 8 0v3.5"/></svg>
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 8V3M15 8V6"/><rect x="6" y="8" width="12" height="14" rx="2"/><path d="M9.5 12h5M9.5 15h5M12 18.5h.01"/></svg>
       <span class="sc-rail-badge" id="sc-home-badge" hidden></span>
     </button>
     <span class="sc-rail-sep" aria-hidden="true"></span>

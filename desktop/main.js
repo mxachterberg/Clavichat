@@ -24,6 +24,10 @@ const ORIGIN = 'app://securecom';
 const DEFAULT_SERVER = 'https://achterberg.dev';
 const SMOKE = process.argv.includes('--smoke');
 
+// Der Selbsttest bekommt ein eigenes Profil: Er stört keine laufende App
+// (eigene Einzelinstanz-Sperre) und lässt die echten Einstellungen in Ruhe.
+if (SMOKE) app.setPath('userData', path.join(app.getPath('temp'), 'SecureCom-Selbsttest'));
+
 // Im Paket liegen die Dateien unter assets/, beim Entwickeln in ../server.
 const ASSETS = fs.existsSync(path.join(__dirname, 'assets'))
   ? path.join(__dirname, 'assets')
@@ -54,6 +58,46 @@ app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required');   /
 
 let win = null;
 let config = null;
+
+/* ---------- Titelleiste in den Farben der Oberfläche ------------------------
+   Die Leiste selbst ist Teil der Seite (window.css), Windows zeichnet nur
+   noch die drei Knöpfe. preload.js meldet die Farben, sobald Hell/Dunkel
+   feststeht oder wechselt. Gemerkt für den nächsten Start. */
+const TITLEBAR_H = 36;   // wie --nav-h in window.css
+let chrome = { color: '#0b0b0d', symbolColor: '#a2a2a7' };
+
+function chromeFile() {
+  return path.join(app.getPath('userData'), 'window.json');
+}
+
+function isColor(value) {
+  return typeof value === 'string' && /^#[0-9a-f]{6}$/i.test(value);
+}
+
+function loadChrome() {
+  try {
+    const saved = JSON.parse(fs.readFileSync(chromeFile(), 'utf8'));
+    if (isColor(saved.color) && isColor(saved.symbolColor)) chrome = { color: saved.color, symbolColor: saved.symbolColor };
+  } catch (e) { /* erster Start: dunkel */ }
+}
+
+/** Ein Pixel niedriger als die Leiste: Ihre untere Linie läuft unter den Knöpfen weiter. */
+function overlay() {
+  return { color: chrome.color, symbolColor: chrome.symbolColor, height: TITLEBAR_H - 1 };
+}
+
+ipcMain.on('securecom:chrome', (event, colors) => {
+  if (!event.senderFrame || !isOurs(event.senderFrame.url)) return;
+  if (!colors || !isColor(colors.color) || !isColor(colors.symbolColor)) return;
+  const next = { color: colors.color.toLowerCase(), symbolColor: colors.symbolColor.toLowerCase() };
+  if (next.color === chrome.color && next.symbolColor === chrome.symbolColor) return;
+  chrome = next;
+  for (const w of BrowserWindow.getAllWindows()) {
+    w.setTitleBarOverlay(overlay());
+    w.setBackgroundColor(chrome.color);
+  }
+  fs.promises.writeFile(chromeFile(), JSON.stringify(chrome)).catch(() => { /* nächstes Mal */ });
+});
 
 /* ==========================================================================
    Einstellungen
@@ -132,7 +176,7 @@ async function handleApp(request) {
   const p = decodeURIComponent(url.pathname);
   if (p === '/api') return proxyApi(request);
   if (p === '/' || p === '/index.html') return serveFile(path.join(__dirname, 'app.html'), __dirname);
-  if (['/picker.html', '/picker.js', '/picker.css'].includes(p)) return serveFile(path.join(__dirname, p.slice(1)), __dirname);
+  if (['/window.css', '/picker.html', '/picker.js', '/picker.css'].includes(p)) return serveFile(path.join(__dirname, p.slice(1)), __dirname);
   if (p.indexOf('/assets/') === 0) return serveFile(path.join(ASSETS, p.slice(8)), ASSETS, { 'Cache-Control': 'max-age=31536000' });
   return respond('Nicht gefunden', 404);
 }
@@ -202,11 +246,15 @@ function openPicker(list, audioRequested) {
       parent: win || undefined,
       modal: !!win,
       width: 820,
-      height: 600,
-      minWidth: 520,
-      minHeight: 420,
+      height: 640,
+      minWidth: 560,
+      minHeight: 460,
       title: 'Bildschirm teilen',
-      backgroundColor: '#0b0b0d',
+      backgroundColor: chrome.color,
+      titleBarStyle: 'hidden',
+      titleBarOverlay: overlay(),
+      minimizable: false,
+      maximizable: false,
       autoHideMenuBar: true,
       show: false,
       webPreferences: { preload: path.join(__dirname, 'picker-preload.js'), contextIsolation: true, sandbox: true, nodeIntegration: false }
@@ -237,7 +285,9 @@ function createWindow() {
     minWidth: 380,
     minHeight: 560,
     title: 'SecureCom',
-    backgroundColor: '#0b0b0d',
+    backgroundColor: chrome.color,
+    titleBarStyle: 'hidden',          // eigene Leiste aus window.css …
+    titleBarOverlay: overlay(),       // … Windows zeichnet nur die Knöpfe
     autoHideMenuBar: true,
     show: false,
     icon: path.join(__dirname, 'build', 'icon.png'),
@@ -325,6 +375,7 @@ if (!app.requestSingleInstanceLock()) {
     }
     protocol.handle('app', handleApp);
     setupSession();
+    loadChrome();
     createWindow();
   });
 
@@ -360,12 +411,38 @@ async function smoke() {
   check('Benachrichtigungen erlaubt', (await run('Notification.permission')) === 'granted');
   await shot(win.webContents, 'smoke-2-app');
 
+  // Titelleiste: Foto des ganzen Fensters – capturePage sähe die Windows-Knöpfe nicht.
+  const frame = async (w, name) => {
+    const list = await desktopCapturer.getSources({ types: ['window'], thumbnailSize: { width: 1600, height: 1100 } });
+    const own = list.find((s) => s.id === w.getMediaSourceId());
+    if (own) fs.writeFileSync(path.join(out, name + '.png'), own.thumbnail.toPNG());
+    return !!own;
+  };
+  check('Titelleiste im App-Stil', await run("!!document.querySelector('.sc-titlebar') && !!(navigator.windowControlsOverlay && navigator.windowControlsOverlay.visible)"));
+  check('Fensterfoto mit Windows-Knöpfen', await frame(win, 'smoke-2b-fenster'));
+  await run("document.documentElement.setAttribute('data-theme', 'light'); true");
+  await wait(800);
+  check('Knöpfe folgen Hell/Dunkel', chrome.color === '#f6f6f4', chrome.color);
+  await frame(win, 'smoke-2c-hell');
+  await run("document.documentElement.setAttribute('data-theme', 'dark'); true");
+  await wait(500);
+  check('Qualität in den Einstellungen', await run("(async () => { const b = [...document.querySelectorAll('#sc-user button')].find((x) => x.title === 'Einstellungen'); b.click(); await new Promise((r) => setTimeout(r, 300)); const ok = [...document.querySelectorAll('#sc-modal-panel select')].some((s) => [...s.options].some((o) => o.value === 'smooth')); document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' })); return ok; })()"));
+
   const sources = await desktopCapturer.getSources({ types: ['screen', 'window'], thumbnailSize: { width: 320, height: 180 } });
   check('Bildschirmquellen gefunden', sources.length > 0, sources.length + ' Quellen');
   const picking = openPicker(describeSources(sources).slice(0, 6), true);
   await wait(2500);
   if (pendingPick) {
-    await shot(pendingPick.window.webContents, 'smoke-3-auswahl');
+    const pk = pendingPick.window;
+    await shot(pk.webContents, 'smoke-3-auswahl');
+    await frame(pk, 'smoke-3b-auswahl-fenster');
+    // Das Auswahlfenster legt die Qualität dort ab, wo das Hauptfenster sie liest.
+    check('Qualitätsauswahl im Auswahlfenster', (await pk.webContents.executeJavaScript("document.getElementById('pk-quality').options.length", true)) === 5);
+    const before = await run("localStorage.getItem('sc-screen-quality')");
+    await pk.webContents.executeJavaScript("localStorage.setItem('sc-screen-quality', 'smooth'); true", true);
+    await wait(500);
+    check('Qualität kommt im Hauptfenster an', (await run("localStorage.getItem('sc-screen-quality')")) === 'smooth');
+    await run(before === null ? "localStorage.removeItem('sc-screen-quality'); true" : 'localStorage.setItem(\'sc-screen-quality\', ' + JSON.stringify(before) + '); true');
     pendingPick.finish(null);
   }
   check('Auswahlfenster abbrechbar', (await picking) === null);
