@@ -155,6 +155,28 @@ ok(r.ok && r.vv === 2, 'Tresor gespeichert (Version 2)');
 r = await call('vault', { vault: C.b64(C.te.encode('y')), vv: 1 }, accToken);
 ok(!r.ok && r._status === 409 && r.vv === 2, 'Tresor: veraltete Version → Konflikt mit aktuellem Stand');
 
+console.log('\n== Server: Profilbilder');
+// Der Server prüft nur die Kennung am Anfang – ein JPEG-Gerüst genügt.
+const jpeg = new Uint8Array([0xFF, 0xD8, 0xFF, 0xE0, 0, 16, 0x4A, 0x46, 0x49, 0x46, 0, 1, 1, 0, 0, 1, 0, 1, 0, 0, 0xFF, 0xD9]);
+const sha = async (bytes) => C.toHex(new Uint8Array(await crypto.subtle.digest('SHA-256', bytes)));
+const avHash = await sha(jpeg);
+const avCard = await C.signCard(acc.privateKey, { v: 1, id: accId, kind: 'account', name: uname, av: avHash, ts: Date.now() });
+r = await call('avatar', { d: C.b64(jpeg), card: avCard }, TA.token);
+ok(!r.ok && r._status === 403, 'temporäre Sitzung: kein Profilbild');
+r = await call('avatar', { d: C.b64(C.te.encode('<svg onload="alert(1)"></svg>')), card: avCard }, accToken);
+ok(!r.ok && r._status === 422, 'kein Bild (etwa SVG mit Skript) → 422');
+r = await call('avatar', { d: C.b64(jpeg), card: avCard }, accToken);
+ok(r.ok && r.cv === 2, 'Konto setzt ein Profilbild, Karte in Version 2');
+r = await call('avatars', { ids: [accId, TA.id] }, TA.token);
+ok(r.ok && r.list.length === 1 && r.list[0].id === accId, 'Profilbild abrufbar – nur für wen es eins gibt');
+ok(r.ok && (await sha(C.unb64(r.list[0].d))) === avHash, 'Bild passt zum SHA-256-Wert auf der signierten Karte');
+r = await call('ids', { ids: [accId] }, TA.token);
+ok(r.list[0].cv === 2 && (await C.verifyCard(acc.publicKey, r.list[0].card)).av === avHash, 'Andere sehen die neue Karte samt Bildwert');
+r = await call('avatar', { d: '', card: accCard }, accToken);
+ok(r.ok, 'Profilbild entfernt');
+r = await call('avatars', { ids: [accId] }, TA.token);
+ok(r.ok && r.list.length === 0, 'danach kein Bild mehr beim Server');
+
 console.log('\n== Server: Räume');
 const roomId = C.randomId();
 const rk = C.newRoomKey();
@@ -178,6 +200,10 @@ ok(feed.some(e => e.k === 'sys' && e.ev === 'join') && feed.some(e => e.k === 'm
 const msgEntry = feed.find(e => e.k === 'msg');
 const readRoom = await C.openRoom(msgEntry.d, rkey, roomId, [TA.publicKey, TB.publicKey]);
 ok(readRoom.obj.body === 'Hallo zusammen' && readRoom.signer === TB.fingerprint, 'Raumnachricht entschlüsselt, Bob als Absender bestätigt');
+const bigMeta = await C.sealRoom({ t: 'meta', name: 'Test', ch: [{ id: 'c1', name: 'allgemein' }], vch: [{ id: '', name: 'Sprache' }, { id: 'zwei', name: 'Zwei' }],
+  img: 'data:image/jpeg;base64,' + 'A'.repeat(20000) }, rkey, 1, roomId, TA.privateKey);
+r = await call('room.meta', { id: roomId, meta: bigMeta, e: 1 }, TA.token);
+ok(r.ok && bigMeta.length > 16384, 'Raumdaten mit Raumbild (' + Math.round(bigMeta.length / 1024) + ' KB, verschlüsselt) passen');
 
 r = await call('room.voice', { id: roomId, on: true }, TA.token);
 ok(r.ok && r.vc.includes(TA.id), 'Anna betritt den Sprachkanal');
@@ -189,6 +215,17 @@ ok(r.r[roomId].e.some(e => e.k === 'sig' && e.to === TB.id), 'Bob bekommt das an
 ok(r.rooms[roomId].vc.includes(TA.id), 'Bob sieht Anna im Sprachkanal');
 r = await call('poll', { r: { [roomId]: { s: 0, o: 0, g: 0 } } }, TA.token);
 ok(!r.r[roomId].e.some(e => e.k === 'sig'), 'Anna bekommt ihr eigenes Signal an Bob nicht zurück');
+
+r = await call('room.voice', { id: roomId, on: true, ch: 'zwei' }, TB.token);
+ok(r.ok && r.vcs.zwei?.includes(TB.id) && r.vcs['']?.includes(TA.id), 'Bob betritt einen zweiten Sprachkanal');
+r = await call('poll', { v: [roomId] }, TA.token);
+ok(r.rooms[roomId].vc.join() === TA.id && r.rooms[roomId].vcs.zwei?.join() === TB.id, 'Abruf: erster Kanal für ältere Apps, alle Kanäle getrennt');
+r = await call('room.voice', { id: roomId, on: true, ch: '' }, TB.token);
+ok(r.ok && !r.vcs.zwei && r.vcs[''].length === 2, 'Kanalwechsel: Bob ist nur noch im ersten Kanal');
+r = await call('room.voice', { id: roomId, on: true, ch: 'nicht gültig!' }, TB.token);
+ok(!r.ok && r._status === 422, 'ungültige Kanalkennung → 422');
+r = await call('room.voice', { id: roomId, on: false }, TB.token);
+ok(r.ok && !r.vcs[''].includes(TB.id), 'Bob verlässt die Sprache');
 
 r = await call('room.kick', { id: roomId, member: TB.id }, TB.token);
 ok(!r.ok && r._status === 403, 'Nur der Besitzer darf entfernen');

@@ -11,9 +11,10 @@
      liest sie, sobald die Übertragung startet. */
   var QUALITY = [
     { id: 'normal', name: 'Ausgewogen', info: '1080p · 30 fps', note: 'Für das meiste genau richtig.' },
-    { id: 'text', name: 'Text & Code', info: 'volle Auflösung · 15 fps', note: 'Gestochen scharf für Code, Dokumente und Tabellen.' },
+    { id: 'text', name: 'Text & Code', info: 'Originalauflösung · 15 fps', note: 'Gestochen scharf für Code, Dokumente und Tabellen.' },
     { id: 'smooth', name: 'Flüssig', info: '720p · 60 fps', note: 'Für Videos und Spiele: Bewegung vor Schärfe.' },
-    { id: 'max', name: 'Maximal', info: '1440p · 60 fps', note: 'Beste Qualität, braucht einen schnellen Upload.' },
+    { id: 'max', name: 'Hoch', info: '1440p · 60 fps', note: 'Scharf und flüssig, braucht einen schnellen Upload.' },
+    { id: 'source', name: 'Quelle', info: 'Originalauflösung · 60 fps', note: 'Der Bildschirm 1:1 und flüssig – braucht den meisten Upload.' },
     { id: 'low', name: 'Sparsam', info: '720p · 10 fps', note: 'Für schwache Leitungen und Mobilfunk.' }
   ];
   var KEY = 'sc-screen-quality';

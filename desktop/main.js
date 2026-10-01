@@ -26,7 +26,13 @@ const SMOKE = process.argv.includes('--smoke');
 
 // Der Selbsttest bekommt ein eigenes Profil: Er stört keine laufende App
 // (eigene Einzelinstanz-Sperre) und lässt die echten Einstellungen in Ruhe.
-if (SMOKE) app.setPath('userData', path.join(app.getPath('temp'), 'SecureCom-Selbsttest'));
+// Verdeckt ihn ein Vollbildfenster (etwa ein Video), soll er trotzdem
+// zeichnen – sonst sind Bildschirmfotos veraltet.
+if (SMOKE) {
+  app.setPath('userData', path.join(app.getPath('temp'), 'SecureCom-Selbsttest'));
+  app.commandLine.appendSwitch('disable-features', 'CalculateNativeWinOcclusion');
+  app.commandLine.appendSwitch('disable-backgrounding-occluded-windows');
+}
 
 // Im Paket liegen die Dateien unter assets/, beim Entwickeln in ../server.
 const ASSETS = fs.existsSync(path.join(__dirname, 'assets'))
@@ -270,7 +276,8 @@ function openPicker(list, audioRequested) {
     pendingPick = { window: picker, finish: finish };
     picker.on('closed', () => finish(null));
     picker.webContents.once('did-finish-load', () => picker.webContents.send('picker:sources', { list: list, audio: !!audioRequested }));
-    picker.once('ready-to-show', () => picker.show());
+    // Im Selbsttest ohne Fokus – er soll niemanden aus dem Vordergrund holen.
+    picker.once('ready-to-show', () => (SMOKE ? picker.showInactive() : picker.show()));
     picker.loadURL(ORIGIN + '/picker.html');
   });
 }
@@ -437,7 +444,7 @@ async function smoke() {
     await shot(pk.webContents, 'smoke-3-auswahl');
     await frame(pk, 'smoke-3b-auswahl-fenster');
     // Das Auswahlfenster legt die Qualität dort ab, wo das Hauptfenster sie liest.
-    check('Qualitätsauswahl im Auswahlfenster', (await pk.webContents.executeJavaScript("document.getElementById('pk-quality').options.length", true)) === 5);
+    check('Qualitätsauswahl im Auswahlfenster', (await pk.webContents.executeJavaScript("document.getElementById('pk-quality').options.length", true)) === 6);
     const before = await run("localStorage.getItem('sc-screen-quality')");
     await pk.webContents.executeJavaScript("localStorage.setItem('sc-screen-quality', 'smooth'); true", true);
     await wait(500);

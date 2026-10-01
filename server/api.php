@@ -111,6 +111,13 @@ try {
             sc_limit('card:' . $me['id'], 30, 3600);
             json_out(['ok' => true] + SecureCom::updateCard($me, $body));
 
+        case 'avatar':
+            sc_limit('avatar:' . $me['id'], 20, 3600);
+            json_out(['ok' => true] + SecureCom::setAvatar($me, $body));
+
+        case 'avatars':
+            json_out(['ok' => true, 'list' => SecureCom::avatars($me, $body)]);
+
         case 'online':
             json_out(['ok' => true, 'list' => SecureCom::online($me)]);
 

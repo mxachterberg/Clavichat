@@ -97,6 +97,7 @@ const ICONS = {
   lock: '<rect x="5" y="10.5" width="14" height="10" rx="1"/><path d="M8 10.5V7a4 4 0 0 1 8 0v3.5"/>',
   radio: '<path d="M9 8V3M15 8V6"/><rect x="6" y="8" width="12" height="14" rx="2"/><path d="M9.5 12h5M9.5 15h5M12 18.5h.01"/>',
   sliders: '<path d="M4 7h10M18 7h2M4 17h4M12 17h8"/><circle cx="16" cy="7" r="2"/><circle cx="10" cy="17" r="2"/>',
+  image: '<rect x="3" y="4" width="18" height="16" rx="1"/><circle cx="9" cy="10" r="2"/><path d="M21 16l-5-5L5 20"/>',
   phone: '<path d="M5 4h4l2 5-2.5 1.5a11 11 0 0 0 5 5L15 13l5 2v4a2 2 0 0 1-2 2A16 16 0 0 1 3 6a2 2 0 0 1 2-2z"/>',
   video: '<rect x="3" y="6" width="13" height="12" rx="1"/><path d="M16 10l5-3v10l-5-3z"/>',
   videoOff: '<rect x="3" y="6" width="13" height="12" rx="1"/><path d="M16 10l5-3v10l-5-3z"/><path d="M2 2l20 20"/>',
@@ -498,6 +499,8 @@ async function resolveIdentity(raw) {
     armored: raw.pub,
     cv: raw.cv,
     name: cleanName(card.name),
+    // Profilbild: nur Konten; die signierte Karte nennt seinen SHA-256-Wert.
+    av: raw.k === 'account' && /^[0-9a-f]{64}$/.test(card.av || '') ? card.av : null,
     on: 'on' in raw ? raw.on : (cur ? cur.on : null),
     changed: false
   };
@@ -505,6 +508,7 @@ async function resolveIdentity(raw) {
   if (c && c.fp !== ident.fp) ident.changed = true;
   S.ids.set(ident.id, ident);
   S.keyringCache = null;
+  wantAvatar(ident);
   return ident;
 }
 
@@ -568,9 +572,134 @@ function avatar(ident, size) {
   const own = ident && S.me && ident.id === S.me.id;
   const name = ident ? (own ? S.me.name : ident.name) || '' : '?';
   const letters = (name.replace(/[^\p{L}\p{N}]/gu, '').slice(0, 2) || String(ident && ident.fp || '??').slice(-2)).toUpperCase();
-  const a = el('span', { class: 'sc-av' + (size ? ' sc-av--' + size : ''), text: letters, 'aria-hidden': 'true' });
+  const url = avatarUrl(ident);
+  const a = el('span', { class: 'sc-av' + (size ? ' sc-av--' + size : '') + (url ? ' has-img' : ''), text: url ? null : letters, 'aria-hidden': 'true' },
+    url ? el('img', { src: url, alt: '', draggable: 'false' }) : null);
   if (ident) a.style.setProperty('--hue', hueOf(ident.fp));
   return a;
+}
+
+/* ---------- Profilbilder (nur Konten) -------------------------------------- */
+/**
+ * Öffentlich wie der Name. Die signierte Karte nennt den SHA-256-Wert des
+ * Bildes; gezeigt wird ein geladenes Bild nur, wenn es genau dazu passt –
+ * der Server kann es also nicht unbemerkt austauschen.
+ */
+const AV = new Map();         // SHA-256 -> Objekt-URL ('' = fehlt oder passt nicht)
+const avWanted = new Map();   // Kennung -> erwarteter SHA-256-Wert
+let avTimer = 0;
+
+function avatarUrl(ident) {
+  return ident && ident.av ? AV.get(ident.av) || null : null;
+}
+
+function wantAvatar(ident) {
+  if (!ident || !ident.av || AV.has(ident.av)) return;
+  avWanted.set(ident.id, ident.av);
+  if (!avTimer) avTimer = setTimeout(loadAvatars, 60);
+}
+
+async function sha256Hex(bytes) {
+  return C.toHex(new Uint8Array(await crypto.subtle.digest('SHA-256', bytes)));
+}
+
+function imageType(bytes) {
+  if (bytes[0] === 0x89 && bytes[1] === 0x50) return 'image/png';
+  if (bytes[0] === 0x52 && bytes[8] === 0x57) return 'image/webp';
+  return 'image/jpeg';
+}
+
+async function loadAvatars() {
+  avTimer = 0;
+  const batch = [...avWanted.entries()].slice(0, 50);
+  for (const [id] of batch) avWanted.delete(id);
+  if (!batch.length || !S.token) return;
+  try {
+    const r = await api('avatars', { ids: batch.map((b) => b[0]) });
+    const got = new Map(r.list.map((item) => [item.id, item.d]));
+    for (const [id, want] of batch) {
+      if (AV.has(want)) continue;
+      const data = got.get(id);
+      const bytes = data ? C.unb64(data) : null;
+      const ok = bytes && (await sha256Hex(bytes)) === want;
+      AV.set(want, ok ? URL.createObjectURL(new Blob([bytes], { type: imageType(bytes) })) : '');
+    }
+    scheduleRender();
+  } catch (e) {
+    for (const [id, want] of batch) if (!avWanted.has(id)) avWanted.set(id, want);
+    if (!avTimer) avTimer = setTimeout(loadAvatars, 8000);
+    return;
+  }
+  if (avWanted.size && !avTimer) avTimer = setTimeout(loadAvatars, 60);
+}
+
+/** Datei wählen lassen. Ergebnis: die Datei oder null (abgebrochen). */
+function pickImage() {
+  return new Promise((resolve) => {
+    const input = el('input', { type: 'file', accept: 'image/png,image/jpeg,image/webp,image/gif' });
+    input.addEventListener('change', () => resolve((input.files && input.files[0]) || null));
+    input.addEventListener('cancel', () => resolve(null));
+    input.click();
+  });
+}
+
+/**
+ * Quadratischer Ausschnitt aus der Mitte, verkleinert und als JPEG neu
+ * kodiert. Dabei fallen alle Metadaten weg (Ort, Kamera, Datum).
+ */
+async function squareImage(file, size, quality) {
+  if (file.size > 15 * 1024 * 1024) throw new Error('Das Bild ist zu groß (höchstens 15 MB).');
+  let bitmap;
+  try { bitmap = await createImageBitmap(file); } catch (e) { throw new Error('Dieses Bild kann der Browser nicht lesen.'); }
+  const side = Math.min(bitmap.width, bitmap.height);
+  const canvas = document.createElement('canvas');
+  canvas.width = canvas.height = size;
+  const ctx = canvas.getContext('2d');
+  ctx.fillStyle = '#0b0b0d';               // durchsichtige Bilder: dunkler Grund
+  ctx.fillRect(0, 0, size, size);
+  ctx.imageSmoothingQuality = 'high';
+  ctx.drawImage(bitmap, (bitmap.width - side) / 2, (bitmap.height - side) / 2, side, side, 0, 0, size, size);
+  if (bitmap.close) bitmap.close();
+  const blob = await new Promise((resolve) => canvas.toBlob(resolve, 'image/jpeg', quality));
+  if (!blob) throw new Error('Das Bild ließ sich nicht umwandeln.');
+  return new Uint8Array(await blob.arrayBuffer());
+}
+
+/** Eigenes Profilbild setzen (oder mit remove entfernen): Bild + neu signierte Karte. */
+async function setProfilePicture(remove) {
+  try {
+    let bytes = null;
+    if (!remove) {
+      const file = await pickImage();
+      if (!file) return false;
+      bytes = await squareImage(file, 192, 0.86);
+    }
+    const hash = bytes ? await sha256Hex(bytes) : null;
+    const fields = { v: 1, id: S.me.id, kind: 'account', name: S.me.name, ts: Date.now() };
+    if (hash) fields.av = hash;
+    const card = await C.signCard(S.me.priv, fields);
+    await api('avatar', { d: bytes ? C.b64(bytes) : '', card: card });
+    if (hash && !AV.get(hash)) AV.set(hash, URL.createObjectURL(new Blob([bytes], { type: 'image/jpeg' })));
+    S.me.av = hash;
+    const me = S.ids.get(S.me.id);
+    if (me) me.av = hash;
+    renderAll();
+    toast(hash ? 'Profilbild gespeichert.' : 'Profilbild entfernt.', 'ok');
+    return true;
+  } catch (e) {
+    toast(e.message, 'error');
+    return false;
+  }
+}
+
+/** Eigene Karte (nach Anmeldung oder Neuladen): Name und Profilbild übernehmen. */
+async function applyOwnCard(raw) {
+  const card = raw ? await C.verifyCard(S.me.pub, raw) : null;
+  if (!card || card.id !== S.me.id) return;
+  S.me.name = cleanName(card.name);
+  S.me.av = S.mode === 'account' && /^[0-9a-f]{64}$/.test(card.av || '') ? card.av : null;
+  const me = S.ids.get(S.me.id);
+  if (me) { me.name = S.me.name; me.av = S.me.av; wantAvatar(me); }
 }
 
 function kindBadge(ident) {
@@ -790,6 +919,7 @@ async function loginAccount(username, password, remember) {
     try { S.vault = mergeVault(emptyVault(), JSON.parse(await C.openText(wrapKey, r.vault, vaultAad()))); } catch (e) { /* leer */ }
   }
   setMe(identity, r.id, 'account', r.username, r.vis !== false);
+  await applyOwnCard(r.card);
   await rememberAccount(remember, r.username, r.id, r.token, r.wrapped, keys.wrapRaw);
   await enterApp();
 }
@@ -854,9 +984,7 @@ async function restoreSession() {
   try {
     const me = await api('me');
     S.me.vis = me.vis !== false;
-    const card = await C.verifyCard(S.me.pub, me.card);
-    if (card && card.id === S.me.id) S.me.name = cleanName(card.name);
-    S.ids.get(S.me.id).name = S.me.name;
+    await applyOwnCard(me.card);
     if (S.mode === 'account') {
       const v = await api('vault.get');
       S.vv = v.vv;
@@ -1081,11 +1209,13 @@ function renderRail() {
     for (const n of room.unread.values()) u += n;
     const b = el('button', {
       type: 'button',
-      class: 'sc-rail-btn sc-rail-room' + (u ? ' has-unread' : '') + (room.vc.length ? ' has-voice' : ''),
+      class: 'sc-rail-btn sc-rail-room' + (u ? ' has-unread' : '') + (room.vc.length ? ' has-voice' : '') + (room.meta.img ? ' has-img' : ''),
       title: room.meta.name,
       'aria-current': S.view.kind === 'room' && S.view.rid === room.id ? 'true' : 'false',
       onclick: () => openRoom(room.id)
-    }, el('span', { class: 'sc-rail-initials', text: initials(room.meta.name) }));
+    }, room.meta.img
+      ? el('span', { class: 'sc-rail-initials sc-rail-pic' }, el('img', { src: room.meta.img, alt: '', draggable: 'false' }))
+      : el('span', { class: 'sc-rail-initials', text: initials(room.meta.name) }));
     b.style.setProperty('--hue', hueOf(C.toHex(C.unb64url(room.id)).slice(-6)));
     box.appendChild(b);
   }
@@ -1170,7 +1300,8 @@ function personRow(ident, onclick, opts) {
 
 function renderRoomSide(head, body, room) {
   const isOwner = room.owner === S.me.id;
-  head.append(el('span', { class: 'sc-side-title', text: room.meta.name, title: room.meta.name }),
+  head.append(room.meta.img ? el('img', { class: 'sc-side-pic', src: room.meta.img, alt: '' }) : null,
+    el('span', { class: 'sc-side-title', text: room.meta.name, title: room.meta.name }),
     iconBtn('more', 'Raum-Menü', () => roomMenu(room)));
 
   body.appendChild(sectionHead('TEXTKANÄLE', isOwner ? iconBtn('plus', 'Kanal anlegen', () => addChannel(room), { class: 'sc-ibtn sc-ibtn--tiny' }) : null));
@@ -1187,23 +1318,26 @@ function renderRoomSide(head, body, room) {
   }
   body.appendChild(chl);
 
-  body.appendChild(sectionHead('SPRACHE'));
-  const inHere = S.voice && S.voice.rid === room.id;
+  body.appendChild(sectionHead('SPRACHKANÄLE', isOwner ? iconBtn('plus', 'Sprachkanal anlegen', () => addVoiceChannel(room), { class: 'sc-ibtn sc-ibtn--tiny' }) : null));
   const vbox = el('div', { class: 'sc-list' });
-  vbox.appendChild(el('button', {
-    type: 'button',
-    class: 'sc-chan sc-chan--voice' + (inHere ? ' is-joined' : ''),
-    title: inHere ? 'Du bist im Sprachkanal' : 'Sprachkanal betreten',
-    onclick: () => (inHere ? setView({ kind: 'room', rid: room.id, ch: S.view.ch }) : joinVoice(room.id))
-  }, icon('speaker', 15), el('span', { class: 'sc-chan-name', text: 'Sprache' }),
-  el('span', { class: 'sc-chan-meta', text: room.vc.length ? room.vc.length + '/' + (S.cfg.limits.voice || 8) : '' })));
-  for (const id of room.vc) {
-    const ident = S.ids.get(id);
-    const peer = inHere && S.voice.peers.get(id);
-    const muted = id === S.me.id ? !(M.micOn && !M.deaf) : (peer && !peer.remoteState.mic);
-    vbox.appendChild(el('div', { class: 'sc-vmember', dataset: { speak: id } },
-      avatar(ident, 'xs'), el('span', { class: 'sc-vmember-name', text: displayName(ident) }),
-      muted ? icon('micOff', 13) : null));
+  for (const vch of room.meta.vch) {
+    const inHere = !!(S.voice && S.voice.rid === room.id && S.voice.ch === vch.id);
+    const people = voiceMembers(room, vch.id);
+    vbox.appendChild(el('button', {
+      type: 'button',
+      class: 'sc-chan sc-chan--voice' + (inHere ? ' is-joined' : ''),
+      title: inHere ? 'Du bist in diesem Sprachkanal' : 'Sprachkanal betreten',
+      onclick: () => (inHere ? setView({ kind: 'room', rid: room.id, ch: S.view.ch }) : joinVoice(room.id, vch.id))
+    }, icon('speaker', 15), el('span', { class: 'sc-chan-name', text: vch.name }),
+    el('span', { class: 'sc-chan-meta', text: people.length ? people.length + '/' + (S.cfg.limits.voice || 8) : '' })));
+    for (const id of people) {
+      const ident = S.ids.get(id);
+      const peer = inHere && S.voice.peers.get(id);
+      const muted = id === S.me.id ? !(M.micOn && !M.deaf) : (peer && !peer.remoteState.mic);
+      vbox.appendChild(el('div', { class: 'sc-vmember', dataset: { speak: id } },
+        avatar(ident, 'xs'), el('span', { class: 'sc-vmember-name', text: displayName(ident) }),
+        muted ? icon('micOff', 13) : null));
+    }
   }
   body.appendChild(vbox);
 
@@ -1228,7 +1362,8 @@ function renderVoicebar() {
     const room = S.rooms.get(S.voice.rid);
     const connected = [...S.voice.peers.values()].some((p) => p.pc.connectionState === 'connected');
     title = connected || !S.voice.peers.size ? 'Sprache verbunden' : 'Verbindet …';
-    sub = room ? room.meta.name : '';
+    const vch = room && room.meta.vch.find((c) => c.id === S.voice.ch);
+    sub = room ? room.meta.name + (vch && room.meta.vch.length > 1 ? ' · ' + vch.name : '') : '';
     stateClass = ' is-live';
     onOpen = () => openRoom(S.voice.rid);
     onEnd = () => leaveVoice();
@@ -1284,7 +1419,7 @@ function renderMainHead() {
         el('span', { class: 'sc-head-title' }, icon('hash', 16), ch ? ch.name : '—'),
         el('span', { class: 'sc-head-sub', text: room.meta.name + ' · ' + room.members.length + ' Mitglieder' })),
       el('span', { class: 'sc-head-spacer' }),
-      iconBtn('speaker', S.voice && S.voice.rid === room.id ? 'Sprachkanal verlassen' : 'Sprachkanal betreten',
+      iconBtn('speaker', S.voice && S.voice.rid === room.id ? 'Sprachkanal verlassen' : 'Sprachkanal „' + room.meta.vch[0].name + '“ betreten',
         () => (S.voice && S.voice.rid === room.id ? leaveVoice() : joinVoice(room.id))),
       iconBtn('userPlus', 'Einladen', () => inviteDialog(room)),
       iconBtn('users', 'Mitglieder', () => { S.membersOpen = !S.membersOpen; renderAll(); }, { 'aria-pressed': S.membersOpen ? 'true' : 'false' }));
@@ -1904,13 +2039,43 @@ function storeRoomKey(rid, epoch, raw) {
   r.k[epoch] = raw;
 }
 
+// Der erste Sprachkanal hat die leere Kennung – so kennen ihn auch ältere Fassungen.
+const FIRST_VOICE = { id: '', name: 'Sprache' };
+
 function newRoomState(raw) {
   return {
     id: raw.id, owner: raw.owner, epoch: raw.epoch, metaRaw: null, metaEpoch: 0,
-    meta: { name: 'Raum', ch: [{ id: 'main', name: 'allgemein' }] },
-    members: [], vc: [], rev: -1, cursor: null, msgs: new Map(), byId: new Map(),
+    meta: { name: 'Raum', ch: [{ id: 'main', name: 'allgemein' }], vch: [FIRST_VOICE], img: '' },
+    members: [], vc: [], vcs: {}, rev: -1, cursor: null, msgs: new Map(), byId: new Map(),
     unread: new Map(), pending: [], pendingKey: false, lastCh: null
   };
+}
+
+/**
+ * Wer in welchem Sprachkanal ist (vom Server: Kanal -> Kennungen). vc ist
+ * die Gesamtliste. Ein Server ohne Kanäle liefert nur vc – dann ist das
+ * der erste Kanal.
+ */
+function setVoiceState(room, vcs, vc) {
+  const src = vcs && typeof vcs === 'object' && !Array.isArray(vcs) ? vcs : { '': Array.isArray(vc) ? vc : [] };
+  const map = {};
+  for (const ch of Object.keys(src)) {
+    const ids = Array.isArray(src[ch]) ? src[ch].filter((id) => typeof id === 'string') : [];
+    if (ids.length) map[ch] = ids;
+  }
+  room.vcs = map;
+  room.vc = [...new Set(Object.values(map).flat())];
+}
+
+function voiceMembers(room, ch) {
+  return (room && room.vcs && room.vcs[ch || '']) || [];
+}
+
+/** Raumdaten zum Verschlüsseln: alles Bisherige, dazu die Änderungen. */
+function metaOf(room, changes) {
+  const m = Object.assign({ name: room.meta.name, ch: room.meta.ch, vch: room.meta.vch, img: room.meta.img || '' }, changes || {});
+  if (!m.img) delete m.img;
+  return m;
 }
 
 async function loadRooms() {
@@ -1923,7 +2088,7 @@ async function loadRooms() {
     room.owner = raw.owner;
     room.epoch = raw.epoch;
     room.members = raw.members;
-    room.vc = raw.vc;
+    setVoiceState(room, raw.vcs, raw.vc);
     room.rev = raw.rev;
     room.pendingKey = !roomKeyRaw(room.id, room.epoch);
     await ensureIds(raw.members.map((m) => m.id));
@@ -1948,7 +2113,15 @@ async function decryptMeta(room) {
     const ch = Array.isArray(res.obj.ch) ? res.obj.ch
       .filter((c) => c && /^[A-Za-z0-9_-]{1,22}$/.test(c.id)).slice(0, 30)
       .map((c) => ({ id: c.id, name: cleanName(c.name).toLowerCase().replace(/\s+/g, '-').slice(0, 30) || 'kanal' })) : [];
-    room.meta = { name: cleanName(res.obj.name) || 'Raum', ch: ch.length ? ch : [{ id: 'main', name: 'allgemein' }] };
+    // Sprachkanäle: der erste ("") immer, weitere aus den Raumdaten.
+    const vch = Array.isArray(res.obj.vch) ? res.obj.vch
+      .filter((c) => c && typeof c.id === 'string' && (c.id === '' || /^[A-Za-z0-9_-]{1,22}$/.test(c.id))).slice(0, 20)
+      .map((c) => ({ id: c.id, name: cleanName(c.name).slice(0, 30) || 'Sprache' })) : [];
+    if (!vch.some((c) => c.id === '')) vch.unshift(FIRST_VOICE);
+    // Raumbild: nur ein eingebettetes Bild, nie eine Adresse.
+    const img = typeof res.obj.img === 'string' && res.obj.img.length <= 60000
+      && /^data:image\/(jpeg|png|webp);base64,[A-Za-z0-9+/]+=*$/.test(res.obj.img) ? res.obj.img : '';
+    room.meta = { name: cleanName(res.obj.name) || 'Raum', ch: ch.length ? ch : [{ id: 'main', name: 'allgemein' }], vch: vch, img: img };
     for (const c of room.meta.ch) if (!room.msgs.has(c.id)) room.msgs.set(c.id, []);
   } catch (e) { /* bleibt beim Platzhalter */ }
 }
@@ -2006,7 +2179,7 @@ async function createRoom(name) {
   const raw = C.newRoomKey();
   const key = await C.importRoomKey(raw);
   const ch = [{ id: C.randomId().slice(0, 10), name: 'allgemein' }];
-  const meta = await C.sealRoom({ v: 1, t: 'meta', room: rid, name: name, ch: ch, from: S.me.id, ts: Date.now() }, key, 1, rid, S.me.priv);
+  const meta = await C.sealRoom({ v: 1, t: 'meta', room: rid, name: name, ch: ch, vch: [FIRST_VOICE], from: S.me.id, ts: Date.now() }, key, 1, rid, S.me.priv);
   // Schlüssel zuerst sichern – ohne ihn wäre der Raum unlesbar.
   storeRoomKey(rid, 1, raw);
   await saveVault(true);
@@ -2038,8 +2211,10 @@ function roomMenu(room) {
       appendAll(body,
         item('userPlus', 'Einladen', () => inviteDialog(room)),
         S.voice && S.voice.rid === room.id ? item('leave', 'Sprachkanal verlassen', () => leaveVoice()) : item('speaker', 'Sprachkanal betreten', () => joinVoice(room.id)),
-        owner ? item('hash', 'Kanal anlegen', () => addChannel(room)) : null,
+        owner ? item('hash', 'Textkanal anlegen', () => addChannel(room)) : null,
+        owner ? item('speaker', 'Sprachkanal anlegen', () => addVoiceChannel(room)) : null,
         owner ? item('edit', 'Raum umbenennen', () => renameRoom(room)) : null,
+        owner ? item('image', room.meta.img ? 'Raumbild ändern' : 'Raumbild festlegen', () => roomPicture(room)) : null,
         owner ? item('key', 'Raumschlüssel erneuern', () => rotateRoom(room.id, true)) : null,
         item('leave', 'Raum verlassen', () => leaveRoom(room), true),
         owner ? item('trash', 'Raum löschen', () => deleteRoom(room), true) : null,
@@ -2113,13 +2288,69 @@ function addChannel(room) {
         go.disabled = true;
         try {
           const ch = room.meta.ch.concat([{ id: C.randomId().slice(0, 10), name: n }]);
-          await updateMeta(room, { name: room.meta.name, ch: ch });
+          await updateMeta(room, metaOf(room, { ch: ch }));
           close();
           openRoom(room.id, ch[ch.length - 1].id);
         } catch (e) { go.disabled = false; toast(e.message, 'error'); }
       });
       name.addEventListener('keydown', (ev) => { if (ev.key === 'Enter') go.click(); });
       body.append(field('Name', name), go);
+    }
+  });
+}
+
+function addVoiceChannel(room) {
+  openModal({
+    title: 'SPRACHKANAL ANLEGEN',
+    build: (body, close) => {
+      const name = el('input', { type: 'text', maxlength: '30', placeholder: 'z. B. Besprechung' });
+      const go = el('button', { type: 'button', class: 'btn btn--primary btn--block', text: 'Anlegen' });
+      go.addEventListener('click', async () => {
+        const n = cleanName(name.value).slice(0, 30);
+        if (!n) { name.focus(); return; }
+        if (room.meta.vch.length >= 20) { toast('Mehr als 20 Sprachkanäle gehen nicht.', 'error'); return; }
+        go.disabled = true;
+        try {
+          await updateMeta(room, metaOf(room, { vch: room.meta.vch.concat([{ id: C.randomId().slice(0, 10), name: n }]) }));
+          close();
+        } catch (e) { go.disabled = false; toast(e.message, 'error'); }
+      });
+      name.addEventListener('keydown', (ev) => { if (ev.key === 'Enter') go.click(); });
+      body.append(field('Name', name, 'Der Name ist wie alles im Raum verschlüsselt. Jeder Sprachkanal fasst bis zu ' + (S.cfg.limits.voice || 8) + ' Personen.'), go);
+    }
+  });
+}
+
+/** Raumbild: klein (128 × 128) und verschlüsselt in den Raumdaten – der Server sieht es nicht. */
+function roomPicture(room) {
+  openModal({
+    title: 'RAUMBILD',
+    build: (body, close) => {
+      const set = async (remove) => {
+        try {
+          let img = '';
+          if (!remove) {
+            const file = await pickImage();
+            if (!file) return;
+            // Klein halten: Die Raumdaten haben eine feste Obergrenze.
+            for (const [size, quality] of [[128, 0.84], [112, 0.72], [96, 0.6]]) {
+              img = 'data:image/jpeg;base64,' + C.b64(await squareImage(file, size, quality));
+              if (img.length <= 22000) break;
+            }
+            if (img.length > 22000) throw new Error('Das Bild lässt sich nicht klein genug machen.');
+          }
+          await updateMeta(room, metaOf(room, { img: img }));
+          close();
+          toast(img ? 'Raumbild gespeichert.' : 'Raumbild entfernt.', 'ok');
+        } catch (e) { toast(e.message, 'error'); }
+      };
+      body.append(
+        el('div', { class: 'sc-pic-row' },
+          room.meta.img ? el('img', { class: 'sc-pic-big', src: room.meta.img, alt: '' }) : el('span', { class: 'sc-pic-big sc-pic-empty', text: initials(room.meta.name) }),
+          el('p', { class: 'sc-note', text: 'Sehen nur Mitglieder: Das Bild steckt verschlüsselt in den Raumdaten. Es wird quadratisch zugeschnitten und verkleinert, Ortsangaben und andere Bilddaten fallen weg.' })),
+        el('div', { class: 'sc-card-actions' },
+          el('button', { type: 'button', class: 'btn btn--primary', onclick: () => set(false) }, icon('image', 14), 'Bild wählen'),
+          room.meta.img ? el('button', { type: 'button', class: 'btn sc-btn--danger', onclick: () => set(true) }, icon('trash', 14), 'Entfernen') : null));
     }
   });
 }
@@ -2134,7 +2365,7 @@ function renameRoom(room) {
         const n = cleanName(name.value);
         if (!n) return;
         go.disabled = true;
-        try { await updateMeta(room, { name: n, ch: room.meta.ch }); close(); } catch (e) { go.disabled = false; toast(e.message, 'error'); }
+        try { await updateMeta(room, metaOf(room, { name: n })); close(); } catch (e) { go.disabled = false; toast(e.message, 'error'); }
       });
       body.append(field('Name', name), go);
     }
@@ -2193,7 +2424,7 @@ async function rotateRoom(rid, manual) {
     const epoch = room.epoch + 1;
     const key = await C.importRoomKey(raw);
     const env = await C.sealFor({ v: 1, t: 'roomkey', room: rid, epoch: epoch, key: raw, from: S.me.id, ts: Date.now() }, members.map((m) => m.key), S.me.priv);
-    const meta = await C.sealRoom({ v: 1, t: 'meta', room: rid, name: room.meta.name, ch: room.meta.ch, from: S.me.id, ts: Date.now() }, key, epoch, rid, S.me.priv);
+    const meta = await C.sealRoom(Object.assign({ v: 1, t: 'meta', room: rid, from: S.me.id, ts: Date.now() }, metaOf(room)), key, epoch, rid, S.me.priv);
     storeRoomKey(rid, epoch, raw);
     S.vault.rooms[rid].rot = serverNow();
     await saveVault(true);
@@ -2399,8 +2630,9 @@ async function pollOnce() {
   for (const rid of Object.keys(r.rooms)) {
     const room = S.rooms.get(rid);
     if (!room || room.rev !== r.rooms[rid].rev) { reload = true; continue; }
-    const vc = r.rooms[rid].vc;
-    if (vc.join(',') !== room.vc.join(',')) { room.vc = vc; changed = true; }
+    const before = JSON.stringify(room.vcs);
+    setVoiceState(room, r.rooms[rid].vcs, r.rooms[rid].vc);
+    if (JSON.stringify(room.vcs) !== before) changed = true;
   }
   for (const rid of S.rooms.keys()) if (!r.rooms[rid]) reload = true;
   if (reload) { await loadRooms(); changed = true; }
@@ -2456,9 +2688,7 @@ function audioCtx() {
 async function ensureMic() {
   if (M.mic && M.mic.readyState === 'live') return M.mic;
   try {
-    const constraints = { echoCancellation: true, noiseSuppression: true, autoGainControl: true };
-    if (S.vault.settings.mic) constraints.deviceId = { ideal: S.vault.settings.mic };
-    const stream = await navigator.mediaDevices.getUserMedia({ audio: constraints });
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: micConstraints() });
     M.mic = stream.getAudioTracks()[0];
     M.mic.enabled = M.micOn && !M.deaf;
     meter('local', new MediaStream([M.mic]));
@@ -2555,9 +2785,10 @@ async function toggleCam() {
  */
 const SCREEN_QUALITY = [
   { id: 'normal', name: 'Ausgewogen', info: '1080p · 30 fps', note: 'Für das meiste genau richtig.', w: 1920, h: 1080, fps: 30, rate: 3000000, mesh: 1500000, hint: 'detail' },
-  { id: 'text', name: 'Text & Code', info: 'volle Auflösung · 15 fps', note: 'Gestochen scharf für Code, Dokumente und Tabellen.', w: 3840, h: 2160, fps: 15, rate: 4000000, mesh: 2000000, hint: 'text' },
+  { id: 'text', name: 'Text & Code', info: 'Originalauflösung · 15 fps', note: 'Gestochen scharf für Code, Dokumente und Tabellen.', w: 0, h: 0, fps: 15, rate: 4000000, mesh: 2000000, hint: 'text' },
   { id: 'smooth', name: 'Flüssig', info: '720p · 60 fps', note: 'Für Videos und Spiele: Bewegung vor Schärfe.', w: 1280, h: 720, fps: 60, rate: 4000000, mesh: 2000000, hint: 'motion' },
-  { id: 'max', name: 'Maximal', info: '1440p · 60 fps', note: 'Beste Qualität, braucht einen schnellen Upload.', w: 2560, h: 1440, fps: 60, rate: 10000000, mesh: 4000000, hint: 'motion' },
+  { id: 'max', name: 'Hoch', info: '1440p · 60 fps', note: 'Scharf und flüssig, braucht einen schnellen Upload.', w: 2560, h: 1440, fps: 60, rate: 10000000, mesh: 4000000, hint: 'motion' },
+  { id: 'source', name: 'Quelle', info: 'Originalauflösung · 60 fps', note: 'Der Bildschirm 1:1 und flüssig – braucht den meisten Upload.', w: 0, h: 0, fps: 60, rate: 16000000, mesh: 6000000, hint: 'motion' },
   { id: 'low', name: 'Sparsam', info: '720p · 10 fps', note: 'Für schwache Leitungen und Mobilfunk.', w: 1280, h: 720, fps: 10, rate: 800000, mesh: 500000, hint: 'detail' }
 ];
 const SQ_KEY = 'sc-screen-quality';   // je Gerät, nicht im Tresor: der Upload hängt am Anschluss
@@ -2569,8 +2800,11 @@ function screenQuality() {
   return SCREEN_QUALITY.find((q) => q.id === id) || SCREEN_QUALITY[0];
 }
 
+/** w = 0: keine Obergrenze, also die Auflösung des Bildschirms selbst. */
 function screenConstraints(q) {
-  return { width: { max: q.w }, height: { max: q.h }, frameRate: { ideal: q.fps, max: q.fps } };
+  const c = { frameRate: { ideal: q.fps, max: q.fps } };
+  if (q.w) { c.width = { max: q.w }; c.height = { max: q.h }; }
+  return c;
 }
 
 function setScreenQuality(id) {
@@ -2612,6 +2846,79 @@ function showScreenQuality() {
       body.append(list, el('p', { class: 'sc-note', text: 'Gilt sofort und für alle weiteren Übertragungen auf diesem Gerät. Im Sprachkanal bekommt jeder einen eigenen Stream, deshalb mit kleinerer Datenrate.' }));
     }
   });
+}
+
+/* ---------- Anrufe: Tonqualität ------------------------------------------- */
+/**
+ * rate: Datenrate des Opus-Kodierers je Gegenüber. clean: Echo- und
+ * Rauschunterdrückung samt automatischer Lautstärke – für Musik aus, dann
+ * aber mit Kopfhörer, sonst hört das Gegenüber sich selbst. Stereo wird
+ * beim Verbindungsaufbau ausgehandelt und gilt deshalb ab dem nächsten
+ * Anruf; Datenrate und Filter wechseln sofort. Je Gerät gespeichert.
+ */
+const AUDIO_QUALITY = [
+  { id: 'voice', name: 'Sprache', info: '32 kbit/s', note: 'Klar und sparsam, mit Echo- und Rauschunterdrückung.', rate: 32000, stereo: false, clean: true },
+  { id: 'high', name: 'Hoch', info: '64 kbit/s', note: 'Mehr Klangdetails, die Unterdrückung bleibt an.', rate: 64000, stereo: false, clean: true },
+  { id: 'music', name: 'Musik', info: '128 kbit/s · Stereo', note: 'Für Musik und Instrumente, ohne Filter – nur mit Kopfhörer.', rate: 128000, stereo: true, clean: false },
+  { id: 'low', name: 'Sparsam', info: '16 kbit/s', note: 'Für schwache Leitungen und Mobilfunk.', rate: 16000, stereo: false, clean: true }
+];
+const AQ_KEY = 'sc-audio-quality';
+let audioQualityId = null;   // falls localStorage gesperrt ist
+
+function audioQuality() {
+  let id = audioQualityId;
+  try { id = localStorage.getItem(AQ_KEY) || id; } catch (e) { /* privater Modus */ }
+  return AUDIO_QUALITY.find((q) => q.id === id) || AUDIO_QUALITY[0];
+}
+
+function micConstraints() {
+  const q = audioQuality();
+  const c = {
+    echoCancellation: q.clean, noiseSuppression: q.clean, autoGainControl: q.clean,
+    channelCount: { ideal: q.stereo ? 2 : 1 }, sampleRate: { ideal: 48000 }
+  };
+  if (S.vault.settings.mic) c.deviceId = { ideal: S.vault.settings.mic };
+  return c;
+}
+
+async function setAudioQuality(id) {
+  if (!AUDIO_QUALITY.some((q) => q.id === id)) return;
+  audioQualityId = id;
+  try { localStorage.setItem(AQ_KEY, id); } catch (e) { /* gilt dann nur bis zum Neuladen */ }
+  // Im Gespräch: Mikrofon mit den neuen Filtern neu holen und tauschen.
+  if (M.mic && M.mic.readyState === 'live') {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: micConstraints() });
+      const old = M.mic;
+      M.mic = stream.getAudioTracks()[0];
+      M.mic.enabled = M.micOn && !M.deaf;
+      meter('local', new MediaStream([M.mic]));
+      old.stop();
+      await pushTrack('mic');
+    } catch (e) { toast('Das Mikrofon ließ sich nicht neu einstellen.', 'error'); }
+  }
+  for (const p of activePeers()) p.tune();
+}
+
+/**
+ * Stereo für Opus: Was ein Gerät empfangen möchte, steht in seinen
+ * Verbindungsangaben. Vor dem Übernehmen der Angaben des Gegenübers kommt
+ * dort "stereo=1" hinzu – für den Bildschirmton immer, fürs Mikrofon bei
+ * „Musik“. Der Sicherheitscode rechnet weiter mit den unveränderten Angaben.
+ */
+function opusSdp(sdp) {
+  const stereoMic = audioQuality().stereo;
+  let audio = 0;
+  return String(sdp).split(/(?=^m=)/m).map((section) => {
+    if (!/^m=audio /.test(section)) return section;
+    if (!(audio++ === 0 ? stereoMic : true)) return section;
+    for (const m of section.matchAll(/^a=rtpmap:(\d+) opus\/48000/gim)) {
+      section = section.replace(new RegExp('^(a=fmtp:' + m[1] + ' )([^\\r\\n]*)', 'm'), (line, head, params) =>
+        head + params.split(';').map((s) => s.trim()).filter((s) => s && !/^(stereo|sprop-stereo)=/i.test(s))
+          .concat(['stereo=1', 'sprop-stereo=1']).join(';'));
+    }
+    return section;
+  }).join('');
 }
 
 async function toggleScreen() {
@@ -2779,7 +3086,7 @@ class Peer {
 
   async answer(sdp) {
     this.remoteSdp = sdp;
-    await this.pc.setRemoteDescription({ type: 'offer', sdp: sdp });
+    await this.pc.setRemoteDescription({ type: 'offer', sdp: opusSdp(sdp) });
     const list = this.pc.getTransceivers();
     SLOTS.forEach((slot, i) => {
       if (list[i]) { this.tx[slot] = list[i]; list[i].direction = 'sendrecv'; }
@@ -2794,7 +3101,7 @@ class Peer {
 
   async accept(sdp) {
     this.remoteSdp = sdp;
-    await this.pc.setRemoteDescription({ type: 'answer', sdp: sdp });
+    await this.pc.setRemoteDescription({ type: 'answer', sdp: opusSdp(sdp) });
     this.computeCode();
   }
 
@@ -2807,7 +3114,7 @@ class Peer {
 
   async restartAnswer(sdp) {
     this.remoteSdp = sdp;
-    await this.pc.setRemoteDescription({ type: 'offer', sdp: sdp });
+    await this.pc.setRemoteDescription({ type: 'offer', sdp: opusSdp(sdp) });
     await this.pc.setLocalDescription(await this.pc.createAnswer());
     await Peer.waitIce(this.pc);
     this.localSdp = this.pc.localDescription.sdp;
@@ -2860,11 +3167,21 @@ class Peer {
 
   /**
    * Datenraten deckeln – im Sprachkanal (jeder mit jedem) knapper. Für den
-   * Bildschirm gelten Datenrate und Bildrate der gewählten Qualität.
+   * Bildschirm gelten Datenrate und Bildrate der gewählten Qualität, fürs
+   * Mikrofon die der Tonqualität; Bildschirmton immer mit 128 kbit/s.
    */
   tune() {
     const mesh = this.opts.mesh;
     const q = screenQuality();
+    const a = audioQuality();
+    for (const slot of ['mic', 'screenAudio']) {
+      const tx = this.tx[slot];
+      if (!tx || !tx.sender.track) continue;
+      const p = tx.sender.getParameters();
+      if (!p.encodings || !p.encodings.length) continue;
+      p.encodings[0].maxBitrate = slot === 'mic' ? a.rate : 128000;
+      tx.sender.setParameters(p).catch(() => {});
+    }
     for (const slot of ['cam', 'screen']) {
       const tx = this.tx[slot];
       if (!tx || !tx.sender.track) continue;
@@ -3130,19 +3447,21 @@ async function handleSignal(obj, from, e) {
    Wer die kleinere Kennung hat, ruft an – so gibt es nie zwei Anrufe
    gleichzeitig zwischen denselben beiden.
    ========================================================================== */
-async function joinVoice(rid) {
+/** Sprachkanal betreten; ohne ch den ersten des Raums. Wechselt aus einem anderen Kanal. */
+async function joinVoice(rid, ch) {
   if (S.call) { toast('Beende zuerst den Anruf.', 'error'); return; }
-  if (S.voice && S.voice.rid === rid) return;
-  if (S.voice) await leaveVoice();
   const room = S.rooms.get(rid);
   if (!room) return;
+  const chan = typeof ch === 'string' ? ch : room.meta.vch[0].id;
+  if (S.voice && S.voice.rid === rid && S.voice.ch === chan) return;
+  if (S.voice) await leaveVoice(S.voice.rid === rid);
   if (!roomKeyRaw(rid, room.epoch)) { toast('Der aktuelle Raumschlüssel fehlt noch.', 'error'); return; }
   audioCtx();
   try {
     await ensureMic();
-    const r = await api('room.voice', { id: rid, on: true });
-    room.vc = r.vc;
-    S.voice = { rid: rid, peers: new Map(), since: Date.now() };
+    const r = await api('room.voice', { id: rid, on: true, ch: chan });
+    setVoiceState(room, r.vcs, r.vc);
+    S.voice = { rid: rid, ch: chan, peers: new Map(), since: Date.now() };
     reconcileVoice();
     fastPoll(20000);
     playJoinTone(true);
@@ -3160,11 +3479,15 @@ async function leaveVoice(silent) {
   S.voice = null;
   for (const p of v.peers.values()) p.close();
   const room = S.rooms.get(v.rid);
-  if (room) room.vc = room.vc.filter((id) => id !== S.me.id);
+  if (room) {
+    const left = {};
+    for (const ch of Object.keys(room.vcs)) left[ch] = room.vcs[ch].filter((id) => id !== S.me.id);
+    setVoiceState(room, left);
+  }
   if (!S.call) stopLocalMedia();
   if (!silent) playJoinTone(false);
   renderAll();
-  try { await api('room.voice', { id: v.rid, on: false }); } catch (e) { /* läuft ohnehin ab */ }
+  try { await api('room.voice', { id: v.rid, on: false, ch: v.ch }); } catch (e) { /* läuft ohnehin ab */ }
 }
 
 function voicePeerOpts(rid, initiator) {
@@ -3182,7 +3505,7 @@ function voicePeerOpts(rid, initiator) {
       try {
         const room = S.rooms.get(rid);
         const sdp = await p.restartOffer();
-        await postRoomSignal(room, p.remoteId, { t: 'rtc', kind: 'offer', restart: true, sdp: sdp });
+        await postRoomSignal(room, p.remoteId, { t: 'rtc', kind: 'offer', restart: true, ch: S.voice ? S.voice.ch : '', sdp: sdp });
       } catch (e) { /* nächster Versuch */ }
     }
   };
@@ -3208,10 +3531,10 @@ function reconcileVoice() {
   if (!v) return;
   const room = S.rooms.get(v.rid);
   if (!room) { leaveVoice(true); return; }
-  const present = new Set(room.vc);
+  const present = new Set(voiceMembers(room, v.ch));
   if (!present.has(S.me.id) && Date.now() - v.since > 5000) {
     // Der Server hat uns vergessen (zu lange kein Abruf): wieder melden.
-    api('room.voice', { id: v.rid, on: true }).then((r) => { room.vc = r.vc; }).catch(() => {});
+    api('room.voice', { id: v.rid, on: true, ch: v.ch }).then((r) => setVoiceState(room, r.vcs, r.vc)).catch(() => {});
   }
   for (const id of present) {
     if (id === S.me.id) continue;
@@ -3240,7 +3563,7 @@ async function startVoicePeer(room, id) {
   try {
     const sdp = await p.offer();
     if (S.voice !== v || p.closed) return;
-    await postRoomSignal(room, id, { t: 'rtc', kind: 'offer', sdp: sdp });
+    await postRoomSignal(room, id, { t: 'rtc', kind: 'offer', ch: v.ch, sdp: sdp });
   } catch (e) {
     p.close();
     v.peers.delete(id);
@@ -3250,6 +3573,8 @@ async function startVoicePeer(room, id) {
 async function roomSignal(room, obj, from, e) {
   const v = S.voice;
   if (!v || v.rid !== room.id || obj.t !== 'rtc' || obj.to !== S.me.id || from.id === S.me.id) return;
+  // Nur Verbindungen im selben Sprachkanal (ältere Fassungen kennen nur den ersten).
+  if ((typeof obj.ch === 'string' ? obj.ch : '') !== v.ch) return;
   if (Date.now() - e.t * 1000 > 60000 || typeof obj.sdp !== 'string') return;
   let p = v.peers.get(from.id);
   try {
@@ -3257,7 +3582,7 @@ async function roomSignal(room, obj, from, e) {
       if (p && !obj.restart) { p.close(); v.peers.delete(from.id); p = null; }
       if (!p) { p = new Peer(from.id, voicePeerOpts(room.id, false)); v.peers.set(from.id, p); }
       const sdp = obj.restart ? await p.restartAnswer(obj.sdp) : await p.answer(obj.sdp);
-      await postRoomSignal(room, from.id, { t: 'rtc', kind: 'answer', restart: !!obj.restart, sdp: sdp });
+      await postRoomSignal(room, from.id, { t: 'rtc', kind: 'answer', restart: !!obj.restart, ch: v.ch, sdp: sdp });
     } else if (obj.kind === 'answer' && p) {
       await p.accept(obj.sdp);
     }
@@ -3279,7 +3604,7 @@ function stagePeople() {
   }
   if (S.voice && S.view.kind === 'room' && S.view.rid === S.voice.rid) {
     const room = S.rooms.get(S.voice.rid);
-    const waiting = room ? room.vc.filter((id) => id !== S.me.id && !S.voice.peers.has(id)) : [];
+    const waiting = room ? voiceMembers(room, S.voice.ch).filter((id) => id !== S.me.id && !S.voice.peers.has(id)) : [];
     return { kind: 'voice', peers: [...S.voice.peers.values()], waiting: waiting };
   }
   return null;
@@ -3579,11 +3904,20 @@ function showSettings() {
           renderAll();
         } catch (e) { vis.checked = !vis.checked; toast(e.message, 'error'); }
       });
+      const picRow = S.mode === 'account'
+        ? el('div', { class: 'sc-set-row' },
+          avatar(S.ids.get(S.me.id), 'sm'),
+          el('span', { class: 'sc-set-text' }, el('strong', { text: 'Profilbild' }),
+            el('span', { text: S.me.av ? 'Für alle sichtbar, die deinen Namen sehen.' : 'Noch keins – zu sehen sind deine Anfangsbuchstaben.' })),
+          el('button', { type: 'button', class: 'btn', text: S.me.av ? 'Ändern' : 'Wählen', onclick: async () => { if (await setProfilePicture(false)) { close(); showSettings(); } } }),
+          S.me.av ? el('button', { type: 'button', class: 'btn sc-btn--danger', text: 'Entfernen', onclick: async () => { if (await setProfilePicture(true)) { close(); showSettings(); } } }) : null)
+        : el('p', { class: 'sc-note', text: 'Profilbilder gibt es für Konten.' });
       body.append(
         el('div', { class: 'sc-set-row' },
           el('span', { class: 'sc-set-text' }, el('strong', { text: S.mode === 'temp' ? 'Alias' : 'Name' }),
             el('span', { text: S.me.name || '(kein Alias)' })),
           S.mode === 'temp' ? el('button', { type: 'button', class: 'btn', text: 'Ändern', onclick: () => { close(); editAlias(); } }) : null),
+        picRow,
         el('label', { class: 'sc-check' }, vis, el('span', { text: 'In der Online-Liste sichtbar sein. Aus: Nur wer deinen Schlüssel oder Fingerabdruck hat, erreicht dich.' })));
 
       // Schlüssel
@@ -3616,8 +3950,20 @@ function showSettings() {
       const curQ = screenQuality();
       for (const q of SCREEN_QUALITY) qualSel.appendChild(el('option', { value: q.id, text: q.name + ' – ' + q.info, selected: q.id === curQ.id }));
       qualSel.addEventListener('change', () => setScreenQuality(qualSel.value));
+      const audioSel = el('select');
+      const curA = audioQuality();
+      for (const q of AUDIO_QUALITY) audioSel.appendChild(el('option', { value: q.id, text: q.name + ' – ' + q.info, selected: q.id === curA.id }));
+      const audioNote = el('span', { class: 'sc-field-note', text: curA.note });
+      audioSel.addEventListener('change', () => {
+        setAudioQuality(audioSel.value);
+        audioNote.textContent = audioQuality().note;
+      });
+      const audioField = field('Tonqualität', audioSel);
+      audioField.appendChild(audioNote);
+      audioField.appendChild(el('span', { class: 'sc-field-note', text: 'Gilt für dieses Gerät, Datenrate und Filter sofort, Stereo ab dem nächsten Anruf.' }));
       body.append(
         field('Mikrofon', micSel, 'Namen erscheinen, sobald du einmal das Mikrofon erlaubt hast.'),
+        audioField,
         field('Bildschirm teilen', qualSel, 'Gilt für dieses Gerät. Während einer Übertragung lässt sie sich über den Regler-Knopf neben „Bildschirm teilen“ ändern.'),
         el('label', { class: 'sc-check' + (S.cfg.relay ? '' : ' is-disabled') }, hide, el('span', { text: S.cfg.relay
           ? 'IP-Adresse verbergen: Anrufe nur über den Relay-Server. Dein Gegenüber sieht deine IP dann nicht.'
@@ -3803,14 +4149,14 @@ function showSecurityInfo() {
       block('VERSCHLEIERUNG', [
         'Alle Klartexte werden vor dem Verschlüsseln auf feste Größen aufgefüllt – „ok“ und ein langer Absatz sind gleich groß.',
         'Beim Server steht an keiner Nachricht ein Absender; wer schreibt, steht nur verschlüsselt und signiert im Inneren.',
-        'Raumnamen, Kanäle und Kontakte sind verschlüsselt. Der Server kennt nur zufällige Kennungen.',
+        'Raumnamen, Raumbilder, Kanäle und Kontakte sind verschlüsselt. Der Server kennt nur zufällige Kennungen.',
         'Alle Anfragen gehen per POST an dieselbe Adresse. In den Protokollen des Webservers steht nicht, was passiert ist.',
         'Keine Cookies, keine fremden Server auf dieser Seite (auch keine Schriften von Google), strenge Content-Security-Policy.',
         'Anruf-Signale verfallen nach zwei Minuten, Nachrichten nach ' + S.cfg.retention_days + ' Tagen, temporäre Sitzungen nach ' + S.cfg.temp_hours + ' Stunden ohne Nutzung.'
       ]);
       block('WAS DER SERVER TROTZDEM SIEHT', [
         'IP-Adressen und Zeitpunkte der Anfragen (der Webserver des Hosters protokolliert sie).',
-        'Wer gerade online ist, welche öffentlichen Schlüssel und Namen/Aliasse es gibt, wer in welchem Raum ist und wer im Sprachkanal.',
+        'Wer gerade online ist, welche öffentlichen Schlüssel, Namen/Aliasse und Profilbilder (nur Konten) es gibt, wer in welchem Raum ist und wer in welchem Sprachkanal.',
         'Welcher Briefkasten wann wie viele Einträge bekommt.',
         'Bei Anrufen ohne Relay sehen sich die beiden Gesprächspartner gegenseitig die IP-Adresse.'
       ]);
