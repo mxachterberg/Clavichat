@@ -1,0 +1,12 @@
+Schriften für SecureCom (werden vom eigenen Server geladen statt von Google):
+
+Inter (400, 500, 600)
+  Copyright (c) 2016 The Inter Project Authors (https://github.com/rsms/inter)
+  SIL Open Font License, Version 1.1 – https://openfontlicense.org
+
+JetBrains Mono (400, 500, 700)
+  Copyright 2020 The JetBrains Mono Project Authors (https://github.com/JetBrains/JetBrainsMono)
+  SIL Open Font License, Version 1.1 – https://openfontlicense.org
+
+Die Dateien stammen unverändert aus den Paketen @expo-google-fonts/inter und
+@expo-google-fonts/jetbrains-mono (Budgetmaxxer-Webversion).

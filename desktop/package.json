@@ -1,0 +1,62 @@
+{
+  "name": "securecom",
+  "productName": "SecureCom",
+  "version": "1.0.0",
+  "description": "Ende-zu-Ende verschlüsselt schreiben, telefonieren und den Bildschirm teilen.",
+  "author": "Max Achterberg",
+  "license": "MIT",
+  "homepage": "https://achterberg.dev/app/securecom/",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/mxachterberg/securecom.git"
+  },
+  "private": true,
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "icon": "node scripts/make-icon.js",
+    "smoke": "electron . --smoke",
+    "build": "electron-builder --win nsis portable --publish never"
+  },
+  "devDependencies": {
+    "electron": "44.5.1",
+    "electron-builder": "26.15.3"
+  },
+  "build": {
+    "appId": "dev.achterberg.securecom",
+    "productName": "SecureCom",
+    "copyright": "© 2026 Max Achterberg",
+    "directories": {
+      "output": "dist",
+      "buildResources": "build"
+    },
+    "files": [
+      "main.js",
+      "preload.js",
+      "picker-preload.js",
+      "app.html",
+      "picker.html",
+      "picker.js",
+      "picker.css",
+      "package.json",
+      { "from": "../server/assets", "to": "assets", "filter": ["**/*"] }
+    ],
+    "win": {
+      "target": ["nsis", "portable"],
+      "icon": "build/icon.png"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "shortcutName": "SecureCom",
+      "installerLanguages": ["de_DE", "en_US"],
+      "language": "1031",
+      "artifactName": "SecureCom-Setup-${version}.${ext}"
+    },
+    "portable": {
+      "artifactName": "SecureCom-${version}-portable.${ext}"
+    }
+  }
+}

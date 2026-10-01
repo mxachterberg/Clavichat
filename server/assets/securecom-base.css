@@ -1,0 +1,147 @@
+/* ==========================================================================
+   SecureCom — Grundgestaltung
+   Farben, Schrift, Raster und die Bausteine, auf denen securecom.css
+   aufbaut. Auf achterberg.dev kommt all das aus der style.css der Website;
+   die eigenständige Fassung und die Windows-App laden diese Datei.
+   ========================================================================== */
+
+/* ---- Farben: dunkel (Standard) ----------------------------------------- */
+:root {
+  --bg:            #0b0b0d;
+  --grid:          rgba(255,255,255,.030);
+  --border:        #242427;
+  --border-soft:   #1b1b1e;
+  --panel:         #101013;
+  --text:          #ededec;
+  --text-body:     #a2a2a7;
+  --muted:         #6f6f77;
+  --accent:        #f97316;
+  --accent-soft:   rgba(249,115,22,.06);
+  --green:         #4ade80;
+
+  --mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  --sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
+
+  --nav-h: 52px;
+}
+
+/* ---- Farben: hell ------------------------------------------------------- */
+html[data-theme="light"] {
+  --bg:            #f6f6f4;
+  --grid:          rgba(0,0,0,.040);
+  --border:        #dedcd7;
+  --border-soft:   #e7e5e0;
+  --panel:         #fbfbfa;
+  --text:          #17171a;
+  --text-body:     #55555c;
+  --muted:         #83838c;
+  --accent:        #d1580c;
+  --accent-soft:   rgba(209,88,12,.06);
+  --green:         #2f9e52;
+}
+
+/* ---- Grundlagen --------------------------------------------------------- */
+*, *::before, *::after { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  font-family: var(--sans);
+  color: var(--text);
+  background-color: var(--bg);
+  background-image:
+    linear-gradient(to right,  var(--grid) 1px, transparent 1px),
+    linear-gradient(to bottom, var(--grid) 1px, transparent 1px);
+  background-size: 84px 84px;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+a { color: inherit; }
+
+:where(a, button, [tabindex]):focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+}
+
+/* ---- Überschrift:  ▪ LABEL ──────────── -------------------------------- */
+.section-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 0 0 22px;
+}
+.section-head .sq { width: 7px; height: 7px; background: var(--accent); flex: none; }
+.section-head .label {
+  font-family: var(--mono);
+  font-size: 11.5px;
+  letter-spacing: .16em;
+  color: var(--muted);
+  white-space: nowrap;
+}
+.section-head .rule { flex: 1; height: 1px; background: var(--border); }
+
+/* ---- Eckmarken wie auf einer Bauzeichnung ------------------------------ */
+.tickbox { position: relative; border: 1px solid var(--border); }
+.tickbox::before,
+.tickbox::after {
+  content: "";
+  position: absolute;
+  width: 9px; height: 9px;
+  background-image:
+    linear-gradient(var(--accent), var(--accent)),
+    linear-gradient(var(--accent), var(--accent));
+  background-size: 9px 1px, 1px 9px;
+  background-position: center center;
+  background-repeat: no-repeat;
+  pointer-events: none;
+}
+.tickbox::before { top: -5px;    left: -5px;  }
+.tickbox::after  { bottom: -5px; right: -5px; }
+
+/* ---- Knöpfe und Felder -------------------------------------------------- */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 9px;
+  padding: 11px 18px;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text-body);
+  font-family: var(--mono);
+  font-size: 11.5px;
+  letter-spacing: .12em;
+  text-transform: uppercase;
+  text-decoration: none;
+  cursor: pointer;
+  transition: color .15s ease, border-color .15s ease, background .15s ease;
+}
+.btn:hover { color: var(--accent); border-color: var(--accent); background: var(--accent-soft); }
+.btn--primary { color: var(--text); border-color: var(--accent); }
+.btn--primary:hover { background: var(--accent-soft); }
+.btn--block { width: 100%; }
+.btn[disabled] { opacity: .45; cursor: not-allowed; }
+
+.field { display: block; margin-bottom: 18px; }
+.field-label {
+  display: block;
+  margin-bottom: 8px;
+  font-family: var(--mono);
+  font-size: 10.5px;
+  letter-spacing: .16em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+input[type="text"], input[type="email"], input[type="password"],
+input[type="search"], textarea, select {
+  width: 100%;
+  padding: 11px 13px;
+  border: 1px solid var(--border);
+  background: var(--panel);
+  color: var(--text);
+  font-family: var(--sans);
+  font-size: 14px;
+}
+input:focus, textarea:focus, select:focus { outline: none; border-color: var(--accent); }
+input::placeholder, textarea::placeholder { color: var(--muted); }
