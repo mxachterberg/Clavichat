@@ -19,7 +19,7 @@
    ========================================================================== */
 'use strict';
 
-const { app, BrowserWindow, Menu, desktopCapturer, ipcMain, net, protocol, session, shell } = require('electron');
+const { app, BrowserWindow, Menu, desktopCapturer, ipcMain, net, powerMonitor, protocol, session, shell } = require('electron');
 const crypto = require('node:crypto');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -428,6 +428,13 @@ ipcMain.on('securecom:focus', (event) => {
 
 ipcMain.on('securecom:attention', (event) => {
   if (win && event.sender === win.webContents && !win.isFocused()) win.flashFrame(true);
+});
+
+// Für „abwesend“: zählt Maus und Tastatur am ganzen Rechner, nicht nur im
+// Fenster – wer in einer anderen App arbeitet, ist nicht abwesend.
+ipcMain.handle('securecom:idle', (event) => {
+  if (!win || event.sender !== win.webContents) return -1;
+  return powerMonitor.getSystemIdleTime();
 });
 
 /* ==========================================================================

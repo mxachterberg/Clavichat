@@ -39,6 +39,8 @@
  *    avatars/<id>.json       Profilbild eines Kontos (öffentlich wie der Name)
  *    mem/<id>.json           Räume einer Identität
  *    presence.json           zuletzt gesehen, Kartenversion, sichtbar
+ *    pres/<fach>             Status eines Freundes (verschlüsselt, nur der
+ *                            jüngste Stand, nach PRES_TTL Sekunden weg)
  *    temp.json               temporäre Identitäten (für das Aufräumen)
  * ----------------------------------------------------------------------------
  */
@@ -63,6 +65,9 @@ class SecureCom
     const VOICE_WINDOW  = 25;        // so lange gilt jemand im Sprachkanal als da
     const SIGNAL_TTL    = 120;       // Anruf-Signale verfallen nach zwei Minuten
     const TOKEN_IDLE    = 2592000;   // Konto-Sitzungen: 30 Tage ohne Nutzung
+    const PRES_TTL      = 150;       // Status-Fach eines Freundes: so lange gilt der letzte Stand
+    const MAX_PRES      = 512;       // verschlüsselter Status (Base64)
+    const MAX_SLOTS     = 200;       // Fächer je Aufruf (schreiben, lesen, löschen)
 
     const MAX_ENTRY     = 98304;     // verschlüsselter Eintrag (Base64)
     const MAX_SIGNAL    = 49152;
@@ -162,9 +167,9 @@ class SecureCom
             $list[] = $entry;
         }
 
-        $cf = cfg('securecom_cf_turn', null);
-        if (is_array($cf) && !empty($cf['key_id']) && !empty($cf['api_token'])) {
-            foreach (self::cloudflareTurn((string)$cf['key_id'], (string)$cf['api_token']) as $server) $list[] = $server;
+        $cf = self::cloudflareConfig();
+        if ($cf) {
+            foreach (self::cloudflareTurn($cf['key_id'], $cf['api_token']) as $server) $list[] = $server;
         }
         return $list;
     }
@@ -175,8 +180,30 @@ class SecureCom
         foreach ((array)cfg('securecom_turn', []) as $turn) {
             if (is_array($turn) && !empty($turn['urls'])) return true;
         }
+        return self::cloudflareConfig() !== null;
+    }
+
+    /**
+     * Cloudflare-Zugang: aus der Konfiguration oder – auf achterberg.dev –
+     * aus einer eigenen kleinen Datei (CLAVICHAT_TURN_FILE), in die man nur
+     * die beiden Werte einträgt. Ein Tippfehler dort schaltet nur das Relay
+     * ab, nicht die ganze Seite.
+     */
+    private static function cloudflareConfig()
+    {
         $cf = cfg('securecom_cf_turn', null);
-        return is_array($cf) && !empty($cf['key_id']) && !empty($cf['api_token']);
+        if (!is_array($cf) && defined('CLAVICHAT_TURN_FILE') && is_file(CLAVICHAT_TURN_FILE)) {
+            try {
+                $cf = include CLAVICHAT_TURN_FILE;
+            } catch (Throwable $ex) {
+                error_log('[securecom] TURN-Datei: ' . $ex->getMessage());
+                $cf = null;
+            }
+        }
+        if (!is_array($cf)) return null;
+        $id    = trim((string)($cf['key_id'] ?? ''));
+        $token = trim((string)($cf['api_token'] ?? ''));
+        return $id !== '' && $token !== '' ? ['key_id' => $id, 'api_token' => $token] : null;
     }
 
     /** Kurzlebige TURN-Zugangsdaten bei Cloudflare holen und 12 h merken. */
@@ -620,6 +647,59 @@ class SecureCom
             }
         }
         return $out;
+    }
+
+    /* ======================================================================
+       Freunde: Status in Fächern
+       Jedes Freundespaar leitet aus einem gemeinsamen Geheimnis zwei
+       zufällige Fächer ab, je eins pro Person; darin liegt der Status,
+       verschlüsselt. Der Server kennt das Geheimnis nicht und merkt sich
+       nicht, wer welches Fach beschreibt oder liest. Er hebt nur den
+       jüngsten Stand auf und vergisst ihn nach PRES_TTL Sekunden.
+       ====================================================================== */
+    public static function presence(array $me, array $b)
+    {
+        $put = isset($b['put']) && is_array($b['put']) ? $b['put'] : [];
+        $del = isset($b['del']) && is_array($b['del']) ? $b['del'] : [];
+        $get = isset($b['get']) && is_array($b['get']) ? $b['get'] : [];
+        if (count($put) > self::MAX_SLOTS || count($del) > self::MAX_SLOTS || count($get) > self::MAX_SLOTS) {
+            throw new SecureComException('Zu viele Fächer auf einmal.', 422);
+        }
+        $dir = self::dir('pres');
+        foreach ($put as $p) {
+            if (!is_array($p)) throw new SecureComException('Ungültiges Fach.', 422);
+            $slot = self::slotOf($p['i'] ?? '');
+            $data = self::b64(is_string($p['d'] ?? null) ? $p['d'] : '', self::MAX_PRES, 'Status');
+            // Erst daneben schreiben, dann umbenennen: Leser sehen nie einen halben Stand.
+            $tmp = $dir . '/' . $slot . '.' . bin2hex(random_bytes(4)) . '.tmp';
+            if (file_put_contents($tmp, $data) === false || !@rename($tmp, $dir . '/' . $slot)) {
+                @unlink($tmp);
+                throw new RuntimeException('Status nicht beschreibbar.');
+            }
+        }
+        foreach ($del as $slot) @unlink($dir . '/' . self::slotOf($slot));
+
+        $now = time();
+        $out = [];
+        foreach ($get as $slot) {
+            $slot = self::slotOf($slot);
+            $file = $dir . '/' . $slot;
+            clearstatcache(true, $file);
+            $t = @filemtime($file);
+            if ($t === false) continue;
+            if ($now - $t > self::PRES_TTL) { @unlink($file); continue; }
+            $d = @file_get_contents($file);
+            if (is_string($d) && $d !== '') $out[$slot] = ['t' => $t, 'd' => $d];
+        }
+        return ['now' => $now, 'got' => (object)$out];
+    }
+
+    private static function slotOf($slot)
+    {
+        if (!is_string($slot) || !preg_match('/^[0-9a-f]{64}$/', $slot)) {
+            throw new SecureComException('Ungültiges Fach.', 422);
+        }
+        return $slot;
     }
 
     /* ======================================================================
@@ -1439,6 +1519,11 @@ class SecureCom
             $state = json_decode((string)stream_get_contents($h), true) ?: [];
             $now = time();
             if ($now - (int)($state['t'] ?? 0) < 300) return;
+
+            // Status-Fächer: nur der jüngste Stand, nach PRES_TTL weg.
+            foreach (glob(self::dir('pres') . '/*') ?: [] as $pf) {
+                if ($now - (int)@filemtime($pf) > self::PRES_TTL) @unlink($pf);
+            }
 
             $temp = self::readJson(self::dir() . '/temp.json', true) ?: [];
             $presence = self::readJson(self::dir() . '/presence.json', true) ?: [];

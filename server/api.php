@@ -145,6 +145,11 @@ try {
         case 'poll':
             json_out(['ok' => true] + SecureCom::poll($me, $body));
 
+        case 'pres':
+            // Freunde: etwa alle 20 Sekunden lesen, jede Minute schreiben.
+            sc_limit('pres:' . $me['id'], 600, 3600);
+            json_out(['ok' => true] + SecureCom::presence($me, $body));
+
         case 'rooms':
             json_out(['ok' => true, 'rooms' => SecureCom::rooms($me)]);
 
