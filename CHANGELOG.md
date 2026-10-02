@@ -4,7 +4,12 @@ Was sich von Version zu Version ändert. Beim Veröffentlichen wird der
 Abschnitt einer Version zum Text des GitHub-Releases
 (`.github/workflows/windows.yml`).
 
-## Unveröffentlicht
+## 1.4.0 – 02.10.2026
+
+Erste Version unter neuem Namen und die erste, die sich selbst
+aktualisiert. Auf sie steigt man einmal von Hand um: Installer über die
+alte Fassung installieren (er ersetzt SecureCom) oder die neue portable
+Fassung nehmen. Ab dann kommen Updates von selbst.
 
 - **Neuer Name: Clavichat** (von lateinisch *clavis*, „der Schlüssel“) –
   vorher SecureCom. Die Web-App liegt jetzt unter `/app/clavichat/`; alte
