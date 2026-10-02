@@ -1,7 +1,7 @@
 {
   "name": "securecom",
   "productName": "SecureCom",
-  "version": "1.2.0",
+  "version": "1.3.0",
   "description": "Ende-zu-Ende verschlüsselt schreiben, telefonieren und den Bildschirm teilen.",
   "author": "Max Achterberg",
   "license": "MIT",
@@ -16,7 +16,11 @@
     "start": "electron .",
     "icon": "node scripts/make-icon.js",
     "smoke": "electron . --smoke",
-    "build": "electron-builder --win nsis portable --publish never"
+    "build": "electron-builder --win nsis portable --publish never",
+    "server": "electron host/main.js",
+    "smoke:server": "electron host/main.js --smoke",
+    "php": "node scripts/fetch-php.js",
+    "build:server": "electron-builder --config host/builder.json --win nsis portable --publish never"
   },
   "devDependencies": {
     "electron": "44.5.1",

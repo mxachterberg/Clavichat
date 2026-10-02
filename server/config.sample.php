@@ -15,6 +15,12 @@ return [
     // Ohne Angabe wird sie aus der Anfrage ermittelt.
     'public_url' => '',
 
+    // Läuft SecureCom hinter einem Reverse-Proxy (Caddy, nginx, Traefik …),
+    // hier dessen Adresse eintragen – sonst teilen sich alle Besucher eine
+    // Adresse und damit die Rate-Limits. Einzelne Adressen, Bereiche wie
+    // '172.16.0.0/12' oder 'private' (Loopback und private Netze).
+    'trusted_proxies' => [],
+
     // Gesetzt: Konto anlegen und temporäre Sitzungen nur mit diesem Code.
     'securecom_access_code' => '',
 

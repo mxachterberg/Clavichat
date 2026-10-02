@@ -1,6 +1,9 @@
 # Abhängigkeiten und Build-Ergebnisse
 node_modules/
 desktop/dist/
+desktop/dist-server/
+# PHP für den Windows-Server holt "npm run php" (geprüft per SHA-256)
+desktop/host/php/
 
 # Server: echte Einstellungen und Daten gehören nie ins Repository
 server/config.php

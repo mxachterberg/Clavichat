@@ -197,6 +197,10 @@ class SecureCom
             CURLOPT_HTTPHEADER     => ['Authorization: Bearer ' . $token, 'Content-Type: application/json'],
             CURLOPT_POSTFIELDS     => json_encode(['ttl' => 86400]),
         ]);
+        // Windows (SecureCom Server): Zertifikate aus der Windows-Ablage prüfen.
+        if (PHP_OS_FAMILY === 'Windows' && defined('CURLSSLOPT_NATIVE_CA')) {
+            curl_setopt($ch, CURLOPT_SSL_OPTIONS, CURLSSLOPT_NATIVE_CA);
+        }
         $raw  = curl_exec($ch);
         $code = (int)curl_getinfo($ch, CURLINFO_HTTP_CODE);
         curl_close($ch);

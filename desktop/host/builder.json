@@ -1,0 +1,47 @@
+{
+  "appId": "dev.achterberg.securecom.server",
+  "productName": "SecureCom Server",
+  "copyright": "© 2026 Max Achterberg",
+  "directories": {
+    "output": "dist-server",
+    "buildResources": "build"
+  },
+  "extraMetadata": {
+    "main": "host/main.js",
+    "name": "securecom-server",
+    "productName": "SecureCom Server",
+    "description": "SecureCom-Server für das eigene Netz – mit HTTPS, Daten bleiben auf diesem Rechner."
+  },
+  "files": [
+    "package.json",
+    "window.css",
+    "build/icon.png",
+    "host/main.js",
+    "host/preload.js",
+    "host/cert.js",
+    "host/window.html",
+    "host/host.css",
+    "host/host.js"
+  ],
+  "extraResources": [
+    { "from": "host/php", "to": "php", "filter": ["**/*"] },
+    { "from": "../server", "to": "server", "filter": ["**/*", "!storage", "!storage/**", "!config.php"] }
+  ],
+  "win": {
+    "target": ["nsis", "portable"],
+    "icon": "build/icon.png"
+  },
+  "nsis": {
+    "oneClick": false,
+    "perMachine": false,
+    "allowToChangeInstallationDirectory": true,
+    "createDesktopShortcut": true,
+    "shortcutName": "SecureCom Server",
+    "installerLanguages": ["de_DE", "en_US"],
+    "language": "1031",
+    "artifactName": "SecureCom-Server-Setup-${version}.${ext}"
+  },
+  "portable": {
+    "artifactName": "SecureCom-Server-${version}-portable.${ext}"
+  }
+}

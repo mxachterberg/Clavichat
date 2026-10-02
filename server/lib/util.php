@@ -8,12 +8,16 @@
  * ----------------------------------------------------------------------------
  */
 
-/** Einstellungen aus config.php (neben api.php). Ohne Datei: Standardwerte. */
+/**
+ * Einstellungen aus config.php (neben api.php) – oder aus der Datei, die
+ * SECURECOM_CONFIG nennt (Windows-Server, Container). Ohne Datei:
+ * Standardwerte.
+ */
 function cfg($key = null, $default = null)
 {
     static $conf = null;
     if ($conf === null) {
-        $file = __DIR__ . '/../config.php';
+        $file = getenv('SECURECOM_CONFIG') ?: __DIR__ . '/../config.php';
         $conf = is_file($file) ? require $file : [];
         if (!is_array($conf)) $conf = [];
     }
@@ -123,7 +127,54 @@ function rate_limit_clear($bucket)
     if (is_file($file)) @unlink($file);
 }
 
+/**
+ * Adresse des Besuchers (für die Rate-Limits). Hinter einem Proxy – etwa
+ * im Container oder beim Windows-Server – kämen sonst alle von derselben
+ * Adresse. Dem Kopf X-Forwarded-For wird aber nur geglaubt, wenn die
+ * Anfrage von einem Proxy aus 'trusted_proxies' stammt.
+ */
 function client_ip()
 {
-    return $_SERVER['REMOTE_ADDR'] ?? '0.0.0.0';
+    $ip = $_SERVER['REMOTE_ADDR'] ?? '0.0.0.0';
+    if (!empty($_SERVER['HTTP_X_FORWARDED_FOR']) && from_trusted_proxy()) {
+        // Den letzten Eintrag hat der eigene Proxy geschrieben; davor kann
+        // ein Besucher beliebiges eintragen.
+        $hops = array_map('trim', explode(',', (string)$_SERVER['HTTP_X_FORWARDED_FOR']));
+        $last = (string)end($hops);
+        if (filter_var($last, FILTER_VALIDATE_IP)) $ip = $last;
+    }
+    return $ip;
+}
+
+/**
+ * 'trusted_proxies' in config.php: einzelne Adressen, Bereiche wie
+ * "172.16.0.0/12" oder "private" (Loopback und private Netze).
+ */
+function from_trusted_proxy()
+{
+    $remote = (string)($_SERVER['REMOTE_ADDR'] ?? '');
+    foreach ((array)cfg('trusted_proxies', []) as $range) {
+        if (ip_in_range($remote, (string)$range)) return true;
+    }
+    return false;
+}
+
+function ip_in_range($ip, $range)
+{
+    if (filter_var($ip, FILTER_VALIDATE_IP) === false) return false;
+    if ($range === 'private') {
+        return filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_NO_PRIV_RANGE | FILTER_FLAG_NO_RES_RANGE) === false;
+    }
+    if (strpos($range, '/') === false) return inet_pton($ip) === @inet_pton($range);
+    list($net, $bits) = explode('/', $range, 2);
+    $a = inet_pton($ip);
+    $b = @inet_pton($net);
+    $bits = (int)$bits;
+    if ($b === false || strlen($a) !== strlen($b) || $bits < 0 || $bits > strlen($a) * 8) return false;
+    $whole = intdiv($bits, 8);
+    if (strncmp($a, $b, $whole) !== 0) return false;
+    $rest = $bits % 8;
+    if ($rest === 0) return true;
+    $mask = (0xFF << (8 - $rest)) & 0xFF;
+    return (ord($a[$whole]) & $mask) === (ord($b[$whole]) & $mask);
 }

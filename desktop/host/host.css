@@ -1,0 +1,73 @@
+/* SecureCom Server — Statusfenster (Gestalt wie die App) */
+@font-face { font-family: 'Inter'; src: url('../../server/assets/fonts/Inter-400.ttf') format('truetype'); font-weight: 400; font-display: swap; }
+@font-face { font-family: 'Inter'; src: url('../../server/assets/fonts/Inter-600.ttf') format('truetype'); font-weight: 600 900; font-display: swap; }
+@font-face { font-family: 'JetBrains Mono'; src: url('../../server/assets/fonts/JetBrainsMono-400.ttf') format('truetype'); font-weight: 400; font-display: swap; }
+@font-face { font-family: 'JetBrains Mono'; src: url('../../server/assets/fonts/JetBrainsMono-500.ttf') format('truetype'); font-weight: 500 900; font-display: swap; }
+
+:root { color-scheme: dark; }   /* dunkle Bildlaufleisten */
+html, body { height: 100%; }
+body { display: flex; flex-direction: column; overflow: hidden; }
+[hidden] { display: none !important; }
+
+.hs { flex: 1; min-height: 0; overflow-y: auto; padding: 22px 26px 26px; }
+.hs .section-head { margin: 26px 0 12px; }
+.hs-note { margin: 10px 0 0; font-size: 12.5px; line-height: 1.6; color: var(--muted); }
+.hs-note code, .hs-pre, .hs-fp { font-family: var(--mono); }
+
+/* Zustand */
+.hs-status { display: flex; align-items: center; gap: 14px; padding: 16px 18px; background: var(--panel); }
+.hs-dot { flex: none; width: 10px; height: 10px; border-radius: 50%; background: var(--muted); }
+.hs-status[data-state="läuft"] .hs-dot { background: var(--green); box-shadow: 0 0 0 4px rgba(74, 222, 128, .15); }
+.hs-status[data-state="fehler"] .hs-dot { background: #f87171; }
+.hs-status[data-state="start"] .hs-dot { background: var(--accent); animation: hs-pulse 1.1s ease-in-out infinite; }
+@keyframes hs-pulse { 50% { opacity: .35; } }
+.hs-status-text { flex: 1; min-width: 0; }
+.hs-status-title { margin: 0; font-size: 18px; font-weight: 600; color: var(--text); }
+.hs-status-sub { margin: 3px 0 0; font-size: 13px; color: var(--text-body); }
+.hs-status[data-state="fehler"] .hs-status-sub { color: #f87171; }
+
+/* Adressen */
+.hs-urls { display: flex; flex-direction: column; gap: 8px; }
+.hs-url, .hs-line { display: flex; align-items: center; gap: 8px; }
+.hs-url code, .hs-fp {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  padding: 9px 12px;
+  border: 1px solid var(--border);
+  background: var(--panel);
+  color: var(--text);
+  font-size: 13px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.hs-url:first-child code { border-color: var(--accent); }
+.hs-fp { font-size: 11.5px; letter-spacing: .02em; color: var(--green); white-space: normal; word-break: break-all; line-height: 1.6; }
+.hs .btn { padding: 8px 12px; }
+
+/* Textblöcke */
+.hs-pre {
+  margin: 12px 0 0;
+  padding: 12px 14px;
+  overflow: auto;
+  border: 1px solid var(--border);
+  background: var(--panel);
+  color: var(--text-body);
+  font-size: 12px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+.hs-log { max-height: 170px; font-size: 11.5px; white-space: pre-wrap; }
+.hs-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+
+/* Einstellungen */
+.hs-form { display: flex; flex-direction: column; gap: 10px; }
+.hs-port { display: flex; align-items: center; gap: 12px; }
+.hs-port .field-label { margin: 0; }
+.hs-port input { width: 110px; padding: 8px 10px; font-family: var(--mono); }
+.hs-check { display: flex; align-items: center; gap: 9px; font-size: 13.5px; color: var(--text-body); cursor: pointer; }
+.hs-check input { width: 15px; height: 15px; accent-color: var(--accent); }
+
+.hs-foot { display: flex; align-items: center; justify-content: space-between; margin-top: 28px; padding-top: 14px; border-top: 1px solid var(--border-soft); font-family: var(--mono); font-size: 11px; color: var(--muted); }
+.sc-btn--danger { color: #f87171; }

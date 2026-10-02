@@ -1,0 +1,7 @@
+# SecureCom hinter Caddy – HTTPS ohne Handarbeit:
+#   Domain (z. B. chat.example.com)  → Zertifikat von Let's Encrypt (Ports 80/443 müssen erreichbar sein)
+#   IP-Adresse oder localhost        → eigenes Zertifikat von Caddy (Browser warnen einmal)
+{$SECURECOM_SITE:localhost} {
+	encode zstd gzip
+	reverse_proxy securecom:80
+}

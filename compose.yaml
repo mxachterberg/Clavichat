@@ -1,0 +1,47 @@
+# ============================================================================
+#  SecureCom im Homelab:  docker compose up -d
+# ============================================================================
+#  SECURECOM_SITE bestimmt, unter welcher Adresse SecureCom erreichbar ist
+#  (in einer .env-Datei neben dieser Datei oder in der Shell):
+#    SECURECOM_SITE=chat.example.com   eigene Domain, Zertifikat von Let's Encrypt
+#    SECURECOM_SITE=192.168.1.10       nur im Heimnetz, eigenes Zertifikat von Caddy
+#  Ohne Angabe: localhost.
+#
+#  Schon ein Reverse-Proxy im Einsatz (Traefik, nginx, Nginx Proxy Manager)?
+#  Dann nur den Dienst "securecom" nehmen, einen Port freigeben (z. B.
+#  "8080:80") und den Proxy dorthin zeigen lassen.
+# ----------------------------------------------------------------------------
+services:
+  securecom:
+    build: .
+    # Statt selbst zu bauen, nach dem ersten Release:
+    # image: ghcr.io/mxachterberg/securecom:latest
+    restart: unless-stopped
+    environment:
+      SECURECOM_PUBLIC_URL: "https://${SECURECOM_SITE:-localhost}/"
+      # SECURECOM_ACCESS_CODE: "nur-mit-diesem-code"
+      # SECURECOM_CF_TURN_KEY_ID: ""
+      # SECURECOM_CF_TURN_API_TOKEN: ""
+    volumes:
+      - securecom-data:/data
+
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    depends_on:
+      - securecom
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    environment:
+      SECURECOM_SITE: "${SECURECOM_SITE:-localhost}"
+    volumes:
+      - ./docker/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+
+volumes:
+  securecom-data:
+  caddy-data:
+  caddy-config:

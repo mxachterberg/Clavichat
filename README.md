@@ -59,7 +59,12 @@ server/            PHP-Server ohne Datenbank, dazu die Web-Oberfläche
   lib/             Server-Logik (SecureCom.php, util.php)
   assets/          Oberfläche: securecom.js, Kryptografie in securecom-core.js,
                    OpenPGP.js unter vendor/, Schriften unter fonts/
+  router.php       Weiche für den eingebauten PHP-Server (php -S)
 desktop/           Windows-App (Electron), nimmt die Oberfläche aus server/assets
+  host/            SecureCom Server für Windows: PHP + HTTPS als Programm
+Dockerfile         Server als Container (Apache + PHP)
+compose.yaml       Container samt Caddy für HTTPS – fürs Homelab
+docker/            Einstellungen für den Container
 tests/e2e.mjs      Ende-zu-Ende-Test gegen einen laufenden Server
 ```
 
@@ -93,12 +98,61 @@ TURN-Kontingent nutzt.
 
 Außerdem in `config.sample.php`: Zugangscode für neue Konten, wie lange
 Nachrichten liegen bleiben, Lebensdauer temporärer Sitzungen, Obergrenze der
-Identitäten.
+Identitäten. Hinter einem Reverse-Proxy dessen Adresse unter `trusted_proxies`
+eintragen – sonst teilen sich alle Besucher eine Adresse und damit die
+Rate-Limits.
+
+## Server unter Windows
+
+Ohne Webspace, etwa für das Heimnetz: **SecureCom Server** startet den Server
+per Doppelklick (Installer oder portable Fassung unter
+[Releases](https://github.com/mxachterberg/securecom/releases)). PHP ist dabei,
+einrichten muss man nichts.
+
+- Das Fenster zeigt die Adressen, etwa `https://192.168.1.10:8443/`. Andere
+  Geräte im Heimnetz öffnen sie im Browser; Windows fragt beim ersten Start
+  nach der Firewall („Private Netzwerke“ erlauben).
+- HTTPS mit einem selbst erstellten Zertifikat – Browser geben Verschlüsselung
+  und Mikrofon nur über HTTPS frei. Beim ersten Aufruf warnt der Browser
+  einmal; der Fingerabdruck im Fenster zeigt, ob es das richtige Zertifikat ist.
+- Läuft im Hintergrund weiter (Symbol im Infobereich), auf Wunsch mit Windows.
+- Daten und Einstellungen liegen in `%APPDATA%\SecureCom Server`: `data` und
+  `config.php` (Zugangscode, Relay-Server). Ein Update ändert daran nichts.
+- Aus dem Internet erreichbar machen geht auch (Portweiterleitung), dann aber
+  besser mit eigener Domain und Docker – siehe unten.
+
+## Docker / Homelab
+
+```
+docker compose up -d
+```
+
+`compose.yaml` startet SecureCom (Apache + PHP) und davor Caddy, das sich um
+HTTPS kümmert. Die Adresse steht in `SECURECOM_SITE` (in einer `.env`-Datei
+daneben oder in der Shell):
+
+| `SECURECOM_SITE` | HTTPS |
+|---|---|
+| `chat.example.com` | Zertifikat von Let's Encrypt (Ports 80/443 müssen von außen erreichbar sein) |
+| `192.168.1.10` | eigenes Zertifikat von Caddy – Browser warnen einmal |
+| leer | `localhost` |
+
+Schon ein Reverse-Proxy im Einsatz (Traefik, Nginx Proxy Manager …)? Dann nur
+den Dienst `securecom` nehmen, einen Port freigeben (`"8080:80"`) und den Proxy
+dorthin zeigen lassen. Ab dem ersten Release gibt es das Image fertig (amd64
+und arm64, also auch für den Raspberry Pi): `ghcr.io/mxachterberg/securecom`.
+
+Einstellungen über Umgebungsvariablen, alle optional (Liste in
+`docker/config.php`): `SECURECOM_PUBLIC_URL`, `SECURECOM_ACCESS_CODE`,
+`SECURECOM_RETENTION_DAYS`, `SECURECOM_TEMP_HOURS`, `SECURECOM_STUN`,
+`SECURECOM_TURN_URLS` mit `_USERNAME` und `_CREDENTIAL`,
+`SECURECOM_CF_TURN_KEY_ID` mit `_API_TOKEN`, `SECURECOM_TRUSTED_PROXIES`.
+Die Daten liegen im Volume `/data` – das ist alles, was gesichert werden muss.
 
 ### Lokal testen
 
 ```
-php -S 127.0.0.1:8130 -t server
+php -S 127.0.0.1:8130 -t server server/router.php
 node tests/e2e.mjs
 ```
 
@@ -136,6 +190,9 @@ Die App verbindet sich mit `https://achterberg.dev`. Für einen eigenen Server
 
 `web` ist die Adresse für Einladungslinks. Liegt SecureCom wie auf
 achterberg.dev unter `/app/securecom/`, reicht `{ "server": "https://example.com" }`.
+Für den **SecureCom Server** (selbst erstelltes Zertifikat) kommt
+`"fingerprint"` dazu – den fertigen Text zeigt dessen Fenster. Die App vertraut
+dann genau diesem Zertifikat und keinem anderen.
 Dieselben Angaben gehen auch über die Umgebungsvariablen `SECURECOM_SERVER`,
 `SECURECOM_API` und `SECURECOM_WEB`. Unverschlüsseltes `http` akzeptiert die App
 nur für `localhost` und `127.0.0.1`.
@@ -150,12 +207,16 @@ npm run build
 ```
 
 `npm start` öffnet die App direkt aus dem Quelltext, `npm run build` legt
-Installer und portable Fassung in `desktop/dist/` ab. Startet Electron nicht,
+Installer und portable Fassung in `desktop/dist/` ab. Der Windows-Server:
+`npm run php` (lädt PHP von php.net und prüft die SHA-256), dann
+`npm run server` zum Ausprobieren oder `npm run build:server`
+(nach `desktop/dist-server/`). Startet Electron nicht,
 weil npm das Installationsskript übersprungen hat:
 `node node_modules/electron/install.js`.
 
-Ein Tag wie `v1.0.1` baut die App über GitHub Actions und legt sie als Entwurf
-unter Releases ab (`.github/workflows/windows.yml`).
+Ein Tag wie `v1.3.0` baut über GitHub Actions App und Server und legt beide als
+Entwurf unter Releases ab; dasselbe Tag baut das Docker-Image
+(`.github/workflows/`).
 
 ## Lizenz
 
