@@ -125,6 +125,9 @@ class SecureCom
             'retention_days' => self::retentionDays(),
             'temp_hours'     => self::tempHours(),
             'access'         => self::accessCode() !== '' ? 'code' : 'open',
+            // Anmelden mit dem Postfach: Adresse, unter der das Dashboard von
+            // achterberg.dev Tickets ausstellt (siehe ssoTicket). Sonst leer.
+            'sso'            => defined('CLAVICHAT_SSO') ? (string)CLAVICHAT_SSO : '',
             'limits'         => [
                 'voice'   => self::MAX_VOICE,
                 'members' => self::MAX_MEMBERS,
@@ -228,7 +231,10 @@ class SecureCom
        ====================================================================== */
     public static function register(array $b)
     {
-        self::checkAccess($b);
+        // Mit Postfach-Ticket (achterberg.dev) ist das Postfach bestätigt –
+        // dann braucht es keinen Zugangscode. Ein Konto je Postfach.
+        $mailbox = self::str($b, 'sso') !== '' ? self::ssoMailbox(self::str($b, 'sso')) : null;
+        if ($mailbox === null) self::checkAccess($b);
         $username = trim(self::str($b, 'username'));
         if (!preg_match('/^[A-Za-z0-9][A-Za-z0-9_.-]{2,23}$/', $username)) {
             throw new SecureComException('Der Name braucht 3–24 Zeichen: Buchstaben, Ziffern, Punkt, Strich, Unterstrich.', 422);
@@ -245,18 +251,37 @@ class SecureCom
         $vault = self::str($b, 'vault') === '' ? '' : self::b64(self::str($b, 'vault'), self::MAX_VAULT, 'Tresor');
         self::checkCapacity();
 
+        // Verknüpfung zum Postfach zuerst und exklusiv anlegen: Zwei
+        // gleichzeitige Anmeldungen ergeben so nie zwei Konten.
+        $link = null;
+        if ($mailbox !== null) {
+            $link = self::ssoFile($mailbox);
+            $old = self::readJson($link);
+            if ($old && is_string($old['u'] ?? null) && is_file(self::accountFile($old['u']))) {
+                throw new SecureComException('Zu diesem Postfach gibt es schon ein Clavichat-Konto („' . $old['u'] . '“). Melde dich damit an.', 409);
+            }
+            if ($old) @unlink($link);   // Konto gibt es nicht mehr
+            $h = @fopen($link, 'x');
+            if (!$h) throw new SecureComException('Zu diesem Postfach wird gerade schon ein Konto angelegt.', 409);
+            fclose($h);
+        }
+
         $file = self::accountFile($username);
         $h = @fopen($file, 'x');
-        if (!$h) throw new SecureComException('Dieser Name ist schon vergeben.', 409);
+        if (!$h) {
+            if ($link) @unlink($link);
+            throw new SecureComException('Dieser Name ist schon vergeben.', 409);
+        }
         fclose($h);
 
         try {
             self::createIdentity($id, 'account', $pub, $fp, $card, $username);
         } catch (Throwable $ex) {
             @unlink($file);
+            if ($link) @unlink($link);
             throw $ex;
         }
-        self::writeJson($file, [
+        $account = [
             'u'     => $username,
             'id'    => $id,
             'auth'  => password_hash($auth, PASSWORD_DEFAULT, self::HASH_OPTS),
@@ -264,7 +289,10 @@ class SecureCom
             'vault' => $vault,
             'vv'    => 1,
             'c'     => time(),
-        ]);
+        ];
+        if ($mailbox !== null) $account['sso'] = hash('sha256', $mailbox);   // nur der Hash des Postfachs
+        self::writeJson($file, $account);
+        if ($link) self::writeJson($link, ['u' => $username, 'c' => time()]);
         $token = self::issueToken($id);
         return ['token' => $token, 'id' => $id, 'kind' => 'account', 'username' => $username, 'vv' => 1];
     }
@@ -317,6 +345,104 @@ class SecureCom
         });
         $token = self::issueToken($id);
         return ['token' => $token, 'id' => $id, 'kind' => 'temp', 'exp' => time() + self::tempHours() * 3600];
+    }
+
+    /* ======================================================================
+       Anmelden mit dem Postfach von achterberg.dev
+       ----------------------------------------------------------------------
+       Das Dashboard stellt angemeldeten Postfächern ein Ticket aus
+       (app/clavichat/sso.php): Postfach, Ablauf und ein Zufallswert,
+       signiert mit HMAC-SHA-256. Der Schlüssel dafür ist aus dem geheimen
+       Server-Schlüssel abgeleitet und verlässt den Server nie. Ein Ticket
+       gilt fünf Minuten und nur einmal. Es bestätigt nur das Postfach – den
+       privaten Schlüssel schützt beim Konto weiter ein Geheimnis, das nur
+       der Browser kennt (hier: ein Wiederherstellungscode statt Passwort).
+       Eigenständige Server ohne Dashboard stellen keine Tickets aus.
+       ====================================================================== */
+    const SSO_TTL = 300;
+
+    /** Für das Dashboard: Ticket für das angemeldete Postfach. */
+    public static function ssoTicket($mailbox)
+    {
+        $mailbox = strtolower(trim((string)$mailbox));
+        if ($mailbox === '' || strlen($mailbox) > 254 || strpos($mailbox, '@') === false) {
+            throw new SecureComException('Kein Postfach angemeldet.', 401);
+        }
+        $payload = self::urlB64(json_encode(['v' => 1, 'm' => $mailbox, 'e' => time() + self::SSO_TTL,
+                                             'n' => self::urlB64(random_bytes(16))]));
+        return [
+            'ticket'  => $payload . '.' . self::urlB64(hash_hmac('sha256', $payload, self::ssoKey(), true)),
+            'mailbox' => $mailbox,
+            'name'    => self::nameFromMailbox($mailbox),
+        ];
+    }
+
+    /** Neues Gerät: Welches Konto gehört zu diesem Postfach? */
+    public static function ssoWho(array $b)
+    {
+        $mailbox = self::ssoMailbox(self::str($b, 'sso'));
+        $link = self::readJson(self::ssoFile($mailbox));
+        $user = $link && is_string($link['u'] ?? null) && is_file(self::accountFile($link['u'])) ? $link['u'] : null;
+        return ['username' => $user, 'name' => self::nameFromMailbox($mailbox)];
+    }
+
+    /** Ticket prüfen: Signatur, Ablauf, nur einmal. Gibt das Postfach. */
+    private static function ssoMailbox($ticket)
+    {
+        $parts = explode('.', (string)$ticket);
+        if (count($parts) !== 2 || strlen($parts[0]) > 600
+            || !hash_equals(self::urlB64(hash_hmac('sha256', $parts[0], self::ssoKey(), true)), $parts[1])) {
+            throw new SecureComException('Die Bestätigung von achterberg.dev ist ungültig.', 403);
+        }
+        $t = json_decode((string)self::urlB64Decode($parts[0]), true);
+        if (!is_array($t) || ($t['v'] ?? 0) !== 1 || !is_string($t['m'] ?? null) || !is_string($t['n'] ?? null)
+            || (int)($t['e'] ?? 0) < time()) {
+            throw new SecureComException('Die Bestätigung von achterberg.dev ist abgelaufen – bitte noch einmal.', 403);
+        }
+        // Jedes Ticket nur einmal; die Liste behält nur noch nicht abgelaufene.
+        $fresh = false;
+        self::mutate(self::dir() . '/sso-used.json', function (&$used) use ($t, &$fresh) {
+            if (!is_array($used)) $used = [];
+            $now = time();
+            foreach ($used as $n => $until) {
+                if ((int)$until < $now) unset($used[$n]);
+            }
+            if (isset($used[$t['n']])) return;
+            $used[$t['n']] = (int)$t['e'];
+            $fresh = true;
+        });
+        if (!$fresh) throw new SecureComException('Diese Bestätigung wurde schon benutzt – bitte noch einmal.', 403);
+        return $t['m'];
+    }
+
+    /** Eigener Schlüssel für die Tickets, abgeleitet vom geheimen Server-Schlüssel. */
+    private static function ssoKey()
+    {
+        return hash_hmac('sha256', 'clavichat-sso-v1', app_key(), true);
+    }
+
+    private static function ssoFile($mailbox)
+    {
+        return self::dir('sso') . '/' . hash('sha256', $mailbox) . '.json';
+    }
+
+    /** Vorschlag für den Kontonamen: der Teil vor dem @, auf erlaubte Zeichen gekürzt. */
+    private static function nameFromMailbox($mailbox)
+    {
+        $local = (string)strstr($mailbox, '@', true);
+        $name = ltrim((string)preg_replace('/[^A-Za-z0-9_.-]/', '', $local), '_.-');
+        return substr($name, 0, 24);
+    }
+
+    private static function urlB64($bin)
+    {
+        return rtrim(strtr(base64_encode($bin), '+/', '-_'), '=');
+    }
+
+    private static function urlB64Decode($text)
+    {
+        $text = strtr((string)$text, '-_', '+/');
+        return base64_decode($text . str_repeat('=', (4 - strlen($text) % 4) % 4), true);
     }
 
     /** Sitzung aus dem Kopf "X-SC-Token". Gibt die Identität zurück. */
@@ -941,7 +1067,12 @@ class SecureCom
         }
         if ($ident) {
             foreach ((array)($ident['tok'] ?? []) as $th) @unlink(self::dir('tokens') . '/' . $th . '.json');
-            if (!empty($ident['u'])) @unlink(self::accountFile($ident['u']));
+            if (!empty($ident['u'])) {
+                // Verknüpfung zum Postfach lösen: Danach geht wieder ein neues Konto.
+                $acc = self::readJson(self::accountFile($ident['u']));
+                if ($acc && preg_match('/^[0-9a-f]{64}$/', (string)($acc['sso'] ?? ''))) @unlink(self::dir('sso') . '/' . $acc['sso'] . '.json');
+                @unlink(self::accountFile($ident['u']));
+            }
             self::mutate(self::dir() . '/fp.json', function (&$idx) use ($ident, $id) {
                 if (!is_array($idx) || !isset($idx[$ident['fp']])) return;
                 $idx[$ident['fp']] = array_values(array_diff((array)$idx[$ident['fp']], [$id]));
