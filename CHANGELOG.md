@@ -4,6 +4,17 @@ Was sich von Version zu Version ändert. Beim Veröffentlichen wird der
 Abschnitt einer Version zum Text des GitHub-Releases
 (`.github/workflows/windows.yml`).
 
+## Unveröffentlicht
+
+- **Räume aus temporären Sitzungen** löscht der Server nach 7 Tagen ohne
+  Aktivität samt Verlauf – auch wenn noch Konten drin sind. Aktivität:
+  Nachricht, Beitritt, Sprachkanal, Einladung oder Änderung am Raum. Solche
+  Räume tragen ein TEMP-Zeichen; das Raum-Menü nennt das Datum, und beim
+  Erstellen als temporäre Sitzung steht ein Hinweis. Einstellbar mit
+  `securecom_temp_room_days` (Docker: `SECURECOM_TEMP_ROOM_DAYS`).
+- Server: Reste ohne Bezug (Verläufe ohne Raum, Briefkästen ohne
+  Identität) räumt das stündliche Aufräumen mit weg.
+
 ## 1.5.0 – 02.10.2026
 
 Freunde mit Status, Aufbewahrung pro Unterhaltung und mehr Kontrolle beim

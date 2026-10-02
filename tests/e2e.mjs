@@ -102,6 +102,8 @@ ok(TB.res.ok && TB.token, 'Bob: temporäre Sitzung');
 
 let r = await call('config');
 ok(r.ok && Array.isArray(r.ice) && !r.ice.some((s) => s.credential), 'öffentliche Angaben: keine Relay-Zugangsdaten');
+const tempRoomDays = r.temp_room_days;
+ok(Number.isInteger(tempRoomDays) && tempRoomDays >= 1, 'Frist für Räume aus temporären Sitzungen: ' + tempRoomDays + ' Tage');
 r = await call('ice');
 ok(!r.ok && r._status === 401, 'Relay-Zugangsdaten nur nach Anmeldung');
 r = await call('ice', {}, TA.token);
@@ -207,6 +209,14 @@ const rkey = await C.importRoomKey(rk);
 const meta = await C.sealRoom({ t: 'meta', name: 'Test', ch: [{ id: 'c1', name: 'allgemein' }] }, rkey, 1, roomId, TA.privateKey);
 r = await call('room.create', { id: roomId, meta }, TA.token);
 ok(r.ok && r.room.owner === TA.id && r.room.epoch === 1, 'Anna erstellt einen Raum');
+ok(r.room.tmp === true && Math.abs(r.room.exp - (Math.floor(Date.now() / 1000) + tempRoomDays * 86400)) < 120,
+  'Raum einer temporären Sitzung verfällt nach ' + tempRoomDays + ' Tagen ohne Aktivität');
+const accRoom = C.randomId();
+const accMeta = await C.sealRoom({ t: 'meta', name: 'Konto', ch: [{ id: 'c1', name: 'allgemein' }] }, rkey, 1, accRoom, acc.privateKey);
+r = await call('room.create', { id: accRoom, meta: accMeta }, accToken);
+ok(r.ok && r.room.tmp === false && r.room.exp === 0, 'Raum eines Kontos verfällt nicht');
+r = await call('room.delete', { id: accRoom }, accToken);
+ok(r.ok, 'Konto löscht seinen Raum wieder');
 r = await call('room.invite', { id: roomId }, TA.token);
 ok(r.ok && r.code && r.epoch === 1, 'Einladung erstellt');
 const code = r.code;

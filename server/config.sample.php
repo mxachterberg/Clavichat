@@ -30,6 +30,10 @@ return [
     // Leerlauf, nach dem temporäre Sitzungen samt Daten verschwinden (Stunden).
     'securecom_temp_hours' => 24,
 
+    // Räume, die eine temporäre Sitzung angelegt hat: so viele Tage ohne
+    // Aktivität (Nachricht, Beitritt, Sprachkanal), dann samt Verlauf weg.
+    'securecom_temp_room_days' => 7,
+
     // Obergrenze aller Identitäten (Konten + temporäre Sitzungen).
     'securecom_max_identities' => 2000,
 
