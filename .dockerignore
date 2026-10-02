@@ -1,0 +1,9 @@
+# Ins Image kommt nur server/ und docker/ – alles andere bleibt draußen.
+.git
+.github
+desktop
+tests
+**/node_modules
+server/storage
+server/config.php
+*.md

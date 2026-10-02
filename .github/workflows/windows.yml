@@ -1,7 +1,8 @@
-# Baut die Windows-App, sobald ein Versions-Tag (z. B. v1.0.0) hochgeladen
-# wird, und legt sie als Entwurf unter "Releases" ab. Keine Bausteine von
-# Dritten – nur die offiziellen GitHub-Actions und die GitHub-Kommandozeile.
-name: Windows-App
+# Baut die Windows-App und den Windows-Server, sobald ein Versions-Tag
+# (z. B. v1.3.0) hochgeladen wird, und legt beides als Entwurf unter
+# "Releases" ab. Keine Bausteine von Dritten – nur die offiziellen
+# GitHub-Actions und die GitHub-Kommandozeile.
+name: Windows
 
 on:
   push:
@@ -22,12 +23,15 @@ jobs:
         with:
           node-version: 24
       - run: npm ci
+      # PHP für den Server: offizielles Paket, gegen die feste SHA-256 geprüft.
+      - run: node scripts/fetch-php.js
       - run: npx electron-builder --win nsis portable --publish never
+      - run: npx electron-builder --config host/builder.json --win nsis portable --publish never
       - name: Release-Entwurf anlegen
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "$GITHUB_REF_NAME" dist/*.exe \
+          gh release create "$GITHUB_REF_NAME" dist/*.exe dist-server/*.exe \
             --draft --title "SecureCom $GITHUB_REF_NAME" \
-            --notes "Windows-App, gebaut von GitHub Actions aus genau diesem Stand. Nicht signiert: Windows SmartScreen fragt beim ersten Start nach."
+            --notes "SecureCom (App) und SecureCom Server für Windows, gebaut von GitHub Actions aus genau diesem Stand. Nicht signiert: Windows SmartScreen fragt beim ersten Start nach. Docker: ghcr.io/${GITHUB_REPOSITORY,,}:${GITHUB_REF_NAME#v}"

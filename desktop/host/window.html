@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="de" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src file:; style-src file:; font-src file:; img-src file: data:">
+<title>SecureCom Server</title>
+<!-- ../../server: beim Entwickeln der Server-Ordner im Repo, im Paket resources\server -->
+<link rel="stylesheet" href="../../server/assets/securecom-base.css">
+<link rel="stylesheet" href="../window.css">
+<link rel="stylesheet" href="host.css">
+</head>
+<body>
+
+<header class="sc-titlebar">
+  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 8V3M15 8V6"/><rect x="6" y="8" width="12" height="14" rx="2"/><path d="M9.5 12h5M9.5 15h5M12 18.5h.01"/></svg>
+  <span>SECURECOM SERVER</span>
+</header>
+
+<main class="hs">
+  <section class="hs-status tickbox" id="hs-status" data-state="start">
+    <span class="hs-dot" aria-hidden="true"></span>
+    <div class="hs-status-text">
+      <p class="hs-status-title" id="hs-title">Startet …</p>
+      <p class="hs-status-sub" id="hs-sub"></p>
+    </div>
+    <button type="button" class="btn" id="hs-restart">Neu starten</button>
+  </section>
+
+  <p class="section-head"><span class="sq"></span><span class="label">SO ERREICHT MAN IHN</span><span class="rule"></span></p>
+  <div class="hs-urls" id="hs-urls"></div>
+  <p class="hs-note">Beim ersten Aufruf warnt der Browser vor dem Zertifikat – es ist selbst erstellt.
+    Unter „Erweitert“ → „Weiter zu …“ geht es weiter. Fragt Windows nach der Firewall:
+    „Private Netzwerke“ erlauben, damit andere Geräte im Heimnetz hinkommen.</p>
+
+  <p class="section-head"><span class="sq"></span><span class="label">ZERTIFIKAT</span><span class="rule"></span></p>
+  <div class="hs-line">
+    <code class="hs-fp" id="hs-fp">–</code>
+    <button type="button" class="btn" id="hs-fp-copy">Kopieren</button>
+  </div>
+  <p class="hs-note">Fingerabdruck (SHA-256). Zeigt der Browser beim Zertifikat denselben, bist du
+    wirklich mit diesem Server verbunden und nicht mit einem anderen im Netz.</p>
+
+  <p class="section-head"><span class="sq"></span><span class="label">WINDOWS-APP VERBINDEN</span><span class="rule"></span></p>
+  <p class="hs-note">Damit die SecureCom-App diesen Server nutzt: den Text als <code>config.json</code> in
+    den Ordner der App legen und die App neu starten. Der Fingerabdruck sorgt dafür, dass sie genau
+    diesem Zertifikat vertraut.</p>
+  <pre class="hs-pre" id="hs-client"></pre>
+  <div class="hs-actions">
+    <button type="button" class="btn" id="hs-client-copy">Kopieren</button>
+    <button type="button" class="btn" id="hs-client-folder">Ordner der App öffnen</button>
+  </div>
+
+  <p class="section-head"><span class="sq"></span><span class="label">EINSTELLUNGEN</span><span class="rule"></span></p>
+  <form class="hs-form" id="hs-form">
+    <label class="hs-port"><span class="field-label">Port</span><input type="text" inputmode="numeric" id="hs-port" maxlength="5"></label>
+    <label class="hs-check"><input type="checkbox" id="hs-lan"> Im Heimnetz erreichbar (sonst nur auf diesem Rechner)</label>
+    <label class="hs-check"><input type="checkbox" id="hs-auto"> Mit Windows starten (im Hintergrund)</label>
+    <div class="hs-actions">
+      <button type="submit" class="btn btn--primary">Übernehmen</button>
+      <button type="button" class="btn" id="hs-data">Datenordner öffnen</button>
+      <button type="button" class="btn" id="hs-config">config.php öffnen</button>
+    </div>
+  </form>
+  <p class="hs-note">In der config.php stehen Zugangscode und Relay-Server (für Anrufe übers Handy).
+    Nach Änderungen „Neu starten“. Daten und Einstellungen bleiben bei einem Update erhalten.</p>
+
+  <p class="section-head"><span class="sq"></span><span class="label">PROTOKOLL</span><span class="rule"></span></p>
+  <pre class="hs-pre hs-log" id="hs-log"></pre>
+
+  <footer class="hs-foot">
+    <span id="hs-version"></span>
+    <button type="button" class="btn sc-btn--danger" id="hs-quit">Server beenden</button>
+  </footer>
+</main>
+
+<script src="host.js"></script>
+</body>
+</html>

@@ -107,6 +107,23 @@ erfunden.
   Schlüssel und ein WebCrypto-Schlüsselobjekt, das sich nicht auslesen lässt.
   Ohne das Häkchen gilt die Anmeldung nur für den Tab.
 
+### Eigener Server (Windows, Docker)
+
+- **SecureCom Server für Windows** erzeugt beim ersten Start ein eigenes
+  Zertifikat (EC P-256, 800 Tage). Browser warnen beim ersten Aufruf; ob es
+  das richtige ist, zeigt der Fingerabdruck im Fenster des Servers. Die
+  Windows-App vertraut dem Zertifikat nur mit passendem Fingerabdruck in der
+  `config.json` – ein anderes, selbst erstelltes Zertifikat lehnt sie ab.
+- Der HTTPS-Teil lauscht auf dem eingestellten Port, PHP nur auf `127.0.0.1`.
+  Programmteile, Einstellungen und Daten liefert der eingebaute PHP-Server über
+  `router.php` nie aus; die Daten liegen ohnehin außerhalb des Programmordners.
+- **Im Container** spricht SecureCom nur HTTP; HTTPS übernimmt der Proxy davor
+  (Caddy in `compose.yaml`). Die Daten liegen im Volume `/data`, außerhalb des
+  Webroots.
+- Hinter einem Proxy zählt für die Rate-Limits die Adresse aus
+  `X-Forwarded-For` – aber nur, wenn die Anfrage von einem Proxy aus
+  `trusted_proxies` kommt. Sonst könnte sich jeder eine Adresse ausdenken.
+
 ## Verschleierung
 
 - Alle Klartexte werden vor dem Verschlüsseln auf feste Größen aufgefüllt (256,

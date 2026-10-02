@@ -1,0 +1,32 @@
+# Baut das Server-Image (amd64 und arm64, etwa für den Raspberry Pi) bei
+# jedem Versions-Tag und legt es in der GitHub Container Registry ab:
+#   ghcr.io/<besitzer>/securecom:<version> und :latest
+# Nur Bordmittel des Runners (docker buildx) – keine fremden Actions.
+name: Docker
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  image:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Anmelden bei ghcr.io
+        run: echo "${{ github.token }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+      - name: Emulation für arm64
+        run: docker run --privileged --rm tonistiigi/binfmt --install arm64
+      - name: Bauen und hochladen
+        run: |
+          IMAGE="ghcr.io/${GITHUB_REPOSITORY,,}"
+          VERSION="${GITHUB_REF_NAME#v}"
+          docker buildx create --use --name securecom
+          docker buildx build --platform linux/amd64,linux/arm64 \
+            --tag "$IMAGE:$VERSION" --tag "$IMAGE:latest" \
+            --label "org.opencontainers.image.version=$VERSION" \
+            --push .

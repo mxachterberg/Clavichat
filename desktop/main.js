@@ -17,6 +17,7 @@
 'use strict';
 
 const { app, BrowserWindow, Menu, desktopCapturer, ipcMain, net, protocol, session, shell } = require('electron');
+const crypto = require('node:crypto');
 const fs = require('node:fs');
 const path = require('node:path');
 
@@ -123,7 +124,33 @@ function loadConfig() {
       throw new Error('Der SecureCom-Server muss per https erreichbar sein: ' + value);
     }
   }
-  return { api: api, web: web };
+  // Eigener Server mit selbst erstelltem Zertifikat (SecureCom Server):
+  // genau diesem vertrauen – erkannt am SHA-256-Fingerabdruck.
+  const pin = process.env.SECURECOM_FINGERPRINT || file.fingerprint || '';
+  const fingerprint = normalizeFingerprint(pin);
+  if (pin && !fingerprint) throw new Error('Der Fingerabdruck in der config.json ist ungültig (64 Hex-Zeichen, gern mit Doppelpunkten).');
+  return { api: api, web: web, fingerprint: fingerprint };
+}
+
+function normalizeFingerprint(value) {
+  const hex = String(value || '').replace(/[^0-9a-f]/gi, '').toUpperCase();
+  return hex.length === 64 ? hex.match(/.{2}/g).join(':') : '';
+}
+
+/**
+ * Zertifikat des eigenen Servers per Fingerabdruck annehmen. Alle anderen
+ * Zertifikate prüft Chromium wie immer – auch beim selben Server: Passt
+ * der Fingerabdruck nicht, gilt die normale Prüfung (und die scheitert bei
+ * einem fremden, selbst erstellten Zertifikat).
+ */
+function pinCertificate() {
+  if (!config.fingerprint) return;
+  const host = new URL(config.api).hostname.replace(/^\[|\]$/g, '');
+  session.defaultSession.setCertificateVerifyProc((request, callback) => {
+    let fp = '';
+    try { fp = new crypto.X509Certificate(request.certificate.data).fingerprint256; } catch (e) { /* unlesbar */ }
+    callback(request.hostname === host && fp === config.fingerprint ? 0 : -3);
+  });
 }
 
 /* ==========================================================================
@@ -172,6 +199,12 @@ async function proxyApi(request) {
     const res = await net.fetch(config.api, { method: 'POST', headers: headers, body: body, redirect: 'error', cache: 'no-store' });
     return respond(await res.text(), res.status, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
   } catch (e) {
+    const why = String((e && e.message) || '') + ' ' + String((e && e.cause && e.cause.message) || '');
+    if (/CERT|certificate/i.test(why)) {
+      return json({ ok: false, error: config.fingerprint
+        ? 'Das Zertifikat des Servers passt nicht zum Fingerabdruck in der config.json.'
+        : 'Das Zertifikat des Servers ist ungültig. Bei einem eigenen Server den Fingerabdruck in die config.json eintragen.' }, 502);
+    }
     return json({ ok: false, error: 'Keine Verbindung zum SecureCom-Server.' }, 502);
   }
 }
@@ -382,6 +415,7 @@ if (!app.requestSingleInstanceLock()) {
     }
     protocol.handle('app', handleApp);
     setupSession();
+    pinCertificate();
     loadChrome();
     createWindow();
   });
