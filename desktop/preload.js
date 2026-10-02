@@ -8,6 +8,8 @@ contextBridge.exposeInMainWorld('securecomDesktop', {
   focus: () => ipcRenderer.send('securecom:focus'),
   /** In der Taskleiste blinken (eingehender Anruf). */
   attention: () => ipcRenderer.send('securecom:attention'),
+  /** Sekunden ohne Maus und Tastatur am ganzen Rechner (für „abwesend“). */
+  idleSeconds: () => ipcRenderer.invoke('securecom:idle'),
   /** Updates (updater.js): Stand, Suchen, Automatik, Installieren. */
   updates: {
     get: () => ipcRenderer.invoke('securecom:update', 'get'),

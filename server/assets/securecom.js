@@ -47,6 +47,7 @@ const S = {
   ids: new Map(),      // Kennung -> Identität (Schlüssel geprüft, Karte signiert)
   keyringCache: null,
   online: [],          // temporäre Sitzungen, die gerade online und sichtbar sind
+  fst: new Map(),      // Freunde: Kennung -> { status: 'on' | 'busy' | 'away' | 'off' }
   pv: '',
   convs: new Map(),    // Gegenüber -> Unterhaltung
   rooms: new Map(),    // Raumkennung -> Raum
@@ -136,7 +137,9 @@ const ICONS = {
   leave: '<path d="M14 4H6v16h8M17 8l4 4-4 4M21 12H10"/>',
   eye: '<path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/>',
   eyeOff: '<path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/><path d="M3 3l18 18"/>',
-  userPlus: '<circle cx="9" cy="8" r="3.5"/><path d="M2.5 20a6.5 6.5 0 0 1 13 0"/><path d="M19 8v6M16 11h6"/>'
+  userPlus: '<circle cx="9" cy="8" r="3.5"/><path d="M2.5 20a6.5 6.5 0 0 1 13 0"/><path d="M19 8v6M16 11h6"/>',
+  userMinus: '<circle cx="9" cy="8" r="3.5"/><path d="M2.5 20a6.5 6.5 0 0 1 13 0"/><path d="M16 11h6"/>',
+  message: '<path d="M4 5h16v11H9l-5 4z"/>'
 };
 
 function icon(name, size) {
@@ -511,7 +514,7 @@ function idbSet(key, value) {
    Tresor: Kontakte, Raumschlüssel, Gelesen-Stand, Einstellungen
    ========================================================================== */
 function emptyVault() {
-  return { v: 1, contacts: {}, rooms: {}, blocked: {}, reads: {}, cleared: {}, settings: { hideIp: false, sound: true, mic: '' } };
+  return { v: 1, contacts: {}, rooms: {}, blocked: {}, reads: {}, cleared: {}, friends: {}, settings: { hideIp: false, sound: true, mic: '', status: 'on' } };
 }
 
 function mergeVault(a, b) {
@@ -531,6 +534,12 @@ function mergeVault(a, b) {
     Object.assign(out.blocked, src.blocked || {});
     for (const [k, t] of Object.entries(src.reads || {})) out.reads[k] = Math.max(out.reads[k] || 0, t || 0);
     for (const [k, t] of Object.entries(src.cleared || {})) out.cleared[k] = Math.max(out.cleared[k] || 0, t || 0);
+    // Freunde: je Person gilt der jüngste Stand (angefragt, befreundet, beendet).
+    for (const [id, f] of Object.entries(src.friends || {})) {
+      if (!f || typeof f !== 'object') continue;
+      const prev = out.friends[id];
+      if (!prev || (Number(f.t) || 0) >= (Number(prev.t) || 0)) out.friends[id] = f;
+    }
   }
   return out;
 }
@@ -1325,8 +1334,10 @@ async function logout() {
   if (S.mode === 'temp') {
     const ok = await confirmBox('Sitzung beenden', 'Die temporäre Sitzung wird beendet. Der Server löscht deine Identität, deinen Briefkasten und deine Raummitgliedschaften. Dein Schlüssel ist danach weg.', 'Beenden', true);
     if (!ok) return;
+    await clearPresence();
     try { await api('end'); } catch (e) { /* trotzdem lokal beenden */ }
   } else {
+    await clearPresence();
     try { await api('logout'); } catch (e) { /* Token ist ohnehin weg */ }
   }
   teardownMedia();
@@ -1353,6 +1364,9 @@ async function enterApp() {
   if (S.view.kind === 'dm') await ensureIds([S.view.peer]);
   renderAll();
   pollLoop();
+  // Freunde: Identitäten nachschlagen, dann Status austauschen.
+  ensureIds(Object.keys(S.vault.friends || {})).then(() => { scheduleRender(); presenceSoon(); });
+  startPresence();
   if (S.pendingJoin) setTimeout(offerPendingJoin, 400);
 }
 
@@ -1554,18 +1568,20 @@ function renderSide() {
 
 function renderHomeSide(head, body) {
   head.append(el('span', { class: 'sc-side-title', text: 'Direktnachrichten' }),
-    iconBtn('key', 'Per Schlüssel anrufen oder schreiben', connectByKey));
+    iconBtn('userPlus', 'Freund hinzufügen', connectByKey));
 
   body.appendChild(el('button', { type: 'button', class: 'sc-entry tickbox', onclick: connectByKey },
-    el('span', { class: 'sc-entry-icon' }, icon('key', 19)),
+    el('span', { class: 'sc-entry-icon' }, icon('userPlus', 19)),
     el('span', { class: 'sc-entry-text' },
-      el('span', { class: 'sc-entry-name', text: 'Per Schlüssel verbinden' }),
-      el('span', { class: 'sc-entry-sub', text: 'Anrufen oder schreiben mit PGP-Schlüssel' }))));
+      el('span', { class: 'sc-entry-name', text: 'Freund hinzufügen' }),
+      el('span', { class: 'sc-entry-sub', text: 'Mit PGP-Schlüssel oder Fingerabdruck' }))));
 
-  const online = S.online.map((id) => S.ids.get(id)).filter((i) => i && !isBlocked(i));
+  renderFriendsSide(body);
+
+  const online = S.online.map((id) => S.ids.get(id)).filter((i) => i && !isBlocked(i) && !isFriend(i.id));
   body.appendChild(sectionHead('ONLINE — ' + online.length));
   const list = el('div', { class: 'sc-list' });
-  if (!online.length) list.appendChild(el('p', { class: 'sc-empty-note', text: 'Gerade ist sonst niemand sichtbar online. Hier stehen nur temporäre Sitzungen – Konten zeigen nicht, ob sie online sind.' }));
+  if (!online.length) list.appendChild(el('p', { class: 'sc-empty-note', text: 'Gerade ist sonst niemand sichtbar online. Hier stehen nur temporäre Sitzungen – Konten zeigen ihren Status nur Freunden.' }));
   for (const ident of online) list.appendChild(personRow(ident, () => openDm(ident.id)));
   body.appendChild(list);
 
@@ -1596,19 +1612,29 @@ function closeContextMenu() {
   if (ctxMenu) { ctxMenu.remove(); ctxMenu = null; }
 }
 
-function openContextMenu(x, y, items) {
+/**
+ * Einträge: { icon | dot, label, note?, checked?, danger?, disabled?, run }
+ * oder { sep: true }. opts.above: über dem Punkt öffnen (Menü unten links).
+ */
+function openContextMenu(x, y, items, opts) {
   closeContextMenu();
   const menu = el('div', { class: 'sc-ctx', role: 'menu' });
   for (const it of items) {
     if (!it) continue;
+    if (it.sep) { menu.appendChild(el('div', { class: 'sc-ctx-sep', role: 'separator' })); continue; }
+    const radio = it.checked !== undefined;
     menu.appendChild(el('button', {
-      type: 'button', role: 'menuitem', class: 'sc-ctx-item' + (it.danger ? ' is-danger' : ''), disabled: !!it.disabled,
+      type: 'button', role: radio ? 'menuitemradio' : 'menuitem', 'aria-checked': radio ? String(!!it.checked) : null,
+      class: 'sc-ctx-item' + (it.danger ? ' is-danger' : ''), disabled: !!it.disabled,
       onclick: () => { closeContextMenu(); it.run(); }
-    }, icon(it.icon, 15), el('span', { text: it.label })));
+    }, it.dot ? el('span', { class: 'sc-ctx-dot' }, el('span', { class: 'sc-on' + STATUS[it.dot].cls })) : icon(it.icon, 15),
+    el('span', { class: 'sc-ctx-text' }, el('span', { text: it.label }), it.note ? el('span', { class: 'sc-ctx-note', text: it.note }) : null),
+    it.checked ? icon('check', 14) : null));
   }
   document.body.appendChild(menu);
+  const top = opts && opts.above ? y - menu.offsetHeight : y;
   menu.style.left = Math.max(8, Math.min(x, window.innerWidth - menu.offsetWidth - 8)) + 'px';
-  menu.style.top = Math.max(8, Math.min(y, window.innerHeight - menu.offsetHeight - 8)) + 'px';
+  menu.style.top = Math.max(8, Math.min(top, window.innerHeight - menu.offsetHeight - 8)) + 'px';
   ctxMenu = menu;
   ctxOpened = Date.now();
 }
@@ -1642,6 +1668,7 @@ function convMenuItems(conv) {
   return [
     { icon: 'check', label: 'Als gelesen markieren', disabled: !conv.unread, run: () => markConvRead(conv) },
     { icon: 'users', label: 'Profil anzeigen', run: () => showProfile(conv.peer) },
+    friendMenuItem(S.ids.get(conv.peer)),
     { icon: 'trash', label: 'Unterhaltung löschen', danger: true, run: () => deleteConversation(conv) }
   ];
 }
@@ -1681,7 +1708,7 @@ function personRow(ident, onclick, opts) {
     'aria-current': o.current ? 'true' : 'false',
     onclick: onclick
   },
-    el('span', { class: 'sc-row-av' }, avatar(ident), ident && ident.on ? el('span', { class: 'sc-on', title: 'online' }) : null),
+    el('span', { class: 'sc-row-av' }, avatar(ident), statusDot(ident)),
     el('span', { class: 'sc-row-text' },
       el('span', { class: 'sc-row-name' }, el('span', { class: 'sc-row-label', text: displayName(ident) }),
         isVerified(ident) ? icon('shieldCheck', 13) : null,
@@ -1775,17 +1802,18 @@ function renderVoicebar() {
 function renderUser() {
   const box = $('sc-user');
   const me = S.ids.get(S.me.id);
-  const sig = [S.me.name, avatarUrl(me) || '', S.me.vis, S.mode, S.me.fp, S.offline, M.micOn, M.deaf].join('|');
+  const st = myStatus();
+  const sig = [S.me.name, avatarUrl(me) || '', S.me.vis, S.mode, S.me.fp, S.offline, M.micOn, M.deaf, st, chosenStatus()].join('|');
   if (box.dataset.sig === sig && box.firstChild) return;
   box.dataset.sig = sig;
   box.textContent = '';
+  const label = chosenStatus() === 'off' ? 'Unsichtbar' : st === 'away' && chosenStatus() === 'on' ? 'Abwesend (inaktiv)' : STATUS[st].label;
   box.append(
-    el('button', { type: 'button', class: 'sc-user-info', title: 'Dein Profil', onclick: () => showProfile(S.me.id) },
-      el('span', { class: 'sc-row-av' }, avatar(me), el('span', { class: 'sc-on' + (S.me.vis ? '' : ' is-hidden'),
-        title: S.me.vis ? 'sichtbar' : S.mode === 'account' ? 'Online-Status verborgen (Konto)' : 'unsichtbar' })),
+    el('button', { type: 'button', class: 'sc-user-info', title: 'Status und Profil', 'aria-haspopup': 'menu', onclick: (ev) => openStatusMenu(ev.currentTarget) },
+      el('span', { class: 'sc-row-av' }, avatar(me), el('span', { class: 'sc-on' + STATUS[st].cls, title: label })),
       el('span', { class: 'sc-row-text' },
         el('span', { class: 'sc-row-name' }, el('span', { class: 'sc-row-label', text: S.me.name || (S.mode === 'temp' ? 'Temporär' : 'Ich') })),
-        el('span', { class: 'sc-row-sub', text: (S.mode === 'temp' ? 'TEMP · ' : '') + fpTail(S.me.fp) + (S.offline ? ' · offline' : '') }))),
+        el('span', { class: 'sc-row-sub', text: (S.mode === 'temp' ? 'TEMP · ' : '') + label + (S.offline ? ' · keine Verbindung' : '') }))),
     iconBtn(M.micOn ? 'mic' : 'micOff', M.micOn ? 'Stummschalten' : 'Mikrofon an', toggleMic, { class: 'sc-ibtn' + (M.micOn ? '' : ' is-off') }),
     iconBtn(M.deaf ? 'headOff' : 'head', M.deaf ? 'Ton an' : 'Nichts hören', toggleDeaf, { class: 'sc-ibtn' + (M.deaf ? ' is-off' : '') }),
     iconBtn('settings', 'Einstellungen', showSettings));
@@ -1801,7 +1829,7 @@ function renderMainHead() {
     const ident = S.ids.get(S.view.peer);
     head.append(
       el('button', { type: 'button', class: 'sc-head-who', onclick: () => showProfile(S.view.peer) },
-        el('span', { class: 'sc-row-av' }, avatar(ident, 'sm'), ident && ident.on ? el('span', { class: 'sc-on' }) : null),
+        el('span', { class: 'sc-row-av' }, avatar(ident, 'sm'), statusDot(ident)),
         el('span', { class: 'sc-head-text' },
           el('span', { class: 'sc-head-title' }, displayName(ident), isVerified(ident) ? icon('shieldCheck', 14) : null, kindBadge(ident)),
           el('span', { class: 'sc-head-sub', text: ident ? C.shortFingerprint(ident.fp) : '' }))),
@@ -2007,10 +2035,10 @@ function homeScreen() {
     el('p', { class: 'section-head' }, el('span', { class: 'sq' }), el('span', { class: 'label', text: 'SO GEHT’S' }), el('span', { class: 'rule' })),
     el('ol', { class: 'sc-steps' },
       el('li', { text: 'Jemand ist online? Links in der Liste anklicken – schreiben, anrufen, Video, Bildschirm teilen.' }),
-      el('li', { text: 'Du hast einen öffentlichen PGP-Schlüssel oder Fingerabdruck? „Per Schlüssel verbinden“.' }),
+      el('li', { text: 'Du hast einen öffentlichen PGP-Schlüssel oder Fingerabdruck? „Freund hinzufügen“ – nimmt die Person an, seht ihr gegenseitig, ob ihr online seid.' }),
       el('li', { text: 'Für Gruppen: Mit + einen Raum erstellen und den Einladungslink teilen.' })),
     el('div', { class: 'sc-card-actions' },
-      el('button', { type: 'button', class: 'btn btn--primary', onclick: connectByKey }, icon('key', 14), 'Per Schlüssel verbinden'),
+      el('button', { type: 'button', class: 'btn btn--primary', onclick: connectByKey }, icon('userPlus', 14), 'Freund hinzufügen'),
       el('button', { type: 'button', class: 'btn', onclick: roomDialog }, icon('plus', 14), 'Raum erstellen'),
       el('button', { type: 'button', class: 'btn', onclick: showSecurityInfo }, icon('shield', 14), 'Was sieht der Server?')));
   box.append(keyCard, how);
@@ -2069,12 +2097,13 @@ function renderMembers() {
   const room = S.rooms.get(S.view.rid);
   if (!room) return;
   const members = room.members.map((m) => S.ids.get(m.id) || { id: m.id, fp: '', name: '…', kind: 'temp', on: null });
-  // Online: man selbst, sichtbare temporäre Sitzungen und wer im Sprachkanal
-  // ist (das sehen Mitglieder ohnehin). Konten verraten ihren Status sonst nicht.
-  const here = (i) => i.id === S.me.id || i.on === true || room.vc.includes(i.id);
+  // Online: man selbst, sichtbare temporäre Sitzungen, Freunde und wer im
+  // Sprachkanal ist (das sehen Mitglieder ohnehin). Andere Konten verraten
+  // ihren Status nicht.
+  const here = (i) => i.id === S.me.id || isHere(i) || room.vc.includes(i.id);
   const on = members.filter(here);
-  const hidden = members.filter((i) => !here(i) && i.on !== false);
-  const off = members.filter((i) => !here(i) && i.on === false);
+  const hidden = members.filter((i) => !here(i) && presenceOf(i) === null);
+  const off = members.filter((i) => !here(i) && presenceOf(i) === 'off');
   box.appendChild(el('div', { class: 'sc-members-head' },
     el('span', { class: 'sc-side-title', text: 'Mitglieder' }),
     iconBtn('x', 'Schließen', () => { S.membersOpen = false; renderAll(); }, { class: 'sc-ibtn sc-only-narrow' })));
@@ -2095,10 +2124,13 @@ function renderMembers() {
 function profileCard(ident, inPanel) {
   const me = ident.id === S.me.id;
   const card = el('div', { class: 'sc-profile' + (inPanel ? ' sc-profile--panel' : '') });
+  const p = presenceOf(ident);
+  const f = me ? null : friendOf(ident.id);
+  const rel = f && f.st === 'yes' ? ' · Freund' : f && f.st === 'in' ? ' · möchte befreundet sein' : f && f.st === 'out' ? ' · Anfrage gesendet' : '';
   card.append(
     avatar(ident, 'lg'),
     el('h3', { class: 'sc-profile-name' }, displayName(ident), isVerified(ident) ? icon('shieldCheck', 16) : null),
-    el('p', { class: 'sc-profile-kind', text: (ident.kind === 'temp' ? 'Temporäre Sitzung' : 'Konto') + (ident.on ? ' · online' : ident.on === false ? ' · offline' : '') }),
+    el('p', { class: 'sc-profile-kind', text: (ident.kind === 'temp' ? 'Temporäre Sitzung' : 'Konto') + (p ? ' · ' + STATUS[p].label : '') + rel }),
     el('p', { class: 'field-label', text: 'Fingerabdruck' }),
     el('p', { class: 'sc-fp', text: C.formatFingerprint(ident.fp) }));
   if (!me) {
@@ -2109,6 +2141,7 @@ function profileCard(ident, inPanel) {
   const actions = el('div', { class: 'sc-profile-actions' });
   if (!me) {
     if (!inPanel) actions.appendChild(el('button', { type: 'button', class: 'btn btn--primary', onclick: () => { closeModal(); openDm(ident.id); } }, 'Nachricht'));
+    actions.appendChild(friendButton(ident));
     actions.append(
       el('button', { type: 'button', class: 'btn', onclick: () => { closeModal(); startCall(ident.id, false); } }, icon('phone', 14), 'Anrufen'),
       el('button', { type: 'button', class: 'btn', onclick: () => { closeModal(); startCall(ident.id, true); } }, icon('video', 14), 'Video'),
@@ -2150,7 +2183,10 @@ function toggleVerified(ident) {
 
 function toggleBlock(ident) {
   if (S.vault.blocked[ident.fp]) delete S.vault.blocked[ident.fp];
-  else S.vault.blocked[ident.fp] = 1;
+  else {
+    S.vault.blocked[ident.fp] = 1;
+    if (friendOf(ident.id)) endFriend(ident, false);   // Blockieren beendet die Freundschaft
+  }
   saveVault();
   closeModal();
   renderAll();
@@ -2306,7 +2342,8 @@ async function handleInboxEntry(e) {
   if (!from || from.fp !== res.signer) return;
   if (from.id !== S.me.id && obj.to !== S.me.id) return;
   if (from.id !== S.me.id && isBlocked(from)) return;
-  if (e.k === 'dm') handleDm(obj, from, e);
+  if (e.k === 'dm' && obj.t === 'friend') handleFriend(obj, from, e.t * 1000);
+  else if (e.k === 'dm') handleDm(obj, from, e);
   else if (e.k === 'sig') await handleSignal(obj, from, e);
 }
 
@@ -2417,6 +2454,371 @@ function renderTyping() {
     box.append(el('span', { class: 'sc-dots' }, el('i'), el('i'), el('i')),
       el('span', { text: displayName(S.ids.get(S.view.peer)) + ' schreibt …' }));
   }
+}
+
+/* ==========================================================================
+   Freunde: Anfrage, Annahme und gegenseitiger Status
+   Die Anfrage ist eine Direktnachricht (PGP-verschlüsselt, signiert) mit
+   einem gemeinsamen Geheimnis. Nimmt die andere Seite an, legt jeder seinen
+   Status verschlüsselt in sein Fach beim Server und liest das des anderen
+   (friendPresence in securecom-core.js). Fremde sehen bei Konten nichts.
+   Im Tresor: friends[Kennung] = { st, s, t } mit st 'out' (angefragt),
+   'in' (Anfrage bekommen), 'yes' (befreundet), 'no' (abgelehnt/beendet).
+   ========================================================================== */
+const STATUS = {
+  on:   { label: 'Online',      cls: '',         menu: 'Online',              note: 'Nach 10 Minuten ohne Eingabe: abwesend' },
+  busy: { label: 'Beschäftigt', cls: ' is-busy', menu: 'Beschäftigt',         note: 'Freunde sehen, dass du beschäftigt bist' },
+  away: { label: 'Abwesend',    cls: ' is-away', menu: 'Abwesend',            note: 'Freunde sehen dich als abwesend' },
+  off:  { label: 'Offline',     cls: ' is-off',  menu: 'Als offline anzeigen', note: 'Du siehst Freunde weiter, sie dich nicht' }
+};
+const STATUS_ORDER = ['on', 'busy', 'away', 'off'];
+const PRES_READ  = 20000;   // Freunde abfragen
+const PRES_BEAT  = 60000;   // eigenen Stand erneuern – der Server vergisst ihn nach 150 s
+const PRES_TTL   = 150;     // wie beim Server (SecureCom::PRES_TTL)
+const AWAY_AFTER = 600;     // Sekunden ohne Eingabe, dann „abwesend“
+const P = {
+  idle: false, lastInput: Date.now(), timer: 0, soon: 0, busy: false, again: false,
+  lastGet: 0, lastPut: 0, putSig: '', published: new Set(), keys: new Map()
+};
+
+function friendOf(id) {
+  const f = S.vault && S.vault.friends[id];
+  return f && f.st !== 'no' ? f : null;
+}
+
+function isFriend(id) {
+  const f = friendOf(id);
+  return !!(f && f.st === 'yes');
+}
+
+/** Die eigene Wahl im Menü unten links. */
+function chosenStatus() {
+  const s = S.vault && S.vault.settings.status;
+  return STATUS[s] ? s : 'on';
+}
+
+/** Was Freunde sehen: „Online“ wird ohne Eingabe nach 10 Minuten „Abwesend“. */
+function myStatus() {
+  const s = chosenStatus();
+  return s === 'on' && P.idle ? 'away' : s;
+}
+
+/** 'on' | 'busy' | 'away' | 'off' – oder null, wenn unbekannt (Konto, kein Freund). */
+function presenceOf(ident) {
+  if (!ident) return null;
+  if (S.me && ident.id === S.me.id) return myStatus();
+  if (isFriend(ident.id)) {
+    const p = S.fst.get(ident.id);
+    return p ? p.status : 'off';
+  }
+  return ident.on === true ? 'on' : ident.on === false ? 'off' : null;
+}
+
+function isHere(ident) {
+  const p = presenceOf(ident);
+  return p === 'on' || p === 'busy' || p === 'away';
+}
+
+/** Punkt am Profilbild. Grau („offline“) nur bei Freunden – sonst wissen wir es nicht. */
+function statusDot(ident) {
+  const p = presenceOf(ident);
+  if (!p || (p === 'off' && !isFriend(ident.id))) return null;
+  return el('span', { class: 'sc-on' + STATUS[p].cls, title: STATUS[p].label });
+}
+
+function friendsWith(st) {
+  return Object.keys((S.vault && S.vault.friends) || {}).filter((id) => S.vault.friends[id].st === st)
+    .map((id) => S.ids.get(id)).filter((i) => i && !isBlocked(i));
+}
+
+async function addFriend(ident) {
+  if (!ident || ident.id === S.me.id) return;
+  const cur = friendOf(ident.id);
+  if (cur && cur.st === 'in') { await acceptFriend(ident); return; }
+  if (cur) return;   // schon befreundet oder angefragt
+  const s = C.newFriendSecret();
+  try {
+    await sendDmEvent(ident.id, { t: 'friend', op: 'req', s: s });
+  } catch (e) { toast(e.message, 'error'); return; }
+  noteContact(ident);
+  S.vault.friends[ident.id] = { st: 'out', s: s, t: serverNow() };
+  saveVault();
+  toast('Anfrage an ' + displayName(ident) + ' geschickt. Sobald sie angenommen ist, seht ihr gegenseitig euren Status.', 'ok', 6000);
+  renderAll();
+}
+
+async function acceptFriend(ident) {
+  const cur = friendOf(ident.id);
+  if (!cur || cur.st !== 'in') return;
+  try {
+    await sendDmEvent(ident.id, { t: 'friend', op: 'yes', s: cur.s });
+  } catch (e) { toast(e.message, 'error'); return; }
+  S.vault.friends[ident.id] = { st: 'yes', s: cur.s, t: serverNow() };
+  saveVault();
+  toast(displayName(ident) + ' ist jetzt dein Freund.', 'ok');
+  presenceSoon();
+  renderAll();
+}
+
+/** Ablehnen, zurückziehen oder entfernen. Die andere Seite erfährt es und räumt auch auf. */
+async function endFriend(ident, ask) {
+  const cur = friendOf(ident.id);
+  if (!cur) return;
+  if (ask) {
+    const ok = await confirmBox('Freund entfernen', displayName(ident) + ' und du seht danach nicht mehr, ob der andere online ist. Die Unterhaltung bleibt.', 'Entfernen', true);
+    if (!ok) return;
+  }
+  sendDmEvent(ident.id, { t: 'friend', op: 'no', s: cur.s }).catch(() => { /* bei uns trotzdem beendet */ });
+  S.vault.friends[ident.id] = { st: 'no', s: cur.s, t: serverNow() };
+  S.fst.delete(ident.id);
+  saveVault();
+  presenceSoon();
+  renderAll();
+}
+
+/**
+ * Freundschafts-Nachricht vom Gegenüber. Beim Neuladen kommen ältere noch
+ * einmal vorbei; die erkennt der Abgleich mit Geheimnis und Zeitpunkt.
+ */
+function handleFriend(obj, from, ts) {
+  if (!S.vault || from.id === S.me.id) return;   // eigene Kopie: der Tresor kennt den Stand
+  const cur = S.vault.friends[from.id];
+  const s = typeof obj.s === 'string' && /^[A-Za-z0-9_-]{43}$/.test(obj.s) ? obj.s : '';
+  if (obj.op === 'req') {
+    if (!s || (cur && (cur.s === s || (Number(cur.t) || 0) > ts))) return;
+    noteContact(from);
+    if (cur && cur.st === 'out') {
+      // Beide haben gleichzeitig angefragt: befreundet. Es gilt das Geheimnis
+      // der kleineren Kennung – so entscheiden beide Seiten gleich.
+      const shared = from.id < S.me.id ? s : cur.s;
+      S.vault.friends[from.id] = { st: 'yes', s: shared, t: ts };
+      sendDmEvent(from.id, { t: 'friend', op: 'yes', s: shared }).catch(() => {});
+      friendNotice(from, 'ist jetzt dein Freund.');
+    } else {
+      S.vault.friends[from.id] = { st: 'in', s: s, t: ts };
+      friendNotice(from, 'möchte mit dir befreundet sein.');
+    }
+  } else if (obj.op === 'yes') {
+    if (!cur || cur.st !== 'out' || cur.s !== s) return;
+    S.vault.friends[from.id] = { st: 'yes', s: s, t: ts };
+    friendNotice(from, 'hat deine Anfrage angenommen.');
+  } else if (obj.op === 'no') {
+    if (!cur || cur.st === 'no' || (s && cur.s !== s)) return;
+    S.vault.friends[from.id] = { st: 'no', s: cur.s, t: ts };
+    S.fst.delete(from.id);
+  } else {
+    return;
+  }
+  saveVault();
+  presenceSoon();
+  scheduleRender();
+}
+
+function friendNotice(from, text) {
+  if (!S.cursorLoaded) return;   // beim Start Nachgeholtes nicht melden – es steht in der Liste
+  const msg = displayName(from) + ' ' + text;
+  if (document.hidden) { notifySound(); notify('Clavichat', msg, 'friend:' + from.id); }
+  else toast(msg, 'ok', 6000);
+}
+
+/* ---------- Status in den Fächern ----------------------------------------- */
+function startPresence() {
+  if (P.timer) return;
+  const mark = () => { P.lastInput = Date.now(); };
+  for (const ev of ['pointerdown', 'keydown', 'wheel', 'touchstart']) window.addEventListener(ev, mark, { capture: true, passive: true });
+  let moved = 0;
+  window.addEventListener('pointermove', () => { const n = Date.now(); if (n - moved > 5000) { moved = n; mark(); } }, { passive: true });
+  P.timer = setInterval(() => presenceTick(false), 5000);
+  presenceSoon();
+}
+
+function presenceSoon() {
+  clearTimeout(P.soon);
+  P.soon = setTimeout(() => presenceTick(true), 300);
+}
+
+/** Abwesend? In der Windows-App zählt der ganze Rechner, im Browser dieses Fenster. */
+async function checkIdle() {
+  let idle = (Date.now() - P.lastInput) / 1000;
+  if (DESKTOP && typeof DESKTOP.idleSeconds === 'function') {
+    try {
+      const sys = await DESKTOP.idleSeconds();
+      if (typeof sys === 'number' && sys >= 0) idle = sys;
+    } catch (e) { /* dann zählen die Eingaben im Fenster */ }
+  }
+  const away = idle >= AWAY_AFTER;
+  if (away === P.idle) return;
+  P.idle = away;
+  renderUser();
+  scheduleRender();
+}
+
+/** Fächer und Schlüssel je Freund (aus dem Geheimnis, einmal berechnet). */
+async function presenceKeys(id) {
+  const f = friendOf(id);
+  if (!f || f.st !== 'yes' || !f.s) return null;
+  const hit = P.keys.get(id);
+  if (hit && hit.s === f.s) return hit;
+  try {
+    const k = Object.assign({ id: id, s: f.s }, await C.friendPresence(f.s, S.me.id, id));
+    P.keys.set(id, k);
+    return k;
+  } catch (e) { return null; }
+}
+
+/**
+ * Ein Takt: eigenen Status in die Fächer legen (jede Minute und bei jeder
+ * Änderung), die der Freunde lesen (alle 20 s). „Als offline anzeigen“
+ * leert die eigenen Fächer sofort.
+ */
+async function presenceTick(force) {
+  if (!S.me || !S.token || !S.vault) return;
+  if (P.busy) { if (force) P.again = true; return; }
+  P.busy = true;
+  try {
+    await checkIdle();
+    const ids = Object.keys(S.vault.friends).filter((id) => isFriend(id) && !isBlocked(S.ids.get(id)));
+    const keys = (await Promise.all(ids.map(presenceKeys))).filter(Boolean);
+    const now = Date.now();
+    const status = myStatus();
+    const mine = new Set(status === 'off' ? [] : keys.map((k) => k.mine));
+    const sig = status + '|' + [...mine].sort().join(',');
+    const body = {};
+    if (mine.size && (sig !== P.putSig || now - P.lastPut >= PRES_BEAT)) {
+      body.put = await Promise.all(keys.map(async (k) => ({ i: k.mine, d: await C.sealPresence(k.key, k.mine, status) })));
+    }
+    const gone = [...P.published].filter((slot) => !mine.has(slot));
+    if (gone.length) body.del = gone;
+    if (keys.length && (force || now - P.lastGet >= PRES_READ)) body.get = keys.map((k) => k.theirs);
+    if (!body.put && !body.del && !body.get) return;
+
+    const r = await api('pres', body);
+    if (body.put) { P.lastPut = now; P.putSig = sig; P.published = new Set(mine); }
+    else for (const slot of gone) P.published.delete(slot);
+    if (!mine.size) P.putSig = sig;
+    if (body.get) {
+      P.lastGet = now;
+      let changed = false;
+      for (const k of keys) {
+        const got = r.got && r.got[k.theirs];
+        let st = 'off';
+        if (got && r.now - got.t <= PRES_TTL) {
+          try { st = (await C.openPresence(k.key, k.theirs, got.d)).status; } catch (e) { st = 'off'; }
+        }
+        const prev = S.fst.get(k.id);
+        if (!prev || prev.status !== st) { S.fst.set(k.id, { status: st }); changed = true; }
+      }
+      if (changed) scheduleRender();
+    }
+  } catch (e) {
+    /* beim nächsten Takt wieder */
+  } finally {
+    P.busy = false;
+    if (P.again) { P.again = false; presenceSoon(); }
+  }
+}
+
+/** Beim Abmelden: eigene Fächer gleich leeren, statt sie verfallen zu lassen. */
+async function clearPresence() {
+  if (!P.published.size) return;
+  try { await api('pres', { del: [...P.published] }); } catch (e) { /* verfällt nach 150 s */ }
+  P.published.clear();
+}
+
+async function setStatus(s) {
+  if (!STATUS[s] || !S.vault) return;
+  // Temporär: Wer „offline“ wählt, verschwindet auch aus der Online-Liste.
+  if (S.mode === 'temp' && S.vault.settings.listed === undefined) S.vault.settings.listed = !!S.me.vis;
+  S.vault.settings.status = s;
+  saveVault();
+  await syncListed();
+  presenceSoon();
+  renderAll();
+}
+
+/** Temporäre Sitzungen: in der Online-Liste nur, wenn gewünscht und nicht „offline“. */
+async function syncListed() {
+  if (S.mode !== 'temp') return;
+  const want = S.vault.settings.listed !== false && chosenStatus() !== 'off';
+  if (want === !!S.me.vis) return;
+  try {
+    await api('card', { vis: want });
+    S.me.vis = want;
+  } catch (e) { toast(e.message, 'error'); }
+}
+
+function openStatusMenu(anchor) {
+  const r = anchor.getBoundingClientRect();
+  const cur = chosenStatus();
+  openContextMenu(r.left, r.top - 6, STATUS_ORDER.map((s) => ({
+    dot: s, label: STATUS[s].menu, note: STATUS[s].note, checked: s === cur, run: () => setStatus(s)
+  })).concat([{ sep: true }, { icon: 'users', label: 'Profil anzeigen', run: () => showProfile(S.me.id) }]), { above: true });
+}
+
+/* ---------- Freunde in Listen, Menüs und Profil ---------------------------- */
+function friendMenuItem(ident) {
+  if (!ident || ident.id === S.me.id) return null;
+  const f = friendOf(ident.id);
+  if (!f) return { icon: 'userPlus', label: 'Als Freund hinzufügen', run: () => addFriend(ident) };
+  if (f.st === 'in') return { icon: 'userPlus', label: 'Freundschaftsanfrage annehmen', run: () => acceptFriend(ident) };
+  if (f.st === 'out') return { icon: 'x', label: 'Anfrage zurückziehen', run: () => endFriend(ident, false) };
+  return { icon: 'userMinus', label: 'Freund entfernen', danger: true, run: () => endFriend(ident, true) };
+}
+
+function friendMenuItems(ident) {
+  return [
+    { icon: 'message', label: 'Nachricht', run: () => openDm(ident.id) },
+    { icon: 'phone', label: 'Anrufen', run: () => startCall(ident.id, false) },
+    { icon: 'users', label: 'Profil anzeigen', run: () => showProfile(ident.id) },
+    friendMenuItem(ident)
+  ];
+}
+
+function friendButton(ident) {
+  const f = friendOf(ident.id);
+  const act = (fn) => () => { closeModal(); fn(); };
+  if (!f) return el('button', { type: 'button', class: 'btn', onclick: act(() => addFriend(ident)) }, icon('userPlus', 14), 'Als Freund hinzufügen');
+  if (f.st === 'in') return el('button', { type: 'button', class: 'btn btn--primary', onclick: act(() => acceptFriend(ident)) }, icon('userPlus', 14), 'Anfrage annehmen');
+  if (f.st === 'out') return el('button', { type: 'button', class: 'btn', onclick: act(() => endFriend(ident, false)) }, icon('x', 14), 'Anfrage zurückziehen');
+  return el('button', { type: 'button', class: 'btn', onclick: act(() => endFriend(ident, true)) }, icon('userMinus', 14), 'Freund entfernen');
+}
+
+function renderFriendsSide(body) {
+  const incoming = friendsWith('in');
+  const outgoing = friendsWith('out');
+  if (incoming.length || outgoing.length) {
+    body.appendChild(sectionHead('ANFRAGEN — ' + (incoming.length + outgoing.length)));
+    const rl = el('div', { class: 'sc-list' });
+    for (const ident of incoming) {
+      rl.appendChild(el('div', { class: 'sc-req' },
+        personRow(ident, () => showProfile(ident.id), { sub: 'möchte befreundet sein' }),
+        iconBtn('check', 'Annehmen', () => acceptFriend(ident), { class: 'sc-ibtn sc-ibtn--ok' }),
+        iconBtn('x', 'Ablehnen', () => endFriend(ident, false))));
+    }
+    for (const ident of outgoing) {
+      rl.appendChild(el('div', { class: 'sc-req' },
+        personRow(ident, () => openDm(ident.id), { sub: 'Anfrage gesendet' }),
+        iconBtn('x', 'Anfrage zurückziehen', () => endFriend(ident, false))));
+    }
+    body.appendChild(rl);
+  }
+
+  const rank = (i) => STATUS_ORDER.indexOf(presenceOf(i) || 'off');
+  const friends = friendsWith('yes').sort((a, b) => (rank(a) - rank(b)) || displayName(a).localeCompare(displayName(b), 'de'));
+  body.appendChild(sectionHead('FREUNDE — ' + friends.filter(isHere).length + ' / ' + friends.length));
+  const fl = el('div', { class: 'sc-list' });
+  if (!friends.length) {
+    fl.appendChild(el('p', { class: 'sc-empty-note', text: 'Noch keine Freunde. Füge jemanden per Schlüssel oder Fingerabdruck hinzu – nimmt er an, seht ihr gegenseitig, ob ihr online seid.' }));
+  }
+  for (const ident of friends) {
+    const row = personRow(ident, () => openDm(ident.id), {
+      current: S.view.kind === 'dm' && S.view.peer === ident.id,
+      sub: STATUS[presenceOf(ident) || 'off'].label
+    });
+    withMenu(row, () => friendMenuItems(ident));
+    fl.appendChild(row);
+  }
+  body.appendChild(fl);
 }
 
 /* ==========================================================================
@@ -3513,6 +3915,70 @@ async function routeOf(pc) {
   } catch (e) { return null; }
 }
 
+/**
+ * Erreicht dieses Gerät den Relay-Server? Eine Probe ohne Gegenüber: Gibt der
+ * TURN-Server eine Relay-Adresse heraus, funktioniert er. Ergebnis 'ok',
+ * 'fail' oder 'none' (keiner eingerichtet). Dabei sieht der Relay-Betreiber
+ * die IP-Adresse dieses Geräts – wie bei jedem Anruf über das Relay.
+ */
+const RELAY = { state: null, at: 0 };
+
+async function probeRelay(ms) {
+  if (!S.cfg.relay) return 'none';
+  const turnOnly = () => (S.cfg.ice || []).filter((s) => [].concat(s.urls).some((u) => /^turns?:/i.test(String(u))));
+  if (!turnOnly().length) await loadIce();
+  const servers = turnOnly();
+  if (!servers.length || typeof RTCPeerConnection !== 'function') return 'fail';
+  let pc = null;
+  try {
+    pc = new RTCPeerConnection({ iceServers: servers, iceTransportPolicy: 'relay' });
+    pc.createDataChannel('probe');
+    const found = new Promise((resolve) => {
+      const timer = setTimeout(() => resolve(false), ms || 6000);
+      pc.onicecandidate = (ev) => {
+        const c = ev.candidate;
+        if (c && / typ relay( |$)/.test(c.candidate)) { clearTimeout(timer); resolve(true); }
+        else if (!c) { clearTimeout(timer); resolve(false); }   // fertig gesammelt, nichts gefunden
+      };
+    });
+    await pc.setLocalDescription(await pc.createOffer());
+    return (await found) ? 'ok' : 'fail';
+  } catch (e) {
+    return 'fail';
+  } finally {
+    if (pc) pc.close();
+  }
+}
+
+/** Zeile in den Einstellungen: ist der Relay-Server da und erreichbar? */
+function relayStatusRow() {
+  const row = el('div', { class: 'sc-set-row sc-relay' });
+  const texts = {
+    none: ['nicht eingerichtet', 'Über Mobilfunk und in strengen Netzen kommen Anrufe dann oft nicht zustande.'],
+    test: ['wird geprüft …', 'Clavichat baut eine Probe-Verbindung zum Relay auf.'],
+    ok:   ['verbunden', 'Anrufe klappen auch mit Handys im Mobilfunk und hinter strengen Firewalls. Kommt keine direkte Verbindung zustande, läuft das Gespräch verschlüsselt über das Relay.'],
+    fail: ['nicht erreichbar', 'Der Relay-Server ist eingetragen, von diesem Gerät aus aber gerade nicht erreichbar. Anrufe übers Handy können scheitern.']
+  };
+  const draw = (state) => {
+    row.textContent = '';
+    row.className = 'sc-set-row sc-relay is-' + state;
+    row.append(el('span', { class: 'sc-relay-dot', 'aria-hidden': 'true' }),
+      el('span', { class: 'sc-set-text' }, el('strong', { text: 'Relay-Server (TURN): ' + texts[state][0] }), el('span', { text: texts[state][1] })),
+      state === 'ok' || state === 'fail' ? el('button', { type: 'button', class: 'btn', text: 'Erneut prüfen', onclick: () => run(true) }) : null);
+  };
+  const run = async (fresh) => {
+    if (!S.cfg.relay) { draw('none'); return; }
+    if (!fresh && RELAY.state && Date.now() - RELAY.at < 600000) { draw(RELAY.state); return; }
+    draw('test');
+    RELAY.state = await probeRelay(6000);
+    RELAY.at = Date.now();
+    if (row.isConnected) draw(RELAY.state);
+  };
+  draw(S.cfg.relay ? (RELAY.state || 'test') : 'none');
+  setTimeout(() => run(false), 0);
+  return row;
+}
+
 function rtcConfig() {
   const relayOnly = S.vault.settings.hideIp && S.cfg.relay;
   return { iceServers: S.cfg.ice || [], iceTransportPolicy: relayOnly ? 'relay' : 'all', bundlePolicy: 'max-bundle' };
@@ -4360,17 +4826,17 @@ function notifySound() {
 }
 
 /* ==========================================================================
-   Per Schlüssel verbinden
+   Freund hinzufügen (per PGP-Schlüssel oder Fingerabdruck)
    ========================================================================== */
 function connectByKey() {
   openModal({
-    title: 'PER SCHLÜSSEL VERBINDEN',
+    title: 'FREUND HINZUFÜGEN',
     build: (body, close) => {
       const input = el('textarea', { rows: '6', spellcheck: 'false', placeholder: '-----BEGIN PGP PUBLIC KEY BLOCK-----\n…\n\noder Fingerabdruck: 4F2A 91C0 …' });
       const go = el('button', { type: 'button', class: 'btn btn--primary btn--block', text: 'Suchen' });
       const out = el('div', { class: 'sc-list' });
       body.append(
-        el('p', { class: 'sc-p', text: 'Füge den öffentlichen PGP-Schlüssel oder den Fingerabdruck der Person ein. Hast du ihn auf einem sicheren Weg bekommen, markiert Clavichat den Kontakt als verifiziert.' }),
+        el('p', { class: 'sc-p', text: 'Füge den öffentlichen PGP-Schlüssel oder den Fingerabdruck der Person ein. Nimmt sie deine Anfrage an, seht ihr gegenseitig, ob ihr online seid. Schreiben und anrufen geht auch ohne. Hast du den Schlüssel auf einem sicheren Weg bekommen, gilt der Kontakt als verifiziert.' }),
         field('Öffentlicher Schlüssel oder Fingerabdruck', input), go, out);
       go.addEventListener('click', async () => {
         out.textContent = '';
@@ -4405,9 +4871,19 @@ function connectByKey() {
               S.vault.contacts[ident.id].v = true;
               saveVault();
             }
+            const f = friendOf(ident.id);
+            const befriend = el('button', { type: 'button', class: 'btn btn--primary', disabled: !!(f && f.st !== 'in') },
+              icon('userPlus', 14), !f ? 'Freund hinzufügen' : f.st === 'in' ? 'Anfrage annehmen' : f.st === 'out' ? 'Anfrage gesendet' : 'Schon befreundet');
+            befriend.addEventListener('click', async () => {
+              befriend.disabled = true;
+              await addFriend(ident);
+              close();
+              openDm(ident.id);
+            });
             const row = el('div', { class: 'sc-found' },
               personRow(ident, () => { close(); openDm(ident.id); }, { sub: C.shortFingerprint(ident.fp) + (ident.on ? ' · online' : ident.on === false ? ' · offline' : '') }),
               el('div', { class: 'sc-found-actions' },
+                befriend,
                 el('button', { type: 'button', class: 'btn', onclick: () => { close(); openDm(ident.id); } }, 'Schreiben'),
                 el('button', { type: 'button', class: 'btn', onclick: () => { close(); startCall(ident.id, false); } }, icon('phone', 14), 'Anrufen'),
                 el('button', { type: 'button', class: 'btn', onclick: () => { close(); startCall(ident.id, true); } }, icon('video', 14), 'Video')));
@@ -4532,13 +5008,14 @@ function showSettings() {
     build: (body, close) => {
       // Profil
       body.appendChild(sectionHead('PROFIL'));
-      const vis = el('input', { type: 'checkbox', checked: S.me.vis });
+      // Temporär: Wunsch für die Online-Liste. „Als offline anzeigen“ blendet
+      // trotzdem aus (syncListed).
+      const vis = el('input', { type: 'checkbox', checked: S.vault.settings.listed !== undefined ? S.vault.settings.listed !== false : S.me.vis });
       vis.addEventListener('change', async () => {
-        try {
-          await api('card', { vis: vis.checked });
-          S.me.vis = vis.checked;
-          renderAll();
-        } catch (e) { vis.checked = !vis.checked; toast(e.message, 'error'); }
+        S.vault.settings.listed = vis.checked;
+        saveVault();
+        await syncListed();
+        renderAll();
       });
       const picRow = S.mode === 'account'
         ? el('div', { class: 'sc-set-row' },
@@ -4556,8 +5033,9 @@ function showSettings() {
         picRow,
         // Konten stehen nie in der Online-Liste (mehr Anonymität), nur temporäre Sitzungen.
         S.mode === 'temp'
-          ? el('label', { class: 'sc-check' }, vis, el('span', { text: 'In der Online-Liste sichtbar sein. Aus: Nur wer deinen Schlüssel oder Fingerabdruck hat, erreicht dich.' }))
-          : el('p', { class: 'sc-note', text: 'Konten stehen nicht in der Online-Liste und zeigen niemandem, ob sie online sind. Erreichbar bist du über deinen Schlüssel, deinen Fingerabdruck, gemeinsame Räume und bestehende Unterhaltungen.' }));
+          ? el('label', { class: 'sc-check' }, vis, el('span', { text: 'In der Online-Liste sichtbar sein. Aus: Nur wer deinen Schlüssel oder Fingerabdruck hat, erreicht dich.' +
+            (chosenStatus() === 'off' ? ' Solange du als offline angezeigt wirst, stehst du ohnehin nicht darin.' : '') }))
+          : el('p', { class: 'sc-note', text: 'Konten stehen nicht in der Online-Liste. Ob du online bist, sehen nur deine Freunde – den Status stellst du unten links mit einem Klick auf dein Profil ein. Erreichbar bist du über deinen Schlüssel, deinen Fingerabdruck, gemeinsame Räume und bestehende Unterhaltungen.' }));
 
       // Schlüssel
       body.appendChild(sectionHead('SCHLÜSSEL'));
@@ -4593,11 +5071,12 @@ function showSettings() {
       const audio = choice(AUDIO_QUALITY, audioQuality().id, setAudioQuality);
       const screenPick = choice(SCREEN_QUALITY, screenQuality().id, setScreenQuality);
       body.append(
+        relayStatusRow(),
         pickField('Mikrofon', mic, 'Namen erscheinen, sobald du einmal das Mikrofon erlaubt hast.'),
         pickField('Tonqualität', audio, 'Gilt für dieses Gerät, Datenrate und Filter sofort, Stereo ab dem nächsten Anruf.'),
         pickField('Bildschirm teilen', screenPick, 'Gilt für dieses Gerät. Während einer Übertragung lässt sie sich über den Regler-Knopf neben „Bildschirm teilen“ ändern.'),
         el('label', { class: 'sc-check' + (S.cfg.relay ? '' : ' is-disabled') }, hide, el('span', { text: S.cfg.relay
-          ? 'IP-Adresse verbergen: Anrufe nur über den Relay-Server. Dein Gegenüber sieht deine IP dann nicht.'
+          ? 'IP-Adresse verbergen: Anrufe laufen immer über den Relay-Server. Dein Gegenüber sieht deine IP dann nicht – der Betreiber des Relays schon.'
           : 'IP-Adresse verbergen – braucht einen Relay-Server (TURN), der auf diesem Server noch nicht eingerichtet ist.' })),
         el('label', { class: 'sc-check' }, sound, el('span', { text: 'Töne (Klingeln, neue Nachricht)' })));
 
@@ -4802,13 +5281,14 @@ function showSecurityInfo() {
         'Räume: ein gemeinsamer Raumschlüssel (AES-256-GCM). Er steht im Einladungslink hinter dem „#“ – dieser Teil einer Adresse geht nie an einen Server – oder kommt PGP-verschlüsselt vom Besitzer. Verlässt jemand den Raum, gibt es einen neuen.',
         'Anrufe und Bildschirm: WebRTC direkt zwischen den Geräten, verschlüsselt mit DTLS-SRTP. Die Schlüssel dafür handeln nur die beiden Browser aus; die Verbindungsangaben sind signiert und verschlüsselt, der Sicherheitscode zeigt, dass niemand dazwischensitzt.',
         'Konten: Aus deinem Passwort entstehen ' + LOCAL + ' (PBKDF2, 600.000 Runden, dann HKDF) ein Anmeldeschlüssel – beim Server nur als Hash – und ein Schlüssel, der deinen privaten Schlüssel einpackt. Das Passwort selbst verlässt ' + (DESKTOP ? 'die App' : 'den Browser') + ' nie.',
-        'Konto mit achterberg.dev: Das Postfach bestätigt nur, wer du bist – mit einem signierten Ticket, das fünf Minuten und nur einmal gilt. Deinen Schlüssel schützt statt eines Passworts ein Wiederherstellungscode aus 160 Zufallsbits (HKDF-SHA-256). Ihn kennst nur du; der Server sieht ihn nie.'
+        'Konto mit achterberg.dev: Das Postfach bestätigt nur, wer du bist – mit einem signierten Ticket, das fünf Minuten und nur einmal gilt. Deinen Schlüssel schützt statt eines Passworts ein Wiederherstellungscode aus 160 Zufallsbits (HKDF-SHA-256). Ihn kennst nur du; der Server sieht ihn nie.',
+        'Freunde: Die Anfrage bringt ein gemeinsames Geheimnis mit (PGP-verschlüsselt). Daraus entstehen zwei zufällige Fächer beim Server und ein Schlüssel; dein Status liegt dort verschlüsselt (AES-256-GCM). Der Server weiß nicht, wer mit wem befreundet ist.'
       ]);
       block('VERSCHLEIERUNG', [
         'Alle Klartexte werden vor dem Verschlüsseln auf feste Größen aufgefüllt – „ok“ und ein langer Absatz sind gleich groß.',
         'Beim Server steht an keiner Nachricht ein Absender; wer schreibt, steht nur verschlüsselt und signiert im Inneren.',
         'Raumnamen, Raumbilder, Kanäle und Kontakte sind verschlüsselt. Der Server kennt nur zufällige Kennungen.',
-        'Konten stehen nie in der Online-Liste und zeigen niemandem, ob sie online sind. Dort erscheinen nur temporäre Sitzungen – und auch die nur, solange sie es wollen.',
+        'Konten stehen nie in der Online-Liste; ob sie online sind, sehen nur ihre Freunde. In der Liste erscheinen nur temporäre Sitzungen – und auch die nur, solange sie es wollen.',
         'Alle Anfragen gehen per POST an dieselbe Adresse. In den Protokollen des Webservers steht nicht, was passiert ist.',
         'Keine Cookies (einzige Ausnahme: „Mit achterberg.dev“ fragt auf deinen Klick das Dashboard nach deinem Postfach), keine fremden Server auf dieser Seite (auch keine Schriften von Google), strenge Content-Security-Policy.',
         'Anruf-Signale verfallen nach zwei Minuten, Nachrichten nach ' + S.cfg.retention_days + ' Tagen, temporäre Sitzungen nach ' + S.cfg.temp_hours + ' Stunden ohne Nutzung.'
@@ -4817,6 +5297,7 @@ function showSecurityInfo() {
         'IP-Adressen und Zeitpunkte der Anfragen (der Webserver des Hosters protokolliert sie).',
         'Wer gerade online ist, welche öffentlichen Schlüssel, Namen/Aliasse und Profilbilder (nur Konten) es gibt, wer in welchem Raum ist und wer in welchem Sprachkanal.',
         'Welcher Briefkasten wann wie viele Einträge bekommt.',
+        'Dass ein Status-Fach beschrieben oder gelesen wird – nicht, wem es gehört, und nicht den Status selbst. Im Moment der Anfrage sieht er, wer fragt; gespeichert wird das nicht.',
         'Bei Anrufen ohne Relay sehen sich die beiden Gesprächspartner gegenseitig die IP-Adresse.'
       ]);
       block('GRENZEN', [
@@ -4898,6 +5379,11 @@ function bind() {
       }
       if (S.voice) {
         fetch(API_URL, { method: 'POST', keepalive: true, credentials: 'omit', headers: headers, body: JSON.stringify({ a: 'room.voice', id: S.voice.rid, on: false }) });
+      }
+      // Freunde sehen sofort „offline“, nicht erst nach 150 Sekunden.
+      if (P.published.size) {
+        fetch(API_URL, { method: 'POST', keepalive: true, credentials: 'omit', headers: headers, body: JSON.stringify({ a: 'pres', del: [...P.published] }) });
+        P.putSig = '';   // kommt die Seite zurück (Zurück-Taste), gleich neu schreiben
       }
     } catch (e) { /* Seite ist weg */ }
   });

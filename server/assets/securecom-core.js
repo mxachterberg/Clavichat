@@ -15,6 +15,9 @@
    - Konten: PBKDF2-SHA-256 (600.000 Runden) aus dem Passwort, daraus per
      HKDF ein Anmeldeschlüssel und ein Schlüssel, der den privaten
      PGP-Schlüssel und den Tresor mit AES-256-GCM einpackt.
+   - Freunde: ein gemeinsames Geheimnis aus der (PGP-verschlüsselten)
+     Anfrage; daraus per HKDF zwei Fächer beim Server und ein Schlüssel,
+     der den Status verschlüsselt (AES-256-GCM).
    - Alle Klartexte werden vor dem Verschlüsseln auf feste Größen
      aufgefüllt, damit die Länge nichts verrät.
 
@@ -373,6 +376,46 @@ async function signerOf(signatures, keyring) {
   } catch (e) {
     return { signer: null, keyId: keyId };
   }
+}
+
+/* ---------- Freunde: Status in Fächern ------------------------------------
+   Zwei Freunde teilen ein Geheimnis (32 Zufallsbytes; es kommt mit der
+   Freundschaftsanfrage, PGP-verschlüsselt und signiert). Daraus entstehen
+   per HKDF-SHA-256 (RFC 5869) ein Fach je Person – eine 256-Bit-Kennung beim
+   Server – und ein gemeinsamer AES-256-GCM-Schlüssel. Jeder legt seinen
+   Status verschlüsselt in sein Fach; lesen kann ihn nur der Freund. Der
+   Server sieht weder, wer mit wem befreundet ist, noch welcher Status gilt. */
+const PRES_SALT = te.encode('achterberg.dev/clavichat/presence/v1');
+const PRES_CODES = { on: 'o', busy: 'b', away: 'a' };
+
+export function newFriendSecret() {
+  return b64url(randomBytes(32));
+}
+
+/** { mine: eigenes Fach, theirs: Fach des Freundes, key } – beide Seiten rechnen gleich. */
+export async function friendPresence(secret, myId, peerId) {
+  const raw = unb64url(secret);
+  if (raw.length !== 32) throw new Error('Ungültiges Geheimnis.');
+  const ikm = await subtle.importKey('raw', raw, 'HKDF', false, ['deriveBits', 'deriveKey']);
+  const slot = async (id) => toHex(new Uint8Array(await subtle.deriveBits(
+    { name: 'HKDF', hash: 'SHA-256', salt: PRES_SALT, info: te.encode('clavichat presence slot ' + id) }, ikm, 256)));
+  const key = await subtle.deriveKey({ name: 'HKDF', hash: 'SHA-256', salt: PRES_SALT, info: te.encode('clavichat presence key') },
+    ikm, { name: 'AES-GCM', length: 256 }, false, ['encrypt', 'decrypt']);
+  return { mine: await slot(myId), theirs: await slot(peerId), key: key };
+}
+
+/** Status fürs eigene Fach – immer gleich lang, die Länge verrät nichts. */
+export function sealPresence(key, slot, status) {
+  const code = PRES_CODES[status];
+  if (!code) throw new Error('Unbekannter Status.');
+  return aesSeal(key, te.encode(JSON.stringify({ s: code, t: Date.now() })), 'clavichat presence ' + slot);
+}
+
+export async function openPresence(key, slot, data) {
+  const obj = JSON.parse(td.decode(await aesOpen(key, data, 'clavichat presence ' + slot)));
+  const status = Object.keys(PRES_CODES).find((k) => PRES_CODES[k] === obj.s);
+  if (!status) throw new Error('Unbekannter Status.');
+  return { status: status, t: Number(obj.t) || 0 };
 }
 
 /* ---------- Räume (AES-256-GCM + Signatur) ------------------------------- */

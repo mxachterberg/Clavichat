@@ -16,6 +16,7 @@
   --sc-side: 250px;
   --sc-members: 256px;
   --sc-danger: #f87171;
+  --sc-away: #eab308;
   --sc-soft: color-mix(in srgb, var(--bg) 72%, var(--panel));
 }
 
@@ -217,6 +218,16 @@
   box-shadow: 0 0 0 2px var(--bg);
 }
 .sc-on.is-hidden { background: var(--muted); }
+/* Status: online grün, beschäftigt rot, abwesend gelb, offline grauer Ring */
+.sc-on.is-busy { background: var(--sc-danger); }
+.sc-on.is-away { background: var(--sc-away); }
+.sc-on.is-off { background: var(--bg); box-shadow: inset 0 0 0 2px var(--muted), 0 0 0 2px var(--bg); }
+
+/* Freundschaftsanfragen: Zeile plus Knöpfe daneben */
+.sc-req { display: flex; align-items: center; gap: 2px; }
+.sc-req > .sc-row { flex: 1; min-width: 0; }
+.sc-req > .sc-ibtn { flex: none; }
+.sc-ibtn--ok:hover { color: var(--green); }
 .sc-row-text { display: flex; flex: 1; flex-direction: column; gap: 2px; min-width: 0; }
 .sc-row-name { display: flex; align-items: center; gap: 6px; min-width: 0; font-size: 13.5px; font-weight: 500; }
 .sc-row-name .sc-ic { color: var(--green); }
@@ -956,9 +967,26 @@ html[data-theme="light"] .sc-modal { background: rgba(40, 40, 40, .3); }
 .sc-ctx-item:hover:not(:disabled), .sc-ctx-item:focus-visible { border-left-color: var(--accent); background: var(--accent-soft); color: var(--text); outline: none; }
 .sc-ctx-item:disabled { opacity: .45; cursor: default; }
 .sc-ctx-item.is-danger { color: var(--sc-danger); }
+.sc-ctx-item > .sc-ic:last-child:not(:first-child) { margin-left: auto; color: var(--accent); }
+.sc-ctx-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.sc-ctx-note { font-size: 11.5px; color: var(--muted); }
+.sc-ctx-dot { position: relative; display: inline-flex; width: 15px; height: 15px; flex: none; align-items: center; justify-content: center; }
+.sc-ctx-dot .sc-on { position: static; width: 10px; height: 10px; box-shadow: none; }
+.sc-ctx-dot .sc-on.is-off { box-shadow: inset 0 0 0 2px var(--muted); }
+.sc-ctx-sep { height: 1px; margin: 4px 6px; background: var(--border-soft); }
 .sc-code-big { font-family: var(--mono); font-size: 18px; letter-spacing: .12em; color: var(--green); }
 
 .sc-set-row { display: flex; align-items: center; gap: 12px; margin-bottom: 12px; }
+
+/* Relay-Server (TURN) in den Einstellungen: Punkt + Text */
+.sc-relay { padding: 10px 12px; border: 1px solid var(--border-soft); }
+.sc-relay-dot { flex: none; width: 10px; height: 10px; border-radius: 50%; background: var(--muted); }
+.sc-relay.is-ok { border-color: color-mix(in srgb, var(--green) 45%, var(--border-soft)); }
+.sc-relay.is-ok .sc-relay-dot { background: var(--green); box-shadow: 0 0 0 4px color-mix(in srgb, var(--green) 22%, transparent); }
+.sc-relay.is-fail .sc-relay-dot { background: var(--sc-danger); }
+.sc-relay.is-test .sc-relay-dot { background: var(--accent); animation: sc-relay-wait 1s ease-in-out infinite; }
+@keyframes sc-relay-wait { 50% { opacity: .25; } }
+@media (prefers-reduced-motion: reduce) { .sc-relay.is-test .sc-relay-dot { animation: none; } }
 .sc-set-text { display: flex; flex: 1; flex-direction: column; gap: 3px; font-size: 13.5px; color: var(--text-body); }
 .sc-set-text strong {
   font-family: var(--mono);
