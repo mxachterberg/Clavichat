@@ -7,7 +7,21 @@ contextBridge.exposeInMainWorld('securecomDesktop', {
   /** Fenster nach vorn holen (Klick auf eine Benachrichtigung). */
   focus: () => ipcRenderer.send('securecom:focus'),
   /** In der Taskleiste blinken (eingehender Anruf). */
-  attention: () => ipcRenderer.send('securecom:attention')
+  attention: () => ipcRenderer.send('securecom:attention'),
+  /** Updates (updater.js): Stand, Suchen, Automatik, Installieren. */
+  updates: {
+    get: () => ipcRenderer.invoke('securecom:update', 'get'),
+    check: () => ipcRenderer.invoke('securecom:update', 'check'),
+    setAuto: (on) => ipcRenderer.invoke('securecom:update', 'auto', !!on),
+    seen: () => ipcRenderer.invoke('securecom:update', 'seen'),
+    install: () => ipcRenderer.invoke('securecom:update', 'install'),
+    /** Neuer Stand vom Updater; gibt eine Funktion zum Abbestellen zurück. */
+    onState: (fn) => {
+      const handler = (event, state) => fn(state);
+      ipcRenderer.on('securecom:update-state', handler);
+      return () => ipcRenderer.removeListener('securecom:update-state', handler);
+    }
+  }
 });
 
 /* ---- Titelleiste ---------------------------------------------------------

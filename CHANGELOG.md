@@ -6,6 +6,14 @@ Abschnitt einer Version zum Text des GitHub-Releases
 
 ## Unveröffentlicht
 
+- **Automatische Updates (Windows-App):** Sucht beim Start im Hintergrund
+  nach einer neuen Fassung und fragt per Popup, ob sie installiert werden
+  soll. In den Einstellungen unter „UPDATES“ lässt sich das abschalten,
+  von Hand suchen und aktualisieren. Installiert wird nur, was mit dem
+  Schlüssel des Herausgebers signiert ist (Ed25519) und zur angekündigten
+  Prüfsumme passt. Die portable Fassung ersetzt sich an derselben Stelle,
+  Verknüpfungen bleiben gültig.
+- **Portable Fassung** heißt jetzt ohne Versionsnummer `SecureCom-portable.exe`.
 - **Taskleiste:** Die portable Fassung hat eine eigene App-Kennung. Bisher
   teilte sie sich die Kennung mit der installierten Fassung. Gab es von
   dieser eine Verknüpfung – oder nach dem Deinstallieren eine verwaiste –,

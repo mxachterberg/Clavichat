@@ -625,6 +625,15 @@
 .sc-card-actions .btn { padding: 9px 13px; }
 .sc-steps { margin: 0 0 14px; padding-left: 20px; font-size: 14px; line-height: 1.7; color: var(--text-body); }
 
+/* ---- Updates (nur Windows-App) ------------------------------------------- */
+.sc-update { margin-bottom: 4px; }
+.sc-update-version { margin-bottom: 10px; }
+.sc-update-notes { margin: -6px 0 14px; padding-left: 18px; font-size: 13px; line-height: 1.55; color: var(--text-body); }
+.sc-update-notes li { margin-bottom: 4px; }
+.sc-update-error { color: var(--sc-danger); }
+.sc-progress { height: 6px; margin: -6px 0 14px; overflow: hidden; background: var(--border); }
+.sc-progress > span { display: block; width: 0; height: 100%; background: var(--accent); transition: width .2s linear; }
+
 /* ---- Tippt gerade … ----------------------------------------------------- */
 .sc-typing {
   display: flex;
