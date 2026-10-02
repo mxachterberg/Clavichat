@@ -297,7 +297,7 @@ class SecureCom
             'vv'       => (int)($acc['vv'] ?? 1),
             'pub'      => $ident['pub'],
             'card'     => $ident['card'],
-            'vis'      => !empty($ident['vis']),
+            'vis'      => self::listed($ident),
         ];
     }
 
@@ -429,7 +429,7 @@ class SecureCom
         return ['vault' => (string)($acc['vault'] ?? ''), 'vv' => (int)($acc['vv'] ?? 1)];
     }
 
-    /** Karte (Name/Alias, signiert) und Sichtbarkeit ändern. */
+    /** Karte (Name/Alias, signiert) und Sichtbarkeit (nur temporär) ändern. */
     public static function updateCard(array $me, array $b)
     {
         $card = self::str($b, 'card');
@@ -439,16 +439,17 @@ class SecureCom
         self::mutate(self::idFile($me['id']), function (&$i) use ($card, $vis, &$out) {
             if (!$i) return;
             if ($card !== '') { $i['card'] = $card; $i['cv'] = (int)($i['cv'] ?? 1) + 1; }
-            if ($vis !== null) $i['vis'] = $vis;
+            if ($vis !== null && $i['k'] === 'temp') $i['vis'] = $vis;
             $out = $i;
         });
         if (!$out) throw new SecureComException('Identität nicht gefunden.', 404);
         self::touchPresence($out, true);
-        return ['cv' => (int)$out['cv'], 'vis' => !empty($out['vis'])];
+        return ['cv' => (int)$out['cv'], 'vis' => self::listed($out)];
     }
 
     /* ======================================================================
        Wer ist da? Wer ist wer?
+       In der Online-Liste stehen nur temporäre Sitzungen (siehe listed()).
        ====================================================================== */
     public static function online(array $me)
     {
@@ -460,7 +461,7 @@ class SecureCom
             if ($id === $me['id'] || count($list) >= 200) continue;
             if (!is_array($p) || $now - (int)$p[0] > self::ONLINE_WINDOW || empty($p[2])) continue;
             $ident = self::identity($id);
-            if ($ident && !empty($ident['vis'])) $list[] = self::publicIdentity($ident) + ['on' => true];
+            if ($ident && self::listed($ident)) $list[] = self::publicIdentity($ident) + ['on' => true];
         }
         return $list;
     }
@@ -880,8 +881,18 @@ class SecureCom
             'card' => $ident['card'],
             'cv'   => (int)($ident['cv'] ?? 1),
         ];
-        if ($withVis) $out['vis'] = !empty($ident['vis']);
+        if ($withVis) $out['vis'] = self::listed($ident);
         return $out;
+    }
+
+    /**
+     * Online-Liste und Online-Status gibt es nur für temporäre Sitzungen, die
+     * sichtbar sein wollen. Konten zeigen niemandem, ob sie online sind –
+     * sonst ließe sich ein dauerhafter Name mit Uhrzeiten verknüpfen.
+     */
+    private static function listed(array $ident)
+    {
+        return ($ident['k'] ?? '') === 'temp' && !empty($ident['vis']);
     }
 
     private static function accountFor(array $me)
@@ -960,7 +971,7 @@ class SecureCom
         $now = time();
         $mine = $presence[$ident['id']] ?? null;
         $cv  = (int)($ident['cv'] ?? 1);
-        $vis = !empty($ident['vis']) ? 1 : 0;
+        $vis = self::listed($ident) ? 1 : 0;   // zählt für Liste und Versionsstand
         if (!$force && is_array($mine) && $now - (int)$mine[0] < self::SEEN_EVERY
             && (int)$mine[1] === $cv && (int)$mine[2] === $vis) {
             return $presence;
@@ -987,7 +998,7 @@ class SecureCom
 
     private static function isOnline(array $ident, array $presence)
     {
-        if (empty($ident['vis'])) return null;       // unsichtbar: unbekannt
+        if (!self::listed($ident)) return null;      // Konto oder unsichtbar: unbekannt
         $p = $presence[$ident['id']] ?? null;
         return is_array($p) && time() - (int)$p[0] <= self::ONLINE_WINDOW;
     }

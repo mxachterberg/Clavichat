@@ -19,7 +19,7 @@
    ========================================================================== */
 'use strict';
 
-const { app, BrowserWindow, Menu, Tray, clipboard, ipcMain, nativeImage, shell } = require('electron');
+const { app, BrowserWindow, Menu, Tray, clipboard, ipcMain, shell } = require('electron');
 const { spawn } = require('node:child_process');
 const crypto = require('node:crypto');
 const fs = require('node:fs');
@@ -34,10 +34,17 @@ const SMOKE = process.argv.includes('--smoke');
 const PACKED = app.isPackaged;
 const PHP_DIR = PACKED ? path.join(process.resourcesPath, 'php') : path.join(__dirname, 'php');
 const SERVER_DIR = PACKED ? path.join(process.resourcesPath, 'server') : path.join(__dirname, '..', '..', 'server');
-const ICON = path.join(__dirname, '..', 'build', 'icon.png');
+// Mehrere Größen in einer Datei: Windows nimmt für Fenster, Taskleiste und
+// Infobereich jeweils die passende.
+const ICON = path.join(__dirname, '..', 'build', 'icon.ico');
+// Wie appId in host/builder.json (steht so an den Verknüpfungen des Installers).
+const APP_ID = 'dev.achterberg.securecom.server' + (SMOKE ? '.selbsttest' : PACKED ? '' : '.dev');
+// Die portable Fassung läuft aus einem Temp-Ordner – für die Taskleiste zählt die Originaldatei.
+const EXE = process.env.PORTABLE_EXECUTABLE_FILE || process.execPath;
 
 // Eigener Ordner, auch beim Entwickeln (sonst teilte er sich den der App).
 app.setName('SecureCom Server');
+app.setAppUserModelId(APP_ID);
 // SECURECOM_SERVER_HOME: anderer Ordner für Daten und Einstellungen (Tests, mehrere Server).
 app.setPath('userData', process.env.SECURECOM_SERVER_HOME || (SMOKE
   ? path.join(app.getPath('temp'), 'SecureCom-Server-Selbsttest')
@@ -370,7 +377,7 @@ function applyAutostart() {
   // Die portable Fassung entpackt sich bei jedem Start neu – dann zählt die Originaldatei.
   app.setLoginItemSettings({
     openAtLogin: S.settings.autostart,
-    path: process.env.PORTABLE_EXECUTABLE_FILE || process.execPath,
+    path: EXE,
     args: ['--hidden']
   });
 }
@@ -396,6 +403,16 @@ function createWindow(show) {
       devTools: !PACKED
     }
   });
+  // Symbol und „erneut starten“ der Taskleiste aus der bleibenden Programmdatei.
+  if (process.platform === 'win32' && PACKED) {
+    win.setAppDetails({
+      appId: APP_ID,
+      appIconPath: EXE,
+      appIconIndex: 0,
+      relaunchCommand: '"' + EXE + '"',
+      relaunchDisplayName: 'SecureCom Server'
+    });
+  }
   win.once('ready-to-show', () => { if (SMOKE) win.showInactive(); else if (show) win.show(); });
   win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   win.webContents.on('will-navigate', (event) => event.preventDefault());
@@ -418,7 +435,7 @@ function showWindow() {
 }
 
 function createTray() {
-  tray = new Tray(nativeImage.createFromPath(ICON).resize({ width: 16, height: 16 }));
+  tray = new Tray(ICON);   // .ico: Windows wählt die Größe passend zur Skalierung
   tray.setContextMenu(Menu.buildFromTemplate([
     { label: 'Fenster öffnen', click: showWindow },
     { label: 'Im Browser öffnen', click: () => shell.openExternal(state().urls.slice(-1)[0]) },

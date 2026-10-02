@@ -20,7 +20,8 @@ Chiffretext, öffentliche Schlüssel und Signaturen.
   für die der Browser ein frisches PGP-Schlüsselpaar erzeugt. Wahlweise mit
   Alias. Eigene PGP-Schlüssel (GnuPG, Kleopatra) lassen sich übernehmen und mit
   Passphrase gesichert exportieren. Konten können ein Profilbild festlegen.
-- **Wer ist da:** Online-Liste mit Alias, Kontoname und Fingerabdruck.
+- **Wer ist da:** Online-Liste mit Alias und Fingerabdruck – nur für
+  temporäre Sitzungen. Konten zeigen niemandem, ob sie online sind.
   Verbinden per öffentlichem Schlüssel oder Fingerabdruck.
 - **Schreiben:** Direktnachrichten und Räume mit Textkanälen und Raumbild.
   Einladung per Link oder direkt; wer den Raum verlässt oder entfernt wird,

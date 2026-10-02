@@ -131,6 +131,11 @@ erfunden.
   Absatz sind gleich groß.
 - Alle Anfragen gehen per POST an dieselbe Adresse. In den Protokollen des
   Webservers steht nicht, was passiert ist.
+- Konten stehen nie in der Online-Liste, und der Server gibt ihren
+  Online-Status an niemanden heraus – sonst ließe sich ein dauerhafter Name
+  mit Uhrzeiten verknüpfen. In der Liste erscheinen nur temporäre Sitzungen,
+  solange sie sichtbar sein wollen. Wer in einem Sprachkanal ist, sehen
+  weiterhin die Mitglieder dieses Raums.
 - Kennungen sind zufällig. Sitzungs-Token liegen beim Server nur als
   SHA-256-Hash, die Ratenbegrenzung arbeitet mit einem HMAC der IP-Adresse statt
   mit der Adresse selbst.
@@ -145,7 +150,8 @@ erfunden.
 ## Was der Server trotzdem sieht
 
 - IP-Adressen und Zeitpunkte der Anfragen (der Webserver protokolliert sie).
-- Wer gerade online ist, welche öffentlichen Schlüssel, Namen und Profilbilder
+- Wer gerade online ist (auch bei Konten – er zeigt es nur niemandem),
+  welche öffentlichen Schlüssel, Namen und Profilbilder
   (nur Konten) es gibt, wer in welchem Raum ist und wer in welchem Sprachkanal
   (ohne dessen Namen).
 - Welcher Briefkasten wann wie viele Einträge bekommt. Wer eine Nachricht
