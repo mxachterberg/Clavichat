@@ -65,6 +65,7 @@ class SecureCom
     const VOICE_WINDOW  = 25;        // so lange gilt jemand im Sprachkanal als da
     const SIGNAL_TTL    = 120;       // Anruf-Signale verfallen nach zwei Minuten
     const TOKEN_IDLE    = 2592000;   // Konto-Sitzungen: 30 Tage ohne Nutzung
+    const DEFAULT_TTL   = 604800;    // Aufbewahrung, wenn nichts gewählt ist: 7 Tage
     const PRES_TTL      = 150;       // Status-Fach eines Freundes: so lange gilt der letzte Stand
     const MAX_PRES      = 512;       // verschlüsselter Status (Base64)
     const MAX_SLOTS     = 200;       // Fächer je Aufruf (schreiben, lesen, löschen)
@@ -127,7 +128,8 @@ class SecureCom
         return [
             'ice'            => self::iceServers(false),
             'relay'          => self::hasRelay(),
-            'retention_days' => self::retentionDays(),
+            'retention_days' => self::retentionDays(),      // höchste Aufbewahrung
+            'default_ttl'    => min(self::DEFAULT_TTL, self::retentionDays() * 86400),
             'temp_hours'     => self::tempHours(),
             'access'         => self::accessCode() !== '' ? 'code' : 'open',
             // Anmelden mit dem Postfach: Adresse, unter der das Dashboard von
@@ -714,7 +716,9 @@ class SecureCom
         $data = self::b64(self::str($b, 'd'), $max, 'Nachricht');
         if (!self::identity($to)) throw new SecureComException('Diese Identität gibt es nicht (mehr).', 404);
 
-        $ttl = $kind === 'sig' ? self::SIGNAL_TTL : self::retentionDays() * 86400;
+        // Aufbewahrung: wählt die Unterhaltung (Standard 7 Tage), höchstens
+        // die Grenze des Servers. Signale verfallen nach zwei Minuten.
+        $ttl = $kind === 'sig' ? self::SIGNAL_TTL : self::entryTtl($b);
         $entry = ['t' => time(), 'k' => $kind, 'x' => time() + $ttl, 'd' => $data];
 
         $seq = self::append(self::dir('inbox') . '/' . $to, $entry, self::MAX_INBOX);
@@ -949,10 +953,68 @@ class SecureCom
             $entry['x']  = time() + self::SIGNAL_TTL;
             $entry['to'] = $to;
         } else {
-            $entry['x'] = time() + self::retentionDays() * 86400;
+            $entry['x'] = time() + self::roomTtl($room);   // legt der Besitzer fest
         }
         $entry['d'] = $data;
         return ['s' => self::append(self::dir('feeds') . '/' . $rid, $entry, self::MAX_FEED)];
+    }
+
+    /* ======================================================================
+       Aufbewahrung: wie lange Nachrichten liegen bleiben
+       Direktnachrichten: Die Unterhaltung legt es fest (beide Seiten, im
+       Browser abgestimmt); jeder Eintrag bringt seine Dauer mit. Räume: der
+       Besitzer, durchgesetzt hier. Abgelaufenes wird nicht mehr ausgeliefert
+       und stündlich aus den Dateien gelöscht.
+       ====================================================================== */
+    private static function entryTtl(array $b)
+    {
+        $max = self::retentionDays() * 86400;
+        $ttl = isset($b['ttl']) && is_numeric($b['ttl']) ? (int)$b['ttl'] : self::DEFAULT_TTL;
+        return max(60, min($max, $ttl));
+    }
+
+    private static function roomTtl(array $room)
+    {
+        $max = self::retentionDays() * 86400;
+        return max(3600, min($max, (int)($room['ttl'] ?? self::DEFAULT_TTL)));
+    }
+
+    /** Raum: Aufbewahrung ändern (nur der Besitzer). Ältere Nachrichten verfallen sofort. */
+    public static function setRoomTtl(array $me, array $b)
+    {
+        $rid = self::idOf(self::str($b, 'id'));
+        $ttl = isset($b['ttl']) && is_numeric($b['ttl']) ? (int)$b['ttl'] : 0;
+        if ($ttl < 3600) throw new SecureComException('Ungültige Aufbewahrung.', 422);
+        $room = self::roomMutate($rid, function (&$room) use ($me, $ttl) {
+            self::requireOwner($room, $me['id']);
+            $room['ttl'] = $ttl;
+            $room['rev']++;
+            return $room;
+        });
+        $cut = time() - self::roomTtl($room);
+        self::rewriteLog(self::dir('feeds') . '/' . $rid, function ($e) use ($cut) {
+            return ($e['k'] ?? '') === 'msg' && (int)($e['t'] ?? 0) < $cut;
+        });
+        return self::publicRoom($room, $me['id']);
+    }
+
+    /**
+     * Eigenen Briefkasten aufräumen: Einträge mit diesen Nummern löschen. So
+     * verschwinden ältere Nachrichten, wenn eine Unterhaltung kürzer
+     * aufbewahrt werden soll – der Server weiß nicht, welche Einträge zu
+     * welcher Unterhaltung gehören, das weiß nur der Browser.
+     */
+    public static function trimInbox(array $me, array $b)
+    {
+        $want = [];
+        foreach (isset($b['s']) && is_array($b['s']) ? array_slice($b['s'], 0, 5000) : [] as $s) {
+            if (is_int($s) || (is_string($s) && ctype_digit($s))) $want[(int)$s] = true;
+        }
+        if (!$want) return ['n' => 0];
+        $n = self::rewriteLog(self::dir('inbox') . '/' . $me['id'], function ($e) use ($want) {
+            return isset($want[(int)($e['s'] ?? 0)]);
+        });
+        return ['n' => $n];
     }
 
     /**
@@ -1235,6 +1297,7 @@ class SecureCom
             'meta'    => $room['m'],
             'me'      => (int)$room['me'],
             'rev'     => (int)$room['rev'],
+            'ttl'     => self::roomTtl($room),              // Aufbewahrung der Nachrichten (Sekunden)
             'members' => $members,
             'vc'      => self::voiceList($room),            // erster Sprachkanal (ältere Apps)
             'vcs'     => (object)self::voiceMap($room),     // alle: Kanal => wer drin ist
@@ -1421,24 +1484,61 @@ class SecureCom
      * stimmen gemerkte Byte-Stellen nicht mehr – die Generation "g" sagt den
      * Lesern, dass sie von vorn (nach Nummer) suchen müssen.
      */
-    private static function compact($base, array &$state)
+    private static function compact($base, array &$state, $drop = null)
     {
         $src = $base . '.jsonl';
-        if (!is_file($src)) return;
+        $now = time();
+        $state['c'] = $now;
+        if (!is_file($src)) return 0;
+        // Abgelaufen, halb geschrieben oder von $drop verworfen?
+        $gone = function ($line) use ($now, $drop) {
+            if (substr($line, -1) !== "\n") return true;
+            if (preg_match('/"x":(\d+)/', $line, $m) && (int)$m[1] < $now) return true;
+            if ($drop) {
+                $e = json_decode($line, true);
+                if (is_array($e) && $drop($e)) return true;
+            }
+            return false;
+        };
+        // Erst zählen: Gibt es nichts zu löschen, bleibt die Datei unberührt.
+        $count = 0;
+        $in = fopen($src, 'r');
+        if (!$in) return 0;
+        while (($line = fgets($in)) !== false) if ($gone($line)) $count++;
+        fclose($in);
+        if (!$count) return 0;
+
         $tmp = $src . '.tmp';
         $in  = fopen($src, 'r');
         $out = fopen($tmp, 'w');
-        $now = time();
-        while (($line = fgets($in)) !== false) {
-            if (substr($line, -1) !== "\n") continue;
-            if (preg_match('/"x":(\d+)/', $line, $m) && (int)$m[1] < $now) continue;
-            fwrite($out, $line);
-        }
+        while (($line = fgets($in)) !== false) if (!$gone($line)) fwrite($out, $line);
         fclose($in);
         fclose($out);
         rename($tmp, $src);
-        $state['c'] = $now;
         $state['g'] = (int)($state['g'] ?? 0) + 1;
+        return $count;
+    }
+
+    /** Verlauf unter der Sperre von append aufräumen: Abgelaufenes und was $drop sagt. */
+    private static function rewriteLog($base, $drop = null)
+    {
+        if (!is_file($base . '.n')) return 0;
+        $h = fopen($base . '.n', 'c+');
+        if (!$h) return 0;
+        flock($h, LOCK_EX);
+        try {
+            $state = json_decode((string)stream_get_contents($h), true);
+            if (!is_array($state)) $state = ['n' => 0, 'c' => 0, 'g' => 0];
+            $n = self::compact($base, $state, $drop);
+            ftruncate($h, 0);
+            rewind($h);
+            fwrite($h, json_encode($state));
+            fflush($h);
+            return $n;
+        } finally {
+            flock($h, LOCK_UN);
+            fclose($h);
+        }
     }
 
     /**
@@ -1523,6 +1623,15 @@ class SecureCom
             // Status-Fächer: nur der jüngste Stand, nach PRES_TTL weg.
             foreach (glob(self::dir('pres') . '/*') ?: [] as $pf) {
                 if ($now - (int)@filemtime($pf) > self::PRES_TTL) @unlink($pf);
+            }
+
+            // Stündlich: Abgelaufenes wirklich aus Briefkästen und Raumverläufen
+            // löschen. Sonst läge es weiter in der Datei (nur nicht mehr
+            // ausgeliefert), bis sie groß genug fürs Aufräumen wird.
+            if ($now - (int)($state['h'] ?? 0) > 3600) {
+                $logs = array_merge(glob(self::dir('inbox') . '/*.n') ?: [], glob(self::dir('feeds') . '/*.n') ?: []);
+                foreach ($logs as $nf) self::rewriteLog(substr($nf, 0, -2));
+                $state['h'] = $now;
             }
 
             $temp = self::readJson(self::dir() . '/temp.json', true) ?: [];

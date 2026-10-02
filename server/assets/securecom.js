@@ -139,6 +139,7 @@ const ICONS = {
   eyeOff: '<path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/><path d="M3 3l18 18"/>',
   userPlus: '<circle cx="9" cy="8" r="3.5"/><path d="M2.5 20a6.5 6.5 0 0 1 13 0"/><path d="M19 8v6M16 11h6"/>',
   userMinus: '<circle cx="9" cy="8" r="3.5"/><path d="M2.5 20a6.5 6.5 0 0 1 13 0"/><path d="M16 11h6"/>',
+  clock: '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>',
   message: '<path d="M4 5h16v11H9l-5 4z"/>'
 };
 
@@ -514,7 +515,7 @@ function idbSet(key, value) {
    Tresor: Kontakte, Raumschlüssel, Gelesen-Stand, Einstellungen
    ========================================================================== */
 function emptyVault() {
-  return { v: 1, contacts: {}, rooms: {}, blocked: {}, reads: {}, cleared: {}, friends: {}, settings: { hideIp: false, sound: true, mic: '', status: 'on' } };
+  return { v: 1, contacts: {}, rooms: {}, blocked: {}, reads: {}, cleared: {}, friends: {}, ttl: {}, settings: { hideIp: false, sound: true, mic: '', status: 'on' } };
 }
 
 function mergeVault(a, b) {
@@ -534,11 +535,13 @@ function mergeVault(a, b) {
     Object.assign(out.blocked, src.blocked || {});
     for (const [k, t] of Object.entries(src.reads || {})) out.reads[k] = Math.max(out.reads[k] || 0, t || 0);
     for (const [k, t] of Object.entries(src.cleared || {})) out.cleared[k] = Math.max(out.cleared[k] || 0, t || 0);
-    // Freunde: je Person gilt der jüngste Stand (angefragt, befreundet, beendet).
-    for (const [id, f] of Object.entries(src.friends || {})) {
-      if (!f || typeof f !== 'object') continue;
-      const prev = out.friends[id];
-      if (!prev || (Number(f.t) || 0) >= (Number(prev.t) || 0)) out.friends[id] = f;
+    // Freunde und Aufbewahrung: je Person gilt der jüngste Stand.
+    for (const key of ['friends', 'ttl']) {
+      for (const [id, f] of Object.entries(src[key] || {})) {
+        if (!f || typeof f !== 'object') continue;
+        const prev = out[key][id];
+        if (!prev || (Number(f.t) || 0) >= (Number(prev.t) || 0)) out[key][id] = f;
+      }
     }
   }
   return out;
@@ -1367,6 +1370,8 @@ async function enterApp() {
   // Freunde: Identitäten nachschlagen, dann Status austauschen.
   ensureIds(Object.keys(S.vault.friends || {})).then(() => { scheduleRender(); presenceSoon(); });
   startPresence();
+  // Aufbewahrung: jede Minute Abgelaufenes aus der Ansicht und vom Server.
+  if (!TRIM.purge) TRIM.purge = setInterval(purgeExpired, 60000);
   if (S.pendingJoin) setTimeout(offerPendingJoin, 400);
 }
 
@@ -1833,8 +1838,9 @@ function renderMainHead() {
         el('span', { class: 'sc-row-av' }, avatar(ident, 'sm'), statusDot(ident)),
         el('span', { class: 'sc-head-text' },
           el('span', { class: 'sc-head-title' }, displayName(ident), isVerified(ident) ? icon('shieldCheck', 14) : null, kindBadge(ident)),
-          el('span', { class: 'sc-head-sub', text: ident ? C.shortFingerprint(ident.fp) : '' }))),
+          el('span', { class: 'sc-head-sub', text: (ident ? C.shortFingerprint(ident.fp) + ' · ' : '') + 'bleibt ' + ttlLabel(convTtl(S.view.peer)) }))),
       el('span', { class: 'sc-head-spacer' }),
+      iconBtn('clock', 'Nachrichten bleiben ' + ttlLabel(convTtl(S.view.peer)) + ' – ändern', () => convTtlDialog(S.view.peer)),
       iconBtn('phone', 'Anrufen', () => startCall(S.view.peer, false)),
       iconBtn('video', 'Videoanruf', () => startCall(S.view.peer, true)),
       iconBtn('users', 'Profil', () => { S.membersOpen = !S.membersOpen; renderAll(); }, { 'aria-pressed': S.membersOpen ? 'true' : 'false' }));
@@ -1844,7 +1850,7 @@ function renderMainHead() {
     head.append(
       el('span', { class: 'sc-head-text' },
         el('span', { class: 'sc-head-title' }, icon('hash', 16), ch ? ch.name : '—'),
-        el('span', { class: 'sc-head-sub', text: room.meta.name + ' · ' + room.members.length + ' Mitglieder' })),
+        el('span', { class: 'sc-head-sub', text: room.meta.name + ' · ' + room.members.length + ' Mitglieder · bleibt ' + ttlLabel(roomTtl(room)) })),
       el('span', { class: 'sc-head-spacer' }),
       iconBtn('speaker', S.voice && S.voice.rid === room.id ? 'Sprachkanal verlassen' : 'Sprachkanal „' + room.meta.vch[0].name + '“ betreten',
         () => (S.voice && S.voice.rid === room.id ? leaveVoice() : joinVoice(room.id))),
@@ -2275,6 +2281,164 @@ function markRead() {
   }
 }
 
+/* ---------- Aufbewahrung ---------------------------------------------------
+   Wie lange Nachrichten liegen bleiben: je Unterhaltung, mit dem Gegenüber
+   abgestimmt (Nachricht t: 'ttl'), Standard 7 Tage. Jeder Eintrag bringt
+   seine Dauer zum Server mit. Wird sie kürzer, löscht jede Seite ihre
+   älteren Einträge beim Server (inbox.trim) – welche Einträge zu welcher
+   Unterhaltung gehören, weiß nur der Browser. Räume: der Besitzer. */
+const TTL_CHOICES = [
+  { s: 3600, label: '1 Stunde' },
+  { s: 86400, label: '24 Stunden' },
+  { s: 604800, label: '7 Tage' },
+  { s: 2592000, label: '30 Tage' }
+];
+const TRIM = { pending: new Set(), timer: 0, purge: 0 };
+
+function maxTtl() { return ((S.cfg && S.cfg.retention_days) || 30) * 86400; }
+function defaultTtl() { return Math.min((S.cfg && S.cfg.default_ttl) || 604800, maxTtl()); }
+function ttlChoices() { return TTL_CHOICES.filter((c) => c.s <= maxTtl()); }
+
+function ttlLabel(s) {
+  const c = TTL_CHOICES.find((x) => x.s === s);
+  if (c) return c.label;
+  if (s >= 86400) { const d = Math.round(s / 86400); return d + (d === 1 ? ' Tag' : ' Tage'); }
+  return Math.max(1, Math.round(s / 3600)) + ' Std.';
+}
+
+function convTtl(peer) {
+  const t = S.vault && S.vault.ttl && S.vault.ttl[peer];
+  return Math.min(t && t.s ? Number(t.s) : defaultTtl(), maxTtl());
+}
+
+function roomTtl(room) {
+  return Math.min(room && room.ttl ? room.ttl : defaultTtl(), maxTtl());
+}
+
+/** Abgelaufene Einträge des eigenen Briefkastens beim Server löschen (gesammelt). */
+function noteExpired(seq) {
+  if (!seq) return;
+  TRIM.pending.add(seq);
+  clearTimeout(TRIM.timer);
+  TRIM.timer = setTimeout(flushTrim, 2000);
+}
+
+async function flushTrim() {
+  const list = [...TRIM.pending].slice(0, 5000);
+  if (!list.length || !S.token) return;
+  try {
+    await api('inbox.trim', { s: list });
+    for (const s of list) TRIM.pending.delete(s);
+  } catch (e) { /* beim nächsten Durchgang */ }
+}
+
+/** Was älter ist als die Aufbewahrung, verschwindet – aus der Ansicht und beim Server. */
+function purgeExpired() {
+  if (!S.vault) return;
+  const now = serverNow();
+  let changed = false;
+  for (const conv of S.convs.values()) {
+    const limit = now - convTtl(conv.peer) * 1000;
+    if (!conv.msgs.some((m) => m.ts < limit && m.state !== 'pending')) continue;
+    conv.msgs = conv.msgs.filter((m) => {
+      if (m.ts >= limit || m.state === 'pending') return true;
+      if (m.seq) TRIM.pending.add(m.seq);
+      conv.byId.delete(m.id);
+      return false;
+    });
+    changed = true;
+  }
+  for (const room of S.rooms.values()) {
+    const limit = now - roomTtl(room) * 1000;
+    for (const [ch, list] of room.msgs) {
+      if (!list.some((m) => m.ts < limit && m.state !== 'pending')) continue;
+      room.msgs.set(ch, list.filter((m) => {
+        if (m.ts >= limit || m.state === 'pending') return true;
+        room.byId.delete(m.id);
+        return false;
+      }));
+      changed = true;
+    }
+  }
+  if (TRIM.pending.size) { clearTimeout(TRIM.timer); TRIM.timer = setTimeout(flushTrim, 500); }
+  if (changed) scheduleRender();
+}
+
+/** Auswahl der Aufbewahrung – für Unterhaltungen und (Besitzer) Räume. */
+function ttlDialog(title, current, note, onPick) {
+  openModal({
+    title: title,
+    build: (body, close) => {
+      const list = el('div', { class: 'sc-quality' });
+      for (const c of ttlChoices()) {
+        list.appendChild(el('button', {
+          type: 'button', class: 'sc-quality-opt', 'aria-pressed': c.s === current ? 'true' : 'false',
+          onclick: () => { close(); onPick(c.s); }
+        },
+        el('span', { class: 'sc-quality-name', text: c.label + (c.s === defaultTtl() ? ' (Standard)' : '') }),
+        el('span', { class: 'sc-quality-info', text: c.s <= 86400 ? 'verschwindet schnell' : c.s <= 604800 ? 'eine Woche' : 'so lange es geht' })));
+      }
+      body.append(el('p', { class: 'sc-p', text: note }), list,
+        el('p', { class: 'sc-note', text: 'Danach löscht der Server die verschlüsselten Einträge, und sie verschwinden aus der Ansicht. Wer eine Nachricht vorher kopiert oder abfotografiert, behält sie natürlich.' }));
+    }
+  });
+}
+
+function convTtlDialog(peer) {
+  const ident = S.ids.get(peer);
+  ttlDialog('NACHRICHTEN AUFBEWAHREN', convTtl(peer),
+    'Wie lange bleiben die Nachrichten mit ' + displayName(ident) + '? Gilt für euch beide – ' + displayName(ident) + ' sieht die Änderung im Verlauf.',
+    (s) => setConvTtl(peer, s));
+}
+
+function roomTtlDialog(room) {
+  ttlDialog('NACHRICHTEN AUFBEWAHREN', roomTtl(room),
+    'Wie lange bleiben die Nachrichten in „' + room.meta.name + '“? Gilt für alle Mitglieder – ältere Nachrichten verschwinden sofort.',
+    async (s) => {
+      try {
+        await api('room.ttl', { id: room.id, ttl: s });
+        await loadRooms();
+        purgeExpired();
+        toast('Nachrichten in „' + room.meta.name + '“ bleiben jetzt ' + ttlLabel(s) + '.', 'ok');
+      } catch (e) { toast(e.message, 'error'); }
+    });
+}
+
+async function setConvTtl(peer, s) {
+  if (s === convTtl(peer)) return;
+  const ident = S.ids.get(peer);
+  try {
+    await sendDmEvent(peer, { t: 'ttl', s: s }, maxTtl());   // muss auch Abwesende erreichen
+  } catch (e) { toast(e.message, 'error'); return; }
+  S.vault.ttl[peer] = { s: s, t: serverNow() };
+  saveVault();
+  purgeExpired();
+  renderAll();
+  toast('Nachrichten mit ' + displayName(ident) + ' bleiben jetzt ' + ttlLabel(s) + '.', 'ok');
+}
+
+/** Aufbewahrung vom Gegenüber (oder von einem eigenen Gerät) geändert. */
+function handleTtl(obj, from, peer, ts, e) {
+  const s = Number(obj.s);
+  if (!(s >= 3600 && s <= maxTtl())) return;
+  const cur = S.vault.ttl[peer];
+  if (!cur || (Number(cur.t) || 0) < ts) {
+    S.vault.ttl[peer] = { s: s, t: ts };
+    saveVault();
+  }
+  const conv = convOf(peer);
+  const id = 'ttl-' + String(obj.id || ts);
+  if (!conv.byId.has(id)) {
+    const who = from.id === S.me.id ? 'Du hast' : displayName(from) + ' hat';
+    const m = { id: id, sys: who + ' die Aufbewahrung auf ' + ttlLabel(s) + ' gestellt.', icon: 'clock', ts: ts, from: '', seq: e.s };
+    insertSorted(conv.msgs, m);
+    conv.byId.set(id, m);
+    conv.last = Math.max(conv.last, ts);
+  }
+  purgeExpired();
+  scheduleRender();
+}
+
 async function sendDm(peerId, body) {
   const ident = S.ids.get(peerId);
   if (!ident) return;
@@ -2289,7 +2453,7 @@ async function sendDm(peerId, body) {
   scheduleRender();
   try {
     const d = await C.sealFor(msg, [ident.key, S.me.pub], S.me.priv);
-    await api('send', { to: peerId, k: 'dm', d: d, self: true });
+    await api('send', { to: peerId, k: 'dm', d: d, self: true, ttl: convTtl(peerId) });
     local.state = null;
   } catch (e) {
     local.state = 'failed';
@@ -2298,12 +2462,13 @@ async function sendDm(peerId, body) {
   scheduleRender();
 }
 
-async function sendDmEvent(peerId, obj) {
+/** ttl: wie lange beim Server – Standard die Aufbewahrung der Unterhaltung. */
+async function sendDmEvent(peerId, obj, ttl) {
   const ident = S.ids.get(peerId);
   if (!ident) throw new Error('Unbekannte Person.');
   const msg = Object.assign({ v: 1, id: C.randomId(), from: S.me.id, to: peerId, ts: Date.now() }, obj);
   const d = await C.sealFor(msg, [ident.key, S.me.pub], S.me.priv);
-  await api('send', { to: peerId, k: 'dm', d: d, self: true });
+  await api('send', { to: peerId, k: 'dm', d: d, self: true, ttl: ttl || convTtl(peerId) });
   return msg;
 }
 
@@ -2352,6 +2517,9 @@ function handleDm(obj, from, e) {
   const peer = from.id === S.me.id ? obj.to : from.id;
   if (typeof peer !== 'string') return;
   const ts = e.t * 1000;
+  if (obj.t === 'ttl') { handleTtl(obj, from, peer, ts, e); return; }
+  // Älter als die Aufbewahrung der Unterhaltung: nicht zeigen, beim Server löschen.
+  if (ts + convTtl(peer) * 1000 < serverNow()) { noteExpired(e.s); return; }
   if ((S.vault.cleared[peer] || 0) >= ts) return;   // Unterhaltung hier gelöscht
   const conv = convOf(peer);
   if (from.id !== S.me.id) noteContact(from);
@@ -2364,10 +2532,11 @@ function handleDm(obj, from, e) {
       if (existing) {
         // Eigene Nachricht kommt als Kopie zurück: jetzt mit Serverzeit.
         existing.state = null;
+        existing.seq = e.s;
         if (existing.ts !== ts) { existing.ts = ts; conv.msgs.sort((a, b) => a.ts - b.ts); }
         break;
       }
-      const m = { id: String(obj.id), from: from.id, ts: ts, body: cleanText(obj.body) };
+      const m = { id: String(obj.id), from: from.id, ts: ts, body: cleanText(obj.body), seq: e.s };
       if (obj.t === 'invite') {
         const inv = obj.invite || {};
         if (!/^[A-Za-z0-9_-]{22}$/.test(inv.rid || '') || !/^[A-Za-z0-9_-]{43}$/.test(inv.key || '')) return;
@@ -2423,7 +2592,8 @@ async function editMessage(m, node) {
 }
 
 async function deleteMessage(m) {
-  const ok = await confirmBox('Nachricht löschen', 'Die Nachricht wird bei allen als gelöscht angezeigt. Der verschlüsselte Eintrag verschwindet spätestens nach ' + S.cfg.retention_days + ' Tagen vom Server.', 'Löschen', true);
+  const keep = S.view.kind === 'dm' ? convTtl(S.view.peer) : roomTtl(S.rooms.get(S.view.rid));
+  const ok = await confirmBox('Nachricht löschen', 'Die Nachricht wird bei allen als gelöscht angezeigt. Der verschlüsselte Eintrag verschwindet spätestens nach ' + ttlLabel(keep) + ' vom Server.', 'Löschen', true);
   if (!ok) return;
   try {
     if (S.view.kind === 'dm') await sendDmEvent(S.view.peer, { t: 'del', ref: m.id });
@@ -2539,7 +2709,7 @@ async function addFriend(ident) {
   if (cur) return;   // schon befreundet oder angefragt
   const s = C.newFriendSecret();
   try {
-    await sendDmEvent(ident.id, { t: 'friend', op: 'req', s: s });
+    await sendDmEvent(ident.id, { t: 'friend', op: 'req', s: s }, maxTtl());
   } catch (e) { toast(e.message, 'error'); return; }
   noteContact(ident);
   S.vault.friends[ident.id] = { st: 'out', s: s, t: serverNow() };
@@ -2552,7 +2722,7 @@ async function acceptFriend(ident) {
   const cur = friendOf(ident.id);
   if (!cur || cur.st !== 'in') return;
   try {
-    await sendDmEvent(ident.id, { t: 'friend', op: 'yes', s: cur.s });
+    await sendDmEvent(ident.id, { t: 'friend', op: 'yes', s: cur.s }, maxTtl());
   } catch (e) { toast(e.message, 'error'); return; }
   S.vault.friends[ident.id] = { st: 'yes', s: cur.s, t: serverNow() };
   saveVault();
@@ -2569,7 +2739,7 @@ async function endFriend(ident, ask) {
     const ok = await confirmBox('Freund entfernen', displayName(ident) + ' und du seht danach nicht mehr, ob der andere online ist. Die Unterhaltung bleibt.', 'Entfernen', true);
     if (!ok) return;
   }
-  sendDmEvent(ident.id, { t: 'friend', op: 'no', s: cur.s }).catch(() => { /* bei uns trotzdem beendet */ });
+  sendDmEvent(ident.id, { t: 'friend', op: 'no', s: cur.s }, maxTtl()).catch(() => { /* bei uns trotzdem beendet */ });
   S.vault.friends[ident.id] = { st: 'no', s: cur.s, t: serverNow() };
   S.fst.delete(ident.id);
   saveVault();
@@ -2593,7 +2763,7 @@ function handleFriend(obj, from, ts) {
       // der kleineren Kennung – so entscheiden beide Seiten gleich.
       const shared = from.id < S.me.id ? s : cur.s;
       S.vault.friends[from.id] = { st: 'yes', s: shared, t: ts };
-      sendDmEvent(from.id, { t: 'friend', op: 'yes', s: shared }).catch(() => {});
+      sendDmEvent(from.id, { t: 'friend', op: 'yes', s: shared }, maxTtl()).catch(() => {});
       friendNotice(from, 'ist jetzt dein Freund.');
     } else {
       S.vault.friends[from.id] = { st: 'in', s: s, t: ts };
@@ -2894,6 +3064,7 @@ async function loadRooms() {
     room.owner = raw.owner;
     room.epoch = raw.epoch;
     room.members = raw.members;
+    room.ttl = Number(raw.ttl) || 0;   // Aufbewahrung (Sekunden), legt der Besitzer fest
     setVoiceState(room, raw.vcs, raw.vc);
     room.rev = raw.rev;
     room.pendingKey = !roomKeyRaw(room.id, room.epoch);
@@ -3021,6 +3192,7 @@ function roomMenu(room) {
         owner ? item('speaker', 'Sprachkanal anlegen', () => addVoiceChannel(room)) : null,
         owner ? item('edit', 'Raum umbenennen', () => renameRoom(room)) : null,
         owner ? item('image', room.meta.img ? 'Raumbild ändern' : 'Raumbild festlegen', () => roomPicture(room)) : null,
+        owner ? item('clock', 'Nachrichten aufbewahren: ' + ttlLabel(roomTtl(room)), () => roomTtlDialog(room)) : null,
         owner ? item('key', 'Raumschlüssel erneuern', () => rotateRoom(room.id, true)) : null,
         item('leave', 'Raum verlassen', () => leaveRoom(room), true),
         owner ? item('trash', 'Raum löschen', () => deleteRoom(room), true) : null,
@@ -3302,6 +3474,7 @@ async function handleFeedEntry(room, e) {
 
 function roomMessage(room, obj, from, e) {
   const ts = e.t * 1000;
+  if (ts + roomTtl(room) * 1000 < serverNow()) return;   // älter als die Aufbewahrung des Raums
   const ref = typeof obj.ref === 'string' ? room.byId.get(obj.ref) : null;
   if (obj.t === 'edit') { if (ref && ref.from === from.id) { ref.body = cleanText(obj.body); ref.edited = true; } scheduleRender(); return; }
   if (obj.t === 'del') { if (ref && ref.from === from.id) ref.deleted = true; scheduleRender(); return; }
@@ -5342,7 +5515,7 @@ function showSecurityInfo() {
         'Konten stehen nie in der Online-Liste; ob sie online sind, sehen nur ihre Freunde. In der Liste erscheinen nur temporäre Sitzungen – und auch die nur, solange sie es wollen.',
         'Alle Anfragen gehen per POST an dieselbe Adresse. In den Protokollen des Webservers steht nicht, was passiert ist.',
         'Keine Cookies (einzige Ausnahme: „Mit achterberg.dev“ fragt auf deinen Klick das Dashboard nach deinem Postfach), keine fremden Server auf dieser Seite (auch keine Schriften von Google), strenge Content-Security-Policy.',
-        'Anruf-Signale verfallen nach zwei Minuten, Nachrichten nach ' + S.cfg.retention_days + ' Tagen, temporäre Sitzungen nach ' + S.cfg.temp_hours + ' Stunden ohne Nutzung.'
+        'Anruf-Signale verfallen nach zwei Minuten. Nachrichten bleiben so lange, wie es für die Unterhaltung eingestellt ist (Standard ' + ttlLabel(defaultTtl()) + ', höchstens ' + S.cfg.retention_days + ' Tage) – dann löscht sie der Server. Temporäre Sitzungen verschwinden nach ' + S.cfg.temp_hours + ' Stunden ohne Nutzung.'
       ]);
       block('WAS DER SERVER TROTZDEM SIEHT', [
         'IP-Adressen und Zeitpunkte der Anfragen (der Webserver des Hosters protokolliert sie).',
