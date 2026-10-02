@@ -1736,13 +1736,15 @@ function renderRoomSide(head, body, room) {
   const chl = el('div', { class: 'sc-list' });
   for (const ch of room.meta.ch) {
     const u = room.unread.get(ch.id) || 0;
-    chl.appendChild(el('button', {
+    const btn = el('button', {
       type: 'button',
       class: 'sc-chan' + (u ? ' has-unread' : ''),
       'aria-current': S.view.ch === ch.id ? 'true' : 'false',
       onclick: () => openRoom(room.id, ch.id)
     }, icon('hash', 15), el('span', { class: 'sc-chan-name', text: ch.name }),
-    u ? el('span', { class: 'sc-count', text: String(u) }) : null));
+    u ? el('span', { class: 'sc-count', text: String(u) }) : null);
+    withMenu(btn, () => textChannelMenu(room, ch));
+    chl.appendChild(btn);
   }
   body.appendChild(chl);
 
@@ -1751,13 +1753,15 @@ function renderRoomSide(head, body, room) {
   for (const vch of room.meta.vch) {
     const inHere = !!(S.voice && S.voice.rid === room.id && S.voice.ch === vch.id);
     const people = voiceMembers(room, vch.id);
-    vbox.appendChild(el('button', {
+    const vbtn = el('button', {
       type: 'button',
       class: 'sc-chan sc-chan--voice' + (inHere ? ' is-joined' : ''),
       title: inHere ? 'Du bist in diesem Sprachkanal' : 'Sprachkanal betreten',
       onclick: () => (inHere ? setView({ kind: 'room', rid: room.id, ch: S.view.ch }) : joinVoice(room.id, vch.id))
     }, icon('speaker', 15), el('span', { class: 'sc-chan-name', text: vch.name }),
-    el('span', { class: 'sc-chan-meta', text: people.length ? people.length + '/' + (S.cfg.limits.voice || 8) : '' })));
+    el('span', { class: 'sc-chan-meta', text: people.length ? people.length + '/' + (S.cfg.limits.voice || 8) : '' }));
+    withMenu(vbtn, () => voiceChannelMenu(room, vch));
+    vbox.appendChild(vbtn);
     for (const id of people) {
       const ident = S.ids.get(id);
       const peer = inHere && S.voice.peers.get(id);
@@ -3050,8 +3054,9 @@ function voiceMembers(room, ch) {
 
 /** Raumdaten zum Verschlüsseln: alles Bisherige, dazu die Änderungen. */
 function metaOf(room, changes) {
-  const m = Object.assign({ name: room.meta.name, ch: room.meta.ch, vch: room.meta.vch, img: room.meta.img || '' }, changes || {});
+  const m = Object.assign({ name: room.meta.name, ch: room.meta.ch, vch: room.meta.vch, img: room.meta.img || '', aq: room.meta.aq || '' }, changes || {});
   if (!m.img) delete m.img;
+  if (!m.aq) delete m.aq;   // Sprachqualität des Raums (leer: jeder nach eigener Einstellung)
   return m;
 }
 
@@ -3099,8 +3104,12 @@ async function decryptMeta(room) {
     // Raumbild: nur ein eingebettetes Bild, nie eine Adresse.
     const img = typeof res.obj.img === 'string' && res.obj.img.length <= 60000
       && /^data:image\/(jpeg|png|webp);base64,[A-Za-z0-9+/]+=*$/.test(res.obj.img) ? res.obj.img : '';
-    room.meta = { name: cleanName(res.obj.name) || 'Raum', ch: ch.length ? ch : [{ id: 'main', name: 'allgemein' }], vch: vch, img: img };
+    const aq = AUDIO_QUALITY.some((q) => q.id === res.obj.aq) ? res.obj.aq : '';
+    const aqChanged = !!room.meta && (room.meta.aq || '') !== aq;
+    room.meta = { name: cleanName(res.obj.name) || 'Raum', ch: ch.length ? ch : [{ id: 'main', name: 'allgemein' }], vch: vch, img: img, aq: aq };
     for (const c of room.meta.ch) if (!room.msgs.has(c.id)) room.msgs.set(c.id, []);
+    // Sprachqualität des Raums geändert, während man drin ist: sofort übernehmen.
+    if (aqChanged && S.voice && S.voice.rid === room.id) applyAudioQuality();
   } catch (e) { /* bleibt beim Platzhalter */ }
 }
 
@@ -3194,6 +3203,7 @@ function roomMenu(room) {
         owner ? item('edit', 'Raum umbenennen', () => renameRoom(room)) : null,
         owner ? item('image', room.meta.img ? 'Raumbild ändern' : 'Raumbild festlegen', () => roomPicture(room)) : null,
         owner ? item('clock', 'Nachrichten aufbewahren: ' + ttlLabel(roomTtl(room)), () => roomTtlDialog(room)) : null,
+        owner ? item('sliders', 'Sprachqualität im Raum: ' + ((AUDIO_QUALITY.find((q) => q.id === room.meta.aq) || { name: 'jeder nach Wahl' }).name), () => roomAudioDialog(room)) : null,
         owner ? item('key', 'Raumschlüssel erneuern', () => rotateRoom(room.id, true)) : null,
         item('leave', 'Raum verlassen', () => leaveRoom(room), true),
         owner ? item('trash', 'Raum löschen', () => deleteRoom(room), true) : null,
@@ -3296,6 +3306,101 @@ function addVoiceChannel(room) {
       });
       name.addEventListener('keydown', (ev) => { if (ev.key === 'Enter') go.click(); });
       body.append(field('Name', name, 'Der Name ist wie alles im Raum verschlüsselt. Jeder Sprachkanal fasst bis zu ' + (S.cfg.limits.voice || 8) + ' Personen.'), go);
+    }
+  });
+}
+
+/* ---------- Kanäle: Rechtsklick-Menüs, umbenennen, löschen ------------------ */
+function textChannelMenu(room, ch) {
+  const owner = room.owner === S.me.id;
+  return [
+    { icon: 'check', label: 'Als gelesen markieren', disabled: !(room.unread.get(ch.id) || 0), run: () => markChannelRead(room, ch.id) },
+    owner ? { icon: 'edit', label: 'Kanal umbenennen', run: () => renameChannel(room, 'ch', ch) } : null,
+    owner ? { icon: 'clock', label: 'Nachrichten aufbewahren: ' + ttlLabel(roomTtl(room)), run: () => roomTtlDialog(room) } : null,
+    owner ? { icon: 'trash', label: 'Kanal löschen', danger: true, disabled: room.meta.ch.length <= 1, run: () => deleteChannel(room, 'ch', ch) } : null
+  ];
+}
+
+function voiceChannelMenu(room, vch) {
+  const owner = room.owner === S.me.id;
+  const inHere = !!(S.voice && S.voice.rid === room.id && S.voice.ch === vch.id);
+  const aq = AUDIO_QUALITY.find((q) => q.id === room.meta.aq);
+  return [
+    inHere ? { icon: 'leave', label: 'Sprachkanal verlassen', run: () => leaveVoice() } : { icon: 'speaker', label: 'Beitreten', run: () => joinVoice(room.id, vch.id) },
+    owner ? { icon: 'edit', label: 'Sprachkanal umbenennen', run: () => renameChannel(room, 'vch', vch) } : null,
+    owner ? { icon: 'sliders', label: 'Sprachqualität im Raum: ' + (aq ? aq.name : 'jeder nach Wahl'), run: () => roomAudioDialog(room) } : null,
+    owner ? { icon: 'trash', label: 'Sprachkanal löschen', danger: true, disabled: vch.id === '', run: () => deleteChannel(room, 'vch', vch) } : null
+  ];
+}
+
+function markChannelRead(room, chId) {
+  room.unread.set(chId, 0);
+  S.vault.reads['room:' + room.id + ':' + chId] = serverNow();
+  saveVault();
+  renderAll();
+}
+
+function renameChannel(room, kind, c) {
+  const voice = kind === 'vch';
+  openModal({
+    title: voice ? 'SPRACHKANAL UMBENENNEN' : 'KANAL UMBENENNEN',
+    build: (body, close) => {
+      const name = el('input', { type: 'text', maxlength: '30', value: c.name });
+      const go = el('button', { type: 'button', class: 'btn btn--primary btn--block', text: 'Speichern' });
+      go.addEventListener('click', async () => {
+        const n = voice ? cleanName(name.value).slice(0, 30) : cleanName(name.value).toLowerCase().replace(/\s+/g, '-').slice(0, 30);
+        if (!n) { name.focus(); return; }
+        go.disabled = true;
+        try {
+          const list = room.meta[kind].map((x) => (x.id === c.id ? { id: x.id, name: n } : x));
+          await updateMeta(room, metaOf(room, voice ? { vch: list } : { ch: list }));
+          close();
+        } catch (e) { go.disabled = false; toast(e.message, 'error'); }
+      });
+      name.addEventListener('keydown', (ev) => { if (ev.key === 'Enter') go.click(); });
+      body.append(field('Name', name, 'Der Name ist wie alles im Raum verschlüsselt.'), go);
+      setTimeout(() => { name.focus(); name.select(); }, 50);
+    }
+  });
+}
+
+async function deleteChannel(room, kind, c) {
+  const voice = kind === 'vch';
+  if (voice ? c.id === '' : room.meta.ch.length <= 1) return;   // der erste Sprachkanal und der letzte Textkanal bleiben
+  const ok = await confirmBox(voice ? 'Sprachkanal löschen' : 'Kanal löschen',
+    voice ? '„' + c.name + '“ verschwindet für alle. Wer gerade drin ist, bleibt verbunden, bis er geht.'
+      : '„#' + c.name + '“ verschwindet für alle, samt seinen Nachrichten in der Ansicht.', 'Löschen', true);
+  if (!ok) return;
+  try {
+    const list = room.meta[kind].filter((x) => x.id !== c.id);
+    await updateMeta(room, metaOf(room, voice ? { vch: list } : { ch: list }));
+    if (!voice && S.view.kind === 'room' && S.view.rid === room.id && S.view.ch === c.id) openRoom(room.id, room.meta.ch[0].id);
+  } catch (e) { toast(e.message, 'error'); }
+}
+
+/** Besitzer: eine Sprachqualität für alle im Raum (überschreibt die eigene Wahl, solange man drin ist). */
+function roomAudioDialog(room) {
+  openModal({
+    title: 'SPRACHQUALITÄT IM RAUM',
+    build: (body, close) => {
+      const list = el('div', { class: 'sc-quality' });
+      const opts = [{ id: '', name: 'Jeder nach eigener Wahl', info: 'Standard', note: 'Jeder nutzt die Tonqualität aus seinen Einstellungen.' }].concat(AUDIO_QUALITY);
+      for (const q of opts) {
+        list.appendChild(el('button', {
+          type: 'button', class: 'sc-quality-opt', 'aria-pressed': (room.meta.aq || '') === q.id ? 'true' : 'false',
+          onclick: async () => {
+            close();
+            try {
+              await updateMeta(room, metaOf(room, { aq: q.id }));
+              toast(q.id ? 'Im Raum gilt jetzt „' + q.name + '“ für alle.' : 'Im Raum gilt wieder die eigene Wahl.', 'ok');
+            } catch (e) { toast(e.message, 'error'); }
+          }
+        },
+        el('span', { class: 'sc-quality-name', text: q.name }),
+        el('span', { class: 'sc-quality-info', text: q.info }),
+        el('span', { class: 'sc-quality-note', text: q.note })));
+      }
+      body.append(el('p', { class: 'sc-p', text: 'Gilt in allen Sprachkanälen von „' + room.meta.name + '“ und überschreibt die Einstellung der Mitglieder, solange sie drin sind. Stereo („Musik“) greift, sobald sich die Verbindungen neu aufbauen.' }), list);
     }
   });
 }
@@ -3912,10 +4017,24 @@ const AQ_KEY = 'sc-audio-quality';
 const AQ_DEFAULT = 'voice';
 let audioQualityId = null;   // falls localStorage gesperrt ist
 
-function audioQuality() {
+/** Eigene Wahl auf diesem Gerät. */
+function ownAudioQuality() {
   let id = audioQualityId;
   try { id = localStorage.getItem(AQ_KEY) || id; } catch (e) { /* privater Modus */ }
   return AUDIO_QUALITY.find((q) => q.id === id) || AUDIO_QUALITY.find((q) => q.id === AQ_DEFAULT);
+}
+
+/** Raum mit eigener Sprachqualität, in dessen Sprachkanal man gerade ist (oder geht) – sonst null. */
+function roomAudioQuality() {
+  const rid = S.voice ? S.voice.rid : S.joiningVoice;
+  const room = rid && S.rooms.get(rid);
+  const id = room && room.meta && room.meta.aq;
+  return id ? AUDIO_QUALITY.find((q) => q.id === id) || null : null;
+}
+
+/** Was gilt: im Sprachkanal eines Raums mit eigener Einstellung die des Raums, sonst die eigene. */
+function audioQuality() {
+  return roomAudioQuality() || ownAudioQuality();
 }
 
 function micConstraints() {
@@ -3932,6 +4051,11 @@ async function setAudioQuality(id) {
   if (!AUDIO_QUALITY.some((q) => q.id === id)) return;
   audioQualityId = id;
   try { localStorage.setItem(AQ_KEY, id); } catch (e) { /* gilt dann nur bis zum Neuladen */ }
+  await applyAudioQuality();
+}
+
+/** Geltende Tonqualität anwenden – nach eigener Wahl oder wenn der Raum sie vorgibt. */
+async function applyAudioQuality() {
   // Im Gespräch: Mikrofon mit den neuen Filtern neu holen und tauschen.
   if (M.mic && M.mic.readyState === 'live') {
     try {
@@ -4638,6 +4762,7 @@ async function joinVoice(rid, ch) {
   if (S.voice) await leaveVoice(S.voice.rid === rid);
   if (!roomKeyRaw(rid, room.epoch)) { toast('Der aktuelle Raumschlüssel fehlt noch.', 'error'); return; }
   audioCtx();
+  S.joiningVoice = rid;   // gibt der Raum die Sprachqualität vor, gilt sie schon fürs Mikrofon
   try {
     await ensureMic();
     const r = await api('room.voice', { id: rid, on: true, ch: chan });
@@ -4651,6 +4776,7 @@ async function joinVoice(rid, ch) {
     toast(e.message, 'error');
     if (!S.call) stopLocalMedia();
   }
+  S.joiningVoice = null;
   renderAll();
 }
 
@@ -5637,12 +5763,15 @@ function showSettings() {
           mic.setItems(items);
         }).catch(() => {});
       }
-      const audio = choice(AUDIO_QUALITY, audioQuality().id, setAudioQuality);
+      const audio = choice(AUDIO_QUALITY, ownAudioQuality().id, setAudioQuality);
+      const roomAq = roomAudioQuality();
+      const roomAqName = roomAq && S.voice ? (S.rooms.get(S.voice.rid) || { meta: { name: '' } }).meta.name : '';
       const screenPick = choice(SCREEN_QUALITY, screenQuality().id, setScreenQuality);
       body.append(
         relayStatusRow(),
         pickField('Mikrofon', mic, 'Namen erscheinen, sobald du einmal das Mikrofon erlaubt hast.'),
-        pickField('Tonqualität', audio, 'Gilt für dieses Gerät, Datenrate und Filter sofort, Stereo ab dem nächsten Anruf.'),
+        pickField('Tonqualität', audio, 'Gilt für dieses Gerät, Datenrate und Filter sofort, Stereo ab dem nächsten Anruf.' +
+          (roomAq ? ' Im Sprachkanal von „' + roomAqName + '“ gilt gerade die Einstellung des Raums: ' + roomAq.name + '.' : '')),
         pickField('Bildschirm teilen', screenPick, 'Gilt für dieses Gerät. Während einer Übertragung lässt sie sich über den Regler-Knopf neben „Bildschirm teilen“ ändern.'),
         el('label', { class: 'sc-check' + (S.cfg.relay ? '' : ' is-disabled') }, hide, el('span', { text: S.cfg.relay
           ? 'IP-Adresse verbergen: Anrufe laufen immer über den Relay-Server. Dein Gegenüber sieht deine IP dann nicht – der Betreiber des Relays schon.'
