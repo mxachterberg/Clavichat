@@ -128,6 +128,7 @@ const ICONS = {
   more: '<circle cx="5" cy="12" r="1.3"/><circle cx="12" cy="12" r="1.3"/><circle cx="19" cy="12" r="1.3"/>',
   info: '<circle cx="12" cy="12" r="9"/><path d="M12 11v6M12 7.5v.5"/>',
   download: '<path d="M12 4v11M7 10l5 5 5-5M5 20h14"/>',
+  refresh: '<path d="M20 11a8 8 0 0 0-14.3-4.9L4 8"/><path d="M4 4v4h4"/><path d="M4 13a8 8 0 0 0 14.3 4.9L20 16"/><path d="M20 20v-4h-4"/>',
   back: '<path d="M15 5l-7 7 7 7"/>',
   expand: '<path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/>',
   alert: '<path d="M12 3l10 18H2z"/><path d="M12 10v5M12 18v.5"/>',
@@ -1100,6 +1101,7 @@ function bootFail(message) {
 async function boot() {
   parseJoinFragment();
   syncTheme();
+  initUpdates();   // nur Windows-App: Popup, sobald die Oberfläche steht
 
   progress(0.3, 'VERSCHLÜSSELUNG WIRD GELADEN');
   // Als volle Adresse: import() hielte "assets/…" sonst für einen Paketnamen.
@@ -4125,12 +4127,111 @@ function connectByKey() {
 }
 
 /* ==========================================================================
+   Updates (nur Windows-App)
+   Suchen, Laden und Installieren macht die App selbst (desktop/updater.js)
+   und nimmt nur Fassungen, die mit dem Schlüssel des Herausgebers signiert
+   sind. Hier: das Popup beim Start und der Bereich in den Einstellungen.
+   ========================================================================== */
+const UPDATES = DESKTOP && DESKTOP.updates ? DESKTOP.updates : null;
+const UPD = { state: null, watchers: new Set(), prompted: false, timer: null };
+
+function initUpdates() {
+  if (!UPDATES) return;
+  UPDATES.onState((s) => {
+    UPD.state = s;
+    for (const fn of UPD.watchers) fn(s);
+    promptUpdate();
+  });
+  UPDATES.get().then((s) => {
+    if (!UPD.state) UPD.state = s;
+    promptUpdate();
+  }).catch(() => {});
+}
+
+function watchUpdates(fn) {
+  UPD.watchers.add(fn);
+  return () => UPD.watchers.delete(fn);
+}
+
+/** Beim Start gefunden: einmal fragen – sobald die Oberfläche steht und kein anderer Dialog offen ist. */
+function promptUpdate() {
+  const s = UPD.state;
+  if (!s || !s.prompt || s.status !== 'available' || UPD.prompted) return;
+  const boot = $('sc-boot');
+  if ((boot && !boot.classList.contains('is-done')) || !$('sc-modal').hidden) {
+    clearTimeout(UPD.timer);
+    UPD.timer = setTimeout(promptUpdate, 2500);
+    return;
+  }
+  UPD.prompted = true;
+  UPDATES.seen().catch(() => {});
+  let off = null;
+  openModal({
+    title: 'UPDATE',
+    build: (body, close) => {
+      const box = el('div');
+      const draw = (st) => { box.textContent = ''; box.appendChild(updatePanel(st, close)); };
+      draw(UPD.state);
+      off = watchUpdates(draw);
+      body.appendChild(box);
+    },
+    onClose: () => { if (off) off(); }
+  });
+}
+
+/** Stand, Neuerungen, Fortschritt und Knöpfe – im Popup (later = schließen) und in den Einstellungen. */
+function updatePanel(s, later) {
+  s = s || { status: 'idle', version: '' };
+  const wrap = el('div', { class: 'sc-update' });
+  const line = (text, cls) => wrap.appendChild(el('p', { class: cls || 'sc-p', text: text }));
+  const latest = s.latest;
+  const busy = ['checking', 'downloading', 'installing'].includes(s.status);
+  const when = (ts) => (fmtDay(ts) === 'Heute' ? '' : fmtDay(ts) + ' ') + fmtTime(ts);
+  if (s.status === 'available') line('SecureCom ' + latest.version + ' ist da – du hast ' + s.version + '.');
+  else if (s.status === 'downloading') line('SecureCom ' + (latest ? latest.version + ' ' : '') + 'wird geladen … ' + Math.floor((s.progress || 0) * 100) + ' %');
+  else if (s.status === 'installing') line('Wird installiert – SecureCom startet gleich neu.');
+  else if (s.status === 'checking') line('Suche nach Updates …', 'sc-note');
+  else if (s.status === 'current') line('Du hast die neueste Version.' + (s.checked ? ' Zuletzt gesucht: ' + when(s.checked) + '.' : ''), 'sc-note');
+  else if (s.status === 'error') line(s.error || 'Die Suche nach Updates ist fehlgeschlagen.', 'sc-note sc-update-error');
+  else if (s.status === 'unsupported') line('Diese Fassung aktualisiert sich nicht selbst (Entwicklung oder entpackter Build) – Installer und portable Fassung können es.', 'sc-note');
+  else line('Noch nicht gesucht.', 'sc-note');
+
+  if (latest && latest.notes && latest.notes.length && ['available', 'downloading', 'error'].includes(s.status)) {
+    const list = el('ul', { class: 'sc-update-notes' });
+    for (const n of latest.notes) list.appendChild(el('li', { text: n }));
+    wrap.appendChild(list);
+  }
+  if (s.status === 'downloading' || s.status === 'installing') {
+    const fill = el('span');
+    fill.style.width = Math.round((s.status === 'installing' ? 1 : s.progress || 0) * 100) + '%';
+    wrap.appendChild(el('div', { class: 'sc-progress' }, fill));
+  }
+  if (s.status === 'available' && (S.call || S.voice)) line('Ein laufendes Gespräch endet dabei.', 'sc-note');
+
+  const acts = el('div', { class: 'sc-card-actions' });
+  if (latest && (s.status === 'available' || s.status === 'error')) {
+    acts.appendChild(el('button', { type: 'button', class: 'btn btn--primary', onclick: () => UPDATES.install().catch((e) => toast(e.message, 'error')) },
+      icon('download', 14), 'Jetzt aktualisieren' + (latest.size ? ' (' + Math.round(latest.size / 1048576) + ' MB)' : '')));
+  }
+  if (later) {
+    if (!busy) acts.appendChild(el('button', { type: 'button', class: 'btn', text: 'Später', onclick: later }));
+  } else if (s.status !== 'unsupported') {
+    acts.appendChild(el('button', { type: 'button', class: 'btn', disabled: busy, onclick: () => UPDATES.check().catch((e) => toast(e.message, 'error')) },
+      icon('refresh', 14), 'Nach Updates suchen'));
+  }
+  if (acts.childNodes.length) wrap.appendChild(acts);
+  return wrap;
+}
+
+/* ==========================================================================
    Einstellungen, Profil, Schlüssel
    ========================================================================== */
 function showSettings() {
+  let offUpdates = null;
   openModal({
     title: 'EINSTELLUNGEN',
     wide: true,
+    onClose: () => { if (offUpdates) offUpdates(); },
     build: (body, close) => {
       // Profil
       body.appendChild(sectionHead('PROFIL'));
@@ -4238,6 +4339,29 @@ function showSettings() {
       body.append(themeRow,
         el('label', { class: 'sc-check' + (canNotify ? '' : ' is-disabled') }, note, el('span', { text:
           'Benachrichtigungen, wenn SecureCom nicht im Blick ist – nur wer schreibt oder anruft, nie der Inhalt.' })));
+
+      // Updates (nur Windows-App)
+      if (UPDATES) {
+        body.appendChild(sectionHead('UPDATES'));
+        const auto = el('input', { type: 'checkbox', checked: !UPD.state || UPD.state.auto !== false });
+        auto.addEventListener('change', () => { UPDATES.setAuto(auto.checked).catch(() => {}); });
+        const ver = el('p', { class: 'sc-mono sc-update-version' });
+        const box = el('div');
+        const draw = (s) => {
+          s = s || {};
+          ver.textContent = 'SECURECOM ' + (s.version || '') + (s.mode === 'portable' ? ' · PORTABEL' : s.mode === 'installed' ? ' · INSTALLIERT' : '');
+          auto.checked = s.auto !== false;
+          auto.disabled = s.status === 'unsupported';
+          box.textContent = '';
+          box.appendChild(updatePanel(s, null));
+        };
+        body.append(ver,
+          el('label', { class: 'sc-check' }, auto, el('span', { text: 'Beim Start im Hintergrund nach Updates suchen und Bescheid geben' })),
+          box);
+        draw(UPD.state);
+        offUpdates = watchUpdates(draw);
+        if (!UPD.state) UPDATES.get().then((s) => { UPD.state = s; draw(s); }).catch(() => {});
+      }
 
       // Sitzung / Konto
       body.appendChild(sectionHead(S.mode === 'temp' ? 'SITZUNG' : 'KONTO'));

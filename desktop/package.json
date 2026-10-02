@@ -38,6 +38,7 @@
     },
     "files": [
       "main.js",
+      "updater.js",
       "preload.js",
       "picker-preload.js",
       "app.html",
@@ -64,7 +65,7 @@
       "artifactName": "SecureCom-Setup-${version}.${ext}"
     },
     "portable": {
-      "artifactName": "SecureCom-${version}-portable.${ext}"
+      "artifactName": "SecureCom-portable.${ext}"
     }
   }
 }

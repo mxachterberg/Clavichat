@@ -42,6 +42,6 @@
     "artifactName": "SecureCom-Server-Setup-${version}.${ext}"
   },
   "portable": {
-    "artifactName": "SecureCom-Server-${version}-portable.${ext}"
+    "artifactName": "SecureCom-Server-portable.${ext}"
   }
 }

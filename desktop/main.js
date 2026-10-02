@@ -20,6 +20,7 @@ const { app, BrowserWindow, Menu, desktopCapturer, ipcMain, net, protocol, sessi
 const crypto = require('node:crypto');
 const fs = require('node:fs');
 const path = require('node:path');
+const updater = require('./updater');
 
 const ORIGIN = 'app://securecom';
 const DEFAULT_SERVER = 'https://achterberg.dev';
@@ -446,6 +447,7 @@ if (!app.requestSingleInstanceLock()) {
     pinCertificate();
     loadChrome();
     createWindow();
+    updater.init({ getWindow: () => win, smoke: SMOKE });
   });
 
   app.on('window-all-closed', () => app.quit());
@@ -477,6 +479,8 @@ async function smoke() {
   check('temporäre Sitzung über den Server', await run("!document.getElementById('sc').hidden"),
     await run("document.getElementById('sc-user').innerText.replace(/\\n/g, ' | ')"));
   check('Brücke zur App vorhanden', await run("typeof window.securecomDesktop === 'object' && typeof window.securecomDesktop.focus === 'function'"));
+  const upd = await run('window.securecomDesktop.updates.get()');
+  check('Updates: Stand abrufbar', !!upd && upd.version === app.getVersion(), upd ? upd.version + ' · ' + (upd.mode || 'ohne Selbst-Update') + ' · ' + upd.status : '');
   check('Benachrichtigungen erlaubt', (await run('Notification.permission')) === 'granted');
   await shot(win.webContents, 'smoke-2-app');
 
