@@ -20,7 +20,7 @@ let C = null;
 // Die Website setzt nichts (Standard), ein eigener Server oder die
 // Windows-App tragen beides am <script>-Tag ein (data-api, data-web).
 const SCRIPT   = document.getElementById('sc-script');
-const API_URL  = (SCRIPT && SCRIPT.dataset.api) || '/app/securecom/api.php';
+const API_URL  = (SCRIPT && SCRIPT.dataset.api) || '/app/clavichat/api.php';
 const WEB_URL  = (SCRIPT && SCRIPT.dataset.web) || (location.origin + '/app/clavichat/');
 const DESKTOP  = window.securecomDesktop || null;   // nur in der Windows-App
 // Wo ein temporärer Schlüssel lebt – im Browser-Tab oder in der laufenden App.
