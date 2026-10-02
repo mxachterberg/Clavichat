@@ -820,7 +820,7 @@ function renderGate(tab, message) {
   const card = gateCard();
   card.textContent = '';
   card.append(
-    el('p', { class: 'section-head' }, el('span', { class: 'sq' }), el('span', { class: 'label', text: 'SECURECOM' }), el('span', { class: 'rule' })),
+    el('p', { class: 'section-head' }, el('span', { class: 'sq' }), el('span', { class: 'label', text: 'CLAVICHAT' }), el('span', { class: 'rule' })),
     el('h1', { class: 'sc-gate-title', text: 'Sicher schreiben & telefonieren' }),
     el('p', { class: 'sc-gate-sub', text: 'Ende-zu-Ende verschlüsselt: Deine Schlüssel entstehen ' + (DESKTOP ? 'in dieser App' : 'in diesem Browser') + '. Der Server leitet nur Verschlüsseltes weiter – auch der Hoster kann nicht mitlesen oder mithören.' })
   );
@@ -886,11 +886,12 @@ function gateLogin(panel) {
   const pass = el('input', { type: 'password', autocomplete: 'current-password', required: true });
   const remember = el('input', { type: 'checkbox', checked: true });
   const go = el('button', { type: 'submit', class: 'btn btn--primary btn--block', text: 'Anmelden' });
+  if (ssoAvailable()) panel.appendChild(mailboxBox('login', user, pass));
   const form = el('form', { class: 'sc-gate-form' },
-    field('Name', user), field('Passwort', pass),
+    field('Name', user), field('Passwort oder Wiederherstellungscode', pass),
     el('label', { class: 'sc-check' }, remember, el('span', { text: 'Auf diesem Gerät angemeldet bleiben' })),
     go,
-    el('p', { class: 'sc-gate-note', text: 'Dein Passwort verlässt den Browser nicht. Aus ihm entsteht hier ein Anmeldeschlüssel und ein Schlüssel, der deinen privaten PGP-Schlüssel auspackt.' }));
+    el('p', { class: 'sc-gate-note', text: 'Passwort und Code verlassen den Browser nicht. Aus ihnen entstehen hier ein Anmeldeschlüssel und ein Schlüssel, der deinen privaten PGP-Schlüssel auspackt.' }));
   form.addEventListener('submit', async (ev) => {
     ev.preventDefault();
     gateBusy(go, 'Passwort wird geprüft …');
@@ -919,6 +920,7 @@ function gateRegister(panel) {
   const remember = el('input', { type: 'checkbox', checked: true });
   const go = el('button', { type: 'submit', class: 'btn btn--primary btn--block', text: 'Konto erstellen' });
   [keyNew, keyOwn].forEach((r) => r.addEventListener('change', () => { ownBox.hidden = !keyOwn.checked; }));
+  if (ssoAvailable()) panel.appendChild(mailboxBox('register'));
 
   const form = el('form', { class: 'sc-gate-form' },
     field('Name', user, '3–24 Zeichen. Andere sehen dich unter diesem Namen. Keine E-Mail nötig.'),
@@ -957,6 +959,171 @@ function gateRegister(panel) {
   panel.appendChild(form);
 }
 
+/* ---------- Mit dem Postfach von achterberg.dev --------------------------------
+   Nur auf achterberg.dev (S.cfg.sso), nicht in der Windows-App. Wer im
+   Dashboard angemeldet ist, bekommt dort ein signiertes Ticket, das sein
+   Postfach bestätigt (fünf Minuten, nur einmal). Das ist der einzige Aufruf,
+   der ein Cookie mitschickt – das der Dashboard-Sitzung; die Schnittstelle
+   von Clavichat selbst kommt weiter ohne aus. Den Schlüssel des Kontos
+   schützt dann ein Wiederherstellungscode statt eines Passworts. */
+function ssoAvailable() {
+  return !DESKTOP && !!(S.cfg && typeof S.cfg.sso === 'string' && /^\/[A-Za-z0-9_./-]+$/.test(S.cfg.sso));
+}
+
+async function mailboxTicket() {
+  let res = null;
+  let data = null;
+  try {
+    res = await fetch(S.cfg.sso, { method: 'POST', credentials: 'same-origin', cache: 'no-store', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+    data = await res.json();
+  } catch (e) { /* unten */ }
+  if (res && res.status === 401) {
+    const err = new Error('Melde dich zuerst bei achterberg.dev an.');
+    err.login = true;
+    throw err;
+  }
+  if (!data || !data.ok || typeof data.ticket !== 'string') throw new Error((data && data.error) || 'achterberg.dev ist gerade nicht erreichbar.');
+  return data;   // { ticket, mailbox, name }
+}
+
+function mailboxNotice(notice, content) {
+  notice.textContent = '';
+  appendAll(notice, ...content);
+  notice.hidden = false;
+}
+
+function mailboxError(notice, e) {
+  if (!e.login) { mailboxNotice(notice, [e.message]); return; }
+  const back = location.pathname + location.search;
+  mailboxNotice(notice, ['Melde dich zuerst bei achterberg.dev an – ',
+    el('a', { href: '/app/login.php?next=' + encodeURIComponent(back), text: 'zur Anmeldung' }), '. Danach geht es hier weiter.']);
+}
+
+function mailboxBox(kind, user, pass) {
+  const notice = el('p', { class: 'sc-gate-note sc-sso-notice', hidden: true });
+  const button = el('button', { type: 'button', class: 'btn btn--block sc-sso-btn' }, icon('key', 14),
+    kind === 'login' ? 'Mit achterberg.dev anmelden' : 'Konto mit achterberg.dev erstellen');
+  button.addEventListener('click', () => (kind === 'login' ? loginWithMailbox(notice, button, user, pass) : registerWithMailbox(notice, button)));
+  return el('div', { class: 'sc-sso' },
+    el('p', { class: 'sc-sso-text', text: kind === 'login'
+      ? 'Bei achterberg.dev angemeldet? Dann findet Clavichat dein Konto selbst.'
+      : 'Bei achterberg.dev angemeldet? Dann geht es ohne Passwort: Dein Postfach bestätigt dich, deinen Schlüssel schützt ein Wiederherstellungscode.' }),
+    button, notice,
+    el('p', { class: 'sc-sso-or', text: kind === 'login' ? 'oder mit Name und Passwort bzw. Code' : 'oder mit Name und Passwort' }));
+}
+
+async function loginWithMailbox(notice, button, user, pass) {
+  notice.hidden = true;
+  gateBusy(button, 'achterberg.dev wird gefragt …');
+  try {
+    const t = await mailboxTicket();
+    const r = await api('sso.who', { sso: t.ticket });
+    gateIdle(button);
+    if (r.username) {
+      user.value = r.username;
+      pass.focus();
+      mailboxNotice(notice, ['Dein Konto heißt „' + r.username + '“. Gib unten deinen Wiederherstellungscode ein – auf Geräten, die angemeldet bleiben, fragt Clavichat danach nicht mehr.']);
+    } else {
+      mailboxNotice(notice, ['Zu ' + t.mailbox + ' gibt es noch kein Clavichat-Konto. ',
+        el('a', { href: '#', text: 'Jetzt eins anlegen', onclick: (ev) => { ev.preventDefault(); renderGate('register'); } }), '.']);
+    }
+  } catch (e) {
+    gateIdle(button);
+    mailboxError(notice, e);
+  }
+}
+
+async function registerWithMailbox(notice, button) {
+  notice.hidden = true;
+  gateBusy(button, 'achterberg.dev wird gefragt …');
+  let first;
+  try {
+    first = await mailboxTicket();
+  } catch (e) {
+    gateIdle(button);
+    mailboxError(notice, e);
+    return;
+  }
+  gateIdle(button);
+  openModal({
+    title: 'KONTO MIT ACHTERBERG.DEV',
+    build: (body) => {
+      const name = el('input', { type: 'text', maxlength: '24', spellcheck: 'false', autocomplete: 'username', value: first.name || '' });
+      const go = el('button', { type: 'button', class: 'btn btn--primary btn--block', text: 'Konto erstellen' });
+      go.addEventListener('click', async () => {
+        const username = name.value.trim();
+        if (!/^[A-Za-z0-9][A-Za-z0-9_.-]{2,23}$/.test(username)) {
+          toast('Der Name braucht 3–24 Zeichen: Buchstaben, Ziffern, Punkt, Strich, Unterstrich.', 'error');
+          return;
+        }
+        gateBusy(go, 'Schlüssel wird ' + LOCAL + ' erzeugt …');
+        try {
+          const identity = await C.generateIdentity();
+          const ticket = await mailboxTicket();   // jedes Ticket gilt nur einmal
+          await registerAccount(username, C.newRecoveryCode(), identity, true, '', ticket.ticket);
+        } catch (e) {
+          gateIdle(go);
+          toast(e.message, 'error');
+        }
+      });
+      body.append(
+        el('p', { class: 'sc-p', text: 'Postfach ' + first.mailbox + ' – bestätigt.' }),
+        field('Name', name, 'So sehen dich andere. 3–24 Zeichen: Buchstaben, Ziffern, Punkt, Strich, Unterstrich.'),
+        el('p', { class: 'sc-note', text: 'Kein Passwort: Dein Schlüssel entsteht ' + LOCAL + ' und wird mit einem Wiederherstellungscode geschützt, den gleich nur du siehst. Der Server sieht weder Code noch Schlüssel. Dieses Gerät bleibt angemeldet.' }),
+        go);
+    }
+  });
+}
+
+/** Den Wiederherstellungscode genau einmal zeigen – nach dem Anlegen oder Erneuern. */
+function showRecoveryCode(username, code, fresh) {
+  openModal({
+    title: 'WIEDERHERSTELLUNGSCODE',
+    build: (body, close) => {
+      const done = el('button', { type: 'button', class: 'btn btn--primary btn--block', text: 'Fertig', disabled: true, onclick: () => close() });
+      const ok = el('input', { type: 'checkbox' });
+      ok.addEventListener('change', () => { done.disabled = !ok.checked; });
+      const file = 'Clavichat – Wiederherstellungscode\r\n\r\nName: ' + username + '\r\nCode: ' + code + '\r\n\r\n' +
+        'Der Code ersetzt dein Passwort. Auf einem neuen Gerät: anmelden mit Name und Code\r\n' +
+        '(oder „Mit achterberg.dev anmelden“ und dann den Code).\r\n' +
+        'Wer Name und Code hat, kommt in dein Konto – sicher aufbewahren, nie weitergeben.\r\n';
+      appendAll(body,
+        fresh ? el('p', { class: 'sc-p', text: 'Willkommen, ' + username + '! Dein Konto steht – ganz ohne Passwort. Dieses Gerät bleibt angemeldet.' }) : null,
+        el('p', { class: 'sc-p', text: 'Für neue Geräte brauchst du diesen Code, er ersetzt das Passwort. Er erscheint nur jetzt.' }),
+        el('p', { class: 'sc-recovery', text: code }),
+        el('div', { class: 'sc-card-actions' },
+          el('button', { type: 'button', class: 'btn', onclick: () => copyText(code, 'Wiederherstellungscode') }, icon('copy', 14), 'Kopieren'),
+          el('button', { type: 'button', class: 'btn', onclick: () => downloadText('clavichat-wiederherstellung-' + username + '.txt', file) }, icon('download', 14), 'Als Datei speichern')),
+        el('p', { class: 'sc-gate-note sc-gate-note--warn', text: 'Niemand kann den Code wiederherstellen, auch der Server nicht. Geht er verloren, erzeugst du auf einem angemeldeten Gerät in den Einstellungen einen neuen.' }),
+        el('label', { class: 'sc-check' }, ok, el('span', { text: 'Ich habe den Code sicher aufbewahrt.' })),
+        done);
+    }
+  });
+}
+
+/** Neuen Code erzeugen (nur auf einem Gerät, das sich das Konto mit Code gemerkt hat). */
+async function renewRecoveryCode() {
+  const ok = await confirmBox('Neuer Wiederherstellungscode', 'Der bisherige Code wird ungültig, andere Geräte werden abgemeldet und brauchen dann den neuen Code.', 'Neuen Code erzeugen');
+  if (!ok) return;
+  try {
+    const saved = await idbGet('session');
+    if (!saved || !saved.authSealed) throw new Error('Dieses Gerät kennt den bisherigen Code nicht.');
+    const oldAuth = await C.openText(S.wrapKey, saved.authSealed, authAad(S.username));
+    const code = C.newRecoveryCode();
+    const keys = await C.deriveCodeKeys(S.username, code);
+    const wrapKey = await C.importWrapKey(keys.wrapRaw, false);
+    const wrapped = await C.sealText(wrapKey, C.armorPrivate(S.me.priv), keyAad(S.username));
+    const vault = await C.sealText(wrapKey, JSON.stringify(S.vault), vaultAad());
+    const r = await api('password', { old_auth: oldAuth, auth: keys.auth, wrapped: wrapped, vault: vault });
+    S.wrapKey = wrapKey;
+    S.vv = r.vv;
+    await rememberAccount(true, S.username, S.me.id, S.token, wrapped, keys.wrapRaw, await C.sealText(wrapKey, keys.auth, authAad(S.username)));
+    showRecoveryCode(S.username, code, false);
+  } catch (e) {
+    toast(e.message, 'error');
+  }
+}
+
 /* ---------- Sitzung anlegen ---------------------------------------------- */
 async function startTemp(alias, code) {
   const identity = await C.generateIdentity();
@@ -972,8 +1139,13 @@ async function startTemp(alias, code) {
   toast('Temporäre Sitzung läuft. Dein Schlüssel lebt nur ' + KEY_HOME + '.', 'ok');
 }
 
-async function registerAccount(username, password, identity, remember, code) {
-  const keys = await C.deriveAccountKeys(username, password);
+/**
+ * secret: Passwort oder – beim Konto mit dem Postfach von achterberg.dev
+ * (sso = Ticket) – ein Wiederherstellungscode. Solche Konten bleiben auf
+ * diesem Gerät immer angemeldet.
+ */
+async function registerAccount(username, secret, identity, remember, code, sso) {
+  const keys = await C.accountKeys(username, secret);
   const wrapKey = await C.importWrapKey(keys.wrapRaw, false);
   const id = C.randomId();
   const card = await C.signCard(identity.privateKey, { v: 1, id: id, kind: 'account', name: username, ts: Date.now() });
@@ -984,20 +1156,26 @@ async function registerAccount(username, password, identity, remember, code) {
   const vault = await C.sealText(wrapKey, JSON.stringify(S.vault), vaultAad());
   const r = await api('register', {
     username: username, auth: keys.auth, id: id, pub: identity.armoredPublic, fp: identity.fingerprint,
-    card: card, wrapped: wrapped, vault: vault, code: code
+    card: card, wrapped: wrapped, vault: vault, code: code, sso: sso || undefined
   });
+  const name = r.username || username;
   S.token = r.token;
   S.mode = 'account';
   S.vv = r.vv || 1;
-  setMe(identity, id, 'account', r.username || username, true);
-  await rememberAccount(remember, r.username || username, id, r.token, wrapped, keys.wrapRaw);
+  setMe(identity, id, 'account', name, true);
+  const authSealed = sso ? await C.sealText(wrapKey, keys.auth, authAad(name)) : null;
+  await rememberAccount(sso ? true : remember, name, id, r.token, wrapped, keys.wrapRaw, authSealed);
   await enterApp();
-  showKeyBackup(password, true);
+  if (sso) showRecoveryCode(name, secret, true);
+  else showKeyBackup(secret, true);
 }
 
+/** Zusatzdaten beim Versiegeln des Anmeldeschlüssels (getrennt von Schlüssel und Tresor). */
+function authAad(username) { return 'sc-auth|' + String(username).toLowerCase(); }
+
 async function loginAccount(username, password, remember) {
-  if (!username || !password) throw new Error('Bitte Name und Passwort angeben.');
-  const keys = await C.deriveAccountKeys(username, password);
+  if (!username || !password) throw new Error('Bitte Name und Passwort oder Wiederherstellungscode angeben.');
+  const keys = await C.accountKeys(username, password);
   S.token = null;
   const r = await api('login', { username: username, auth: keys.auth });
   const wrapKey = await C.importWrapKey(keys.wrapRaw, false);
@@ -1018,18 +1196,28 @@ async function loginAccount(username, password, remember) {
   }
   setMe(identity, r.id, 'account', r.username, r.vis !== false);
   await applyOwnCard(r.card);
-  await rememberAccount(remember, r.username, r.id, r.token, r.wrapped, keys.wrapRaw);
+  // Mit Wiederherstellungscode angemeldet: Das Gerät soll nie wieder danach fragen.
+  const authSealed = remember && C.isRecoveryCode(password) ? await C.sealText(wrapKey, keys.auth, authAad(r.username)) : null;
+  await rememberAccount(remember, r.username, r.id, r.token, r.wrapped, keys.wrapRaw, authSealed);
   await enterApp();
 }
 
 /**
  * Angemeldet bleiben: in IndexedDB mit einem nicht auslesbaren
  * Schlüssel-Objekt. Sonst nur für diesen Tab (sessionStorage).
+ * authSealed (nur Konten mit Wiederherstellungscode): der Anmeldeschlüssel,
+ * mit eben diesem Schlüssel-Objekt versiegelt. Läuft die Sitzung ab, meldet
+ * sich das Gerät damit still neu an – ohne den Code. Neue Angriffsfläche
+ * entsteht so nicht: Wer an das Schlüssel-Objekt kommt, packt damit ohnehin
+ * schon den privaten Schlüssel aus.
  */
-async function rememberAccount(remember, username, id, token, wrapped, wrapRaw) {
+async function rememberAccount(remember, username, id, token, wrapped, wrapRaw, authSealed) {
+  S.codeAccount = !!authSealed;
   if (remember) {
     const key = await C.importWrapKey(wrapRaw, false);
-    await idbSet('session', { mode: 'account', username: username, id: id, token: token, wrapped: wrapped, wrapKey: key });
+    const rec = { mode: 'account', username: username, id: id, token: token, wrapped: wrapped, wrapKey: key };
+    if (authSealed) rec.authSealed = authSealed;
+    await idbSet('session', rec);
     ssSet(SS_KEY, null);
   } else {
     await idbSet('session', null);
@@ -1055,6 +1243,7 @@ function setMe(identity, id, kind, name, vis) {
 /** Nach dem Neuladen: Sitzung aus dem Tab oder aus IndexedDB. */
 async function restoreSession() {
   const ss = ssGet(SS_KEY);
+  let saved = null;
   try {
     if (ss && ss.mode === 'temp') {
       const identity = await C.readPrivateIdentity(ss.priv);
@@ -1063,7 +1252,7 @@ async function restoreSession() {
       S.vault = mergeVault(emptyVault(), ss.vault || {});
       setMe(identity, ss.id, 'temp', '', true);
     } else {
-      const saved = ss && ss.mode === 'account' ? ss : await idbGet('session');
+      saved = ss && ss.mode === 'account' ? ss : await idbGet('session');
       if (!saved || saved.mode !== 'account') return false;
       const wrapKey = saved.wrapKey || await C.importWrapKey(C.unb64(saved.wrap), false);
       const identity = await C.readPrivateIdentity(await C.openText(wrapKey, saved.wrapped, keyAad(saved.username)));
@@ -1071,6 +1260,7 @@ async function restoreSession() {
       S.mode = 'account';
       S.username = saved.username;
       S.wrapKey = wrapKey;
+      S.codeAccount = !!saved.authSealed;
       S.vault = emptyVault();
       setMe(identity, saved.id, 'account', saved.username, true);
     }
@@ -1079,7 +1269,7 @@ async function restoreSession() {
     return false;
   }
 
-  try {
+  const loadOwn = async () => {
     const me = await api('me');
     S.me.vis = S.mode === 'temp' && me.vis !== false;
     await applyOwnCard(me.card);
@@ -1088,9 +1278,24 @@ async function restoreSession() {
       S.vv = v.vv;
       if (v.vault) S.vault = mergeVault(emptyVault(), JSON.parse(await C.openText(S.wrapKey, v.vault, vaultAad())));
     }
+  };
+  try {
+    await loadOwn();
   } catch (e) {
-    if (e.status === 401) { await clearStoredSession(); S.token = null; S.me = null; return false; }
-    // Ohne Netz: trotzdem öffnen, der Abruf versucht es weiter.
+    if (e.status !== 401) return true;   // ohne Netz: trotzdem öffnen, der Abruf versucht es weiter
+    // Sitzung abgelaufen – Konten mit Wiederherstellungscode melden sich still neu an.
+    try {
+      if (!saved || !saved.authSealed) throw e;
+      const r = await api('login', { username: saved.username, auth: await C.openText(S.wrapKey, saved.authSealed, authAad(saved.username)) });
+      S.token = r.token;
+      await idbSet('session', Object.assign({}, saved, { token: r.token }));
+      await loadOwn();
+    } catch (again) {
+      await clearStoredSession();
+      S.token = null;
+      S.me = null;
+      return false;
+    }
   }
   return true;
 }
@@ -1104,7 +1309,11 @@ let lost = false;
 function sessionLost() {
   if (lost) return;
   lost = true;
-  clearStoredSession().then(() => {
+  // Konten mit Wiederherstellungscode behalten das Gespeicherte: Beim
+  // Neuladen meldet sich das Gerät still neu an (restoreSession). Klappt das
+  // nicht – etwa weil der Code auf einem anderen Gerät erneuert wurde –,
+  // räumt restoreSession selbst auf.
+  (S.codeAccount ? Promise.resolve() : clearStoredSession()).then(() => {
     teardownMedia();
     S.token = null;
     S.me = null;
@@ -4429,7 +4638,7 @@ function showSettings() {
         const box = el('div');
         const draw = (s) => {
           s = s || {};
-          ver.textContent = 'SECURECOM ' + (s.version || '') + (s.mode === 'portable' ? ' · PORTABEL' : s.mode === 'installed' ? ' · INSTALLIERT' : '');
+          ver.textContent = 'CLAVICHAT ' + (s.version || '') + (s.mode === 'portable' ? ' · PORTABEL' : s.mode === 'installed' ? ' · INSTALLIERT' : '');
           auto.checked = s.auto !== false;
           auto.disabled = s.status === 'unsupported';
           box.textContent = '';
@@ -4447,8 +4656,10 @@ function showSettings() {
       body.appendChild(sectionHead(S.mode === 'temp' ? 'SITZUNG' : 'KONTO'));
       const acts = el('div', { class: 'sc-card-actions' });
       if (S.mode === 'account') {
+        // Konto mit Wiederherstellungscode: neuen erzeugen, falls der alte weg ist.
+        if (S.codeAccount) acts.appendChild(el('button', { type: 'button', class: 'btn', onclick: () => { close(); renewRecoveryCode(); } }, icon('key', 14), 'Neuer Wiederherstellungscode'));
         acts.append(
-          el('button', { type: 'button', class: 'btn', onclick: () => { close(); changePassword(); } }, 'Passwort ändern'),
+          el('button', { type: 'button', class: 'btn', onclick: () => { close(); changePassword(); } }, S.codeAccount ? 'Stattdessen Passwort festlegen' : 'Passwort ändern'),
           el('button', { type: 'button', class: 'btn', onclick: () => { close(); logout(); } }, icon('logout', 14), 'Abmelden'),
           el('button', { type: 'button', class: 'btn sc-btn--danger', onclick: () => { close(); deleteAccount(); } }, icon('trash', 14), 'Konto löschen'));
       } else {
@@ -4529,7 +4740,7 @@ function changePassword() {
         go.disabled = true;
         go.textContent = 'Wird gehärtet …';
         try {
-          const oldKeys = await C.deriveAccountKeys(S.username, old.value);
+          const oldKeys = await C.accountKeys(S.username, old.value);   // Passwort oder Code
           const keys = await C.deriveAccountKeys(S.username, p1.value);
           const wrapKey = await C.importWrapKey(keys.wrapRaw, false);
           const wrapped = await C.sealText(wrapKey, C.armorPrivate(S.me.priv), keyAad(S.username));
@@ -4547,7 +4758,7 @@ function changePassword() {
           toast(e.message, 'error');
         }
       });
-      body.append(field('Bisheriges Passwort', old), field('Neues Passwort', p1), field('Neues Passwort wiederholen', p2), go);
+      body.append(field('Bisheriges Passwort oder Wiederherstellungscode', old), field('Neues Passwort', p1), field('Neues Passwort wiederholen', p2), go);
     }
   });
 }
@@ -4561,7 +4772,7 @@ function deleteAccount() {
       go.addEventListener('click', async () => {
         go.disabled = true;
         try {
-          const keys = await C.deriveAccountKeys(S.username, pass.value);
+          const keys = await C.accountKeys(S.username, pass.value);
           await api('delete', { auth: keys.auth });
           teardownMedia();
           await clearStoredSession();
@@ -4569,14 +4780,14 @@ function deleteAccount() {
         } catch (e) { go.disabled = false; toast(e.message, 'error'); }
       });
       body.append(el('p', { class: 'sc-p', text: 'Löscht dein Konto, deinen Briefkasten, deinen eingepackten Schlüssel und deine Raummitgliedschaften vom Server. Räume, die dir gehören, übernimmt das älteste Mitglied.' }),
-        field('Passwort zur Bestätigung', pass), go);
+        field('Passwort oder Wiederherstellungscode zur Bestätigung', pass), go);
     }
   });
 }
 
 function showSecurityInfo() {
   openModal({
-    title: 'WIE SECURECOM SCHÜTZT',
+    title: 'WIE CLAVICHAT SCHÜTZT',
     wide: true,
     build: (body) => {
       const block = (title, lines) => {
@@ -4590,7 +4801,8 @@ function showSecurityInfo() {
         'Direktnachrichten: Für jede Nachricht ein neuer, zufälliger AES-256-Schlüssel, der mit den öffentlichen Schlüsseln von Empfänger und Absender eingepackt wird. Dazu deine Signatur.',
         'Räume: ein gemeinsamer Raumschlüssel (AES-256-GCM). Er steht im Einladungslink hinter dem „#“ – dieser Teil einer Adresse geht nie an einen Server – oder kommt PGP-verschlüsselt vom Besitzer. Verlässt jemand den Raum, gibt es einen neuen.',
         'Anrufe und Bildschirm: WebRTC direkt zwischen den Geräten, verschlüsselt mit DTLS-SRTP. Die Schlüssel dafür handeln nur die beiden Browser aus; die Verbindungsangaben sind signiert und verschlüsselt, der Sicherheitscode zeigt, dass niemand dazwischensitzt.',
-        'Konten: Aus deinem Passwort entstehen ' + LOCAL + ' (PBKDF2, 600.000 Runden, dann HKDF) ein Anmeldeschlüssel – beim Server nur als Hash – und ein Schlüssel, der deinen privaten Schlüssel einpackt. Das Passwort selbst verlässt ' + (DESKTOP ? 'die App' : 'den Browser') + ' nie.'
+        'Konten: Aus deinem Passwort entstehen ' + LOCAL + ' (PBKDF2, 600.000 Runden, dann HKDF) ein Anmeldeschlüssel – beim Server nur als Hash – und ein Schlüssel, der deinen privaten Schlüssel einpackt. Das Passwort selbst verlässt ' + (DESKTOP ? 'die App' : 'den Browser') + ' nie.',
+        'Konto mit achterberg.dev: Das Postfach bestätigt nur, wer du bist – mit einem signierten Ticket, das fünf Minuten und nur einmal gilt. Deinen Schlüssel schützt statt eines Passworts ein Wiederherstellungscode aus 160 Zufallsbits (HKDF-SHA-256). Ihn kennst nur du; der Server sieht ihn nie.'
       ]);
       block('VERSCHLEIERUNG', [
         'Alle Klartexte werden vor dem Verschlüsseln auf feste Größen aufgefüllt – „ok“ und ein langer Absatz sind gleich groß.',
@@ -4598,7 +4810,7 @@ function showSecurityInfo() {
         'Raumnamen, Raumbilder, Kanäle und Kontakte sind verschlüsselt. Der Server kennt nur zufällige Kennungen.',
         'Konten stehen nie in der Online-Liste und zeigen niemandem, ob sie online sind. Dort erscheinen nur temporäre Sitzungen – und auch die nur, solange sie es wollen.',
         'Alle Anfragen gehen per POST an dieselbe Adresse. In den Protokollen des Webservers steht nicht, was passiert ist.',
-        'Keine Cookies, keine fremden Server auf dieser Seite (auch keine Schriften von Google), strenge Content-Security-Policy.',
+        'Keine Cookies (einzige Ausnahme: „Mit achterberg.dev“ fragt auf deinen Klick das Dashboard nach deinem Postfach), keine fremden Server auf dieser Seite (auch keine Schriften von Google), strenge Content-Security-Policy.',
         'Anruf-Signale verfallen nach zwei Minuten, Nachrichten nach ' + S.cfg.retention_days + ' Tagen, temporäre Sitzungen nach ' + S.cfg.temp_hours + ' Stunden ohne Nutzung.'
       ]);
       block('WAS DER SERVER TROTZDEM SIEHT', [

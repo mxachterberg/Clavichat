@@ -196,6 +196,68 @@ export async function deriveAccountKeys(username, password) {
   return { auth: toHex(new Uint8Array(auth)), wrapRaw: new Uint8Array(wrap) };
 }
 
+/* ---------- Wiederherstellungscode statt Passwort --------------------------
+   Für Konten, die mit dem Postfach von achterberg.dev entstehen: 160
+   Zufallsbits, geschrieben als 8 Vierergruppen in Crockford-Base32 (ohne
+   I, L, O, U – nichts zum Verwechseln). Aus dem Code entstehen per HKDF-SHA-256
+   (RFC 5869) dieselben zwei Werte wie aus einem Passwort. PBKDF2 braucht es
+   hier nicht: 160 Bit Zufall lassen sich nicht erraten. Name und Zweck stecken
+   in Salt und Info – derselbe Code ergibt für ein anderes Konto andere Schlüssel. */
+const CROCKFORD = '0123456789ABCDEFGHJKMNPQRSTVWXYZ';
+
+export function newRecoveryCode() {
+  let acc = 0;
+  let bits = 0;
+  let out = '';
+  for (const byte of randomBytes(20)) {
+    acc = (acc << 8) | byte;
+    bits += 8;
+    while (bits >= 5) {
+      bits -= 5;
+      out += CROCKFORD[(acc >>> bits) & 31];
+    }
+    acc &= (1 << bits) - 1;
+  }
+  return out.match(/.{4}/g).join('-');
+}
+
+/** Großbuchstaben, ohne Leer- und Bindestriche, O→0 und I/L→1 – oder null. */
+export function normalizeRecoveryCode(text) {
+  const s = String(text || '').toUpperCase().replace(/[\s-]/g, '').replace(/O/g, '0').replace(/[IL]/g, '1');
+  return /^[0-9A-HJKMNP-TV-Z]{32}$/.test(s) ? s : null;
+}
+
+export function isRecoveryCode(text) {
+  return normalizeRecoveryCode(text) !== null;
+}
+
+export async function deriveCodeKeys(username, code) {
+  const norm = normalizeRecoveryCode(code);
+  if (!norm) throw new Error('Das ist kein gültiger Wiederherstellungscode.');
+  const bytes = [];
+  let acc = 0;
+  let bits = 0;
+  for (const ch of norm) {
+    acc = (acc << 5) | CROCKFORD.indexOf(ch);
+    bits += 5;
+    if (bits >= 8) {
+      bits -= 8;
+      bytes.push((acc >>> bits) & 255);
+    }
+    acc &= (1 << bits) - 1;
+  }
+  const ikm = await subtle.importKey('raw', new Uint8Array(bytes), 'HKDF', false, ['deriveBits']);
+  const salt = te.encode('achterberg.dev/clavichat/code/v1/' + String(username).trim().toLowerCase());
+  const auth = await subtle.deriveBits({ name: 'HKDF', hash: 'SHA-256', salt: salt, info: te.encode('clavichat code auth') }, ikm, 256);
+  const wrap = await subtle.deriveBits({ name: 'HKDF', hash: 'SHA-256', salt: salt, info: te.encode('clavichat code wrap') }, ikm, 256);
+  return { auth: toHex(new Uint8Array(auth)), wrapRaw: new Uint8Array(wrap) };
+}
+
+/** Passwort oder Wiederherstellungscode – was eingetippt wurde, entscheidet das Format. */
+export function accountKeys(username, secret) {
+  return isRecoveryCode(secret) ? deriveCodeKeys(username, secret) : deriveAccountKeys(username, secret);
+}
+
 export function importWrapKey(raw, extractable) {
   return subtle.importKey('raw', raw, { name: 'AES-GCM' }, !!extractable, ['encrypt', 'decrypt']);
 }
