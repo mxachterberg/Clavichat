@@ -473,6 +473,15 @@ async function smoke() {
   const out = process.env.SECURECOM_SMOKE_OUT || app.getPath('temp');
   const wait = (ms) => new Promise((r) => setTimeout(r, ms));
   const run = (code) => win.webContents.executeJavaScript(code, true);
+  // Warten, bis etwas eintritt – feste Zeiten reichen nicht, wenn Windows die
+  // frisch gebaute Datei gerade prüft und alles langsamer läuft.
+  const until = async (code, ms) => {
+    for (let t = 0; t < ms; t += 250) {
+      if (await run(code)) return true;
+      await wait(250);
+    }
+    return false;
+  };
   const shot = async (wc, name) => fs.writeFileSync(path.join(out, name + '.png'), (await wc.capturePage()).toPNG());
   const lines = [];
   const check = (label, ok, detail) => lines.push((ok ? 'ok   ' : 'FAIL ') + label + (detail ? ' — ' + detail : ''));
@@ -486,9 +495,16 @@ async function smoke() {
   await shot(win.webContents, 'smoke-1-start');
 
   await run("document.querySelector('#sc-gate-card input[type=text]').value = 'Windows-App'; document.querySelector('#sc-gate-card button[type=submit]').click(); true");
-  await wait(4500);
-  check('temporäre Sitzung über den Server', await run("!document.getElementById('sc').hidden"),
+  const started = await until("!document.getElementById('sc').hidden && !!document.querySelector('#sc-user button')", 20000);
+  await wait(500);
+  check('temporäre Sitzung über den Server', started,
     await run("document.getElementById('sc-user').innerText.replace(/\\n/g, ' | ')"));
+  if (!started) {
+    await shot(win.webContents, 'smoke-2-ohne-sitzung');
+    fs.writeFileSync(path.join(out, 'smoke.txt'), lines.join('\n') + '\n');
+    app.exit(1);
+    return;
+  }
   check('Brücke zur App vorhanden', await run("typeof window.securecomDesktop === 'object' && typeof window.securecomDesktop.focus === 'function'"));
   const upd = await run('window.securecomDesktop.updates.get()');
   check('Updates: Stand abrufbar', !!upd && upd.version === app.getVersion(), upd ? upd.version + ' · ' + (upd.mode || 'ohne Selbst-Update') + ' · ' + upd.status : '');

@@ -7,7 +7,7 @@
    CHANGELOG.md (anderer Ort: SECURECOM_CHANGELOG).
 
      npm run build
-     node scripts/publish-update.js "<Webroot>\downloads\securecom"
+     node scripts/publish-update.js "<Webroot>\downloads\clavichat"
 
    Danach zuerst die .exe-Dateien hochladen, zuletzt update.json.
    ========================================================================== */
