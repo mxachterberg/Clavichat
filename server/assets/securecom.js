@@ -1408,6 +1408,7 @@ function bootFail(message) {
 async function boot() {
   parseJoinFragment();
   syncTheme();
+  unlockAudio();   // Handys: Ton beim ersten Tippen freischalten, sonst klingelt nichts
   initUpdates();   // nur Windows-App: Popup, sobald die Oberfläche steht
 
   progress(0.3, 'VERSCHLÜSSELUNG WIRD GELADEN');
@@ -3486,8 +3487,32 @@ function audioCtx() {
     const Ctx = window.AudioContext || window.webkitAudioContext;
     if (Ctx) M.ctx = new Ctx();
   }
-  if (M.ctx && M.ctx.state === 'suspended') M.ctx.resume().catch(() => {});
+  // "interrupted": Safari nach Sperrbildschirm oder Anruf auf dem Handy.
+  if (M.ctx && (M.ctx.state === 'suspended' || M.ctx.state === 'interrupted')) M.ctx.resume().catch(() => {});
   return M.ctx;
+}
+
+/**
+ * Handys geben Ton erst nach einem Tippen frei – ein eingehender Anruf kommt
+ * aber ohne. Deshalb beim ersten Tippen irgendwo auf der Seite den Ton
+ * freischalten (mit einem unhörbar kurzen Ton), damit es später klingelt.
+ */
+function unlockAudio() {
+  const events = ['pointerdown', 'touchend', 'keydown'];
+  const done = () => { for (const ev of events) document.removeEventListener(ev, unlock, true); };
+  function unlock() {
+    const ctx = audioCtx();
+    if (!ctx) { done(); return; }
+    try {
+      const src = ctx.createBufferSource();
+      src.buffer = ctx.createBuffer(1, 1, 22050);
+      src.connect(ctx.destination);
+      src.start(0);
+    } catch (e) { /* egal */ }
+    if (ctx.state === 'running') done();
+    else ctx.resume().then(() => { if (ctx.state === 'running') done(); }).catch(() => {});
+  }
+  for (const ev of events) document.addEventListener(ev, unlock, true);
 }
 
 async function ensureMic() {
@@ -3642,12 +3667,20 @@ function screenQuality() {
   return SCREEN_QUALITY.find((q) => q.id === id) || SCREEN_QUALITY.find((q) => q.id === SQ_DEFAULT);
 }
 
-/** w = 0: keine Obergrenze, also die Auflösung des Bildschirms selbst. */
-function screenConstraints(q) {
-  const c = { frameRate: { ideal: q.fps, max: q.fps } };
-  if (q.w) { c.width = { max: q.w }; c.height = { max: q.h }; }
-  return c;
+/**
+ * Aufgenommen wird immer in voller Auflösung und mit bis zu 60 Bildern pro
+ * Sekunde. Die gewählte Qualität setzt erst der Encoder um (Peer.tune):
+ * verkleinern, Bildrate, Datenrate. So lässt sie sich während der
+ * Übertragung ändern, ohne die Aufnahme anzufassen – applyConstraints auf
+ * der laufenden Spur ließ bei Zuschauern auf dem Handy das Bild stehen.
+ */
+function screenConstraints() {
+  return { frameRate: { ideal: 60, max: 60 } };
 }
+
+/** Zuschauer auf Handy oder Tablet: Das sagt die Gegenseite (Peer.sendState). */
+const IS_MOBILE = !DESKTOP && typeof matchMedia === 'function' && matchMedia('(pointer: coarse)').matches;
+const MOBILE_CAP = { long: 1920, short: 1080, fps: 30, rate: 5000000 };
 
 function setScreenQuality(id) {
   if (!SCREEN_QUALITY.some((q) => q.id === id)) return;
@@ -3656,13 +3689,10 @@ function setScreenQuality(id) {
   applyScreenQuality();
 }
 
-/** Läuft gerade eine Übertragung, gilt die gewählte Qualität sofort. */
+/** Läuft gerade eine Übertragung, gilt die gewählte Qualität sofort – über den Encoder. */
 async function applyScreenQuality() {
   const q = screenQuality();
-  if (M.screen && M.screen.readyState === 'live') {
-    M.screen.contentHint = q.hint;
-    try { await M.screen.applyConstraints(screenConstraints(q)); } catch (e) { /* der Browser bleibt bei der alten */ }
-  }
+  if (M.screen && M.screen.readyState === 'live') M.screen.contentHint = q.hint;
   for (const p of activePeers()) p.tune();
   if ($('sc-controls')) renderControls();
 }
@@ -3774,7 +3804,7 @@ async function toggleScreen() {
     return;
   }
   try {
-    const stream = await navigator.mediaDevices.getDisplayMedia({ video: screenConstraints(screenQuality()), audio: true });
+    const stream = await navigator.mediaDevices.getDisplayMedia({ video: screenConstraints(), audio: true });
     M.screen = stream.getVideoTracks()[0];
     M.screenAudio = stream.getAudioTracks()[0] || null;
     M.screen.addEventListener('ended', stopScreen);
@@ -3992,7 +4022,7 @@ class Peer {
     this.created = Date.now();
     this.tx = {};
     this.remote = {};
-    this.remoteState = { mic: true, cam: false, screen: false, deaf: false };
+    this.remoteState = { mic: true, cam: false, screen: false, deaf: false, mobile: false };
     this.localSdp = null;
     this.remoteSdp = null;
     this.code = null;
@@ -4084,7 +4114,7 @@ class Peer {
   sendState() {
     if (this.dc.readyState !== 'open') return;
     try {
-      this.dc.send(JSON.stringify({ t: 'state', mic: M.micOn && !M.deaf, cam: !!M.cam, screen: !!M.screen, deaf: M.deaf }));
+      this.dc.send(JSON.stringify({ t: 'state', mic: M.micOn && !M.deaf, cam: !!M.cam, screen: !!M.screen, deaf: M.deaf, mobile: IS_MOBILE }));
     } catch (e) { /* Kanal zu */ }
   }
 
@@ -4092,7 +4122,9 @@ class Peer {
     let m;
     try { m = JSON.parse(raw); } catch (e) { return; }
     if (m.t === 'state') {
-      this.remoteState = { mic: !!m.mic, cam: !!m.cam, screen: !!m.screen, deaf: !!m.deaf };
+      const wasMobile = this.remoteState.mobile;
+      this.remoteState = { mic: !!m.mic, cam: !!m.cam, screen: !!m.screen, deaf: !!m.deaf, mobile: !!m.mobile };
+      if (this.remoteState.mobile !== wasMobile) this.tune();   // Zuschauer am Handy: Stream anpassen
       this.changed();
     } else if (m.t === 'bye' && this.opts.onBye) {
       this.opts.onBye(this);
@@ -4131,12 +4163,25 @@ class Peer {
       const tx = this.tx[slot];
       if (!tx || !tx.sender.track) continue;
       const p = tx.sender.getParameters();
-      if (!p.encodings || !p.encodings.length) p.encodings = [{}];
+      if (!p.encodings || !p.encodings.length) continue;   // ohne Verhandlung nichts zu setzen
+      const enc = p.encodings[0];
       if (slot === 'cam') {
-        p.encodings[0].maxBitrate = mesh ? 500000 : 900000;
+        enc.maxBitrate = mesh ? 500000 : 900000;
       } else {
-        p.encodings[0].maxBitrate = mesh ? q.mesh : q.rate;
-        p.encodings[0].maxFramerate = q.fps;
+        // Auflösung per Verkleinern im Encoder, nicht an der Aufnahme. Schaut
+        // jemand am Handy zu, höchstens 1080p mit 30 Bildern pro Sekunde –
+        // mehr können viele Handys nicht flüssig entschlüsseln.
+        const mob = this.remoteState.mobile;
+        const set = tx.sender.track.getSettings ? tx.sender.track.getSettings() : {};
+        const w = set.width || 0;
+        const h = set.height || 0;
+        let capLong = q.w ? Math.max(q.w, q.h) : Infinity;
+        let capShort = q.w ? Math.min(q.w, q.h) : Infinity;
+        if (mob) { capLong = Math.min(capLong, MOBILE_CAP.long); capShort = Math.min(capShort, MOBILE_CAP.short); }
+        const scale = w && h ? Math.max(1, Math.max(w, h) / capLong, Math.min(w, h) / capShort) : 1;
+        enc.scaleResolutionDownBy = Math.round(scale * 1000) / 1000;
+        enc.maxFramerate = mob ? Math.min(q.fps, MOBILE_CAP.fps) : q.fps;
+        enc.maxBitrate = Math.min(mesh ? q.mesh : q.rate, mob ? MOBILE_CAP.rate : Infinity);
       }
       tx.sender.setParameters(p).catch(() => {});
     }
@@ -4795,7 +4840,12 @@ function beep(freq, dur, when, vol) {
 function playRing() {
   stopTones();
   if (!S.vault.settings.sound) return;
-  const ring = () => { beep(880, 0.35, 0, 0.09); beep(660, 0.35, 0.4, 0.09); };
+  const ring = () => {
+    beep(880, 0.35, 0, 0.09);
+    beep(660, 0.35, 0.4, 0.09);
+    // Android vibriert dazu (iPhones kennen das im Browser nicht).
+    if (IS_MOBILE && navigator.vibrate && !document.hidden) { try { navigator.vibrate([350, 150, 350]); } catch (e) { /* egal */ } }
+  };
   ring();
   toneTimer = setInterval(ring, 2600);
 }
@@ -4810,6 +4860,7 @@ function playRingback() {
 function stopTones() {
   clearInterval(toneTimer);
   toneTimer = 0;
+  if (IS_MOBILE && navigator.vibrate) { try { navigator.vibrate(0); } catch (e) { /* egal */ } }
 }
 
 function playJoinTone(on) {
