@@ -99,6 +99,43 @@ erfunden.
   Passwörter raten; jeder Versuch kostet 600.000 PBKDF2-Runden. Ein langes
   Passwort ist deshalb der beste Schutz.
 
+### Konto mit dem Postfach (nur achterberg.dev)
+
+- Wer im Dashboard von achterberg.dev angemeldet ist (echte Anmeldung am
+  Postfach), bekommt dort ein Ticket: Postfach, Ablauf nach fünf Minuten und
+  ein Zufallswert, signiert mit HMAC-SHA-256. Den Schlüssel dafür leitet der
+  Server aus seinem geheimen Server-Schlüssel ab, er verlässt den Server nie.
+  Jedes Ticket gilt nur einmal.
+- Das Ticket holt die Seite mit dem Cookie der Dashboard-Sitzung, nur von der
+  eigenen Seite aus (`Sec-Fetch-Site`). Das ist der einzige Aufruf mit Cookie;
+  die Schnittstelle von Clavichat selbst bleibt ohne.
+- Ein Postfach, ein Konto. Am Konto steht das Postfach nur als SHA-256-Hash.
+- Statt eines Passworts schützt ein Wiederherstellungscode den Schlüssel:
+  160 Zufallsbits aus `crypto.getRandomValues`, geschrieben in
+  Crockford-Base32 (8 Gruppen à 4 Zeichen). Aus ihm entstehen per
+  HKDF-SHA-256 (RFC 5869, Salz mit dem Kontonamen) dieselben zwei Werte wie
+  aus einem Passwort: Anmeldeschlüssel und Einpackschlüssel. PBKDF2 braucht
+  es dafür nicht – 160 Zufallsbits lassen sich nicht erraten. Der Server
+  sieht weder den Code noch die Schlüssel.
+- Das Postfach bestätigt nur, wer man ist. Wer das Postfach übernimmt, kann
+  damit den Kontonamen erfragen, aber ohne Code oder angemeldetes Gerät
+  weder anmelden noch den privaten Schlüssel auspacken.
+- Ein neuer Code (Einstellungen) packt Schlüssel und Tresor neu ein, macht
+  den alten Code ungültig und meldet alle anderen Geräte ab.
+
+### Updates der Windows-App
+
+- Die App lädt eine Update-Liste von achterberg.dev. Sie ist mit Ed25519
+  signiert; den öffentlichen Schlüssel bringt die App mit
+  (`desktop/updater.js`). Der private Schlüssel liegt nur beim Herausgeber,
+  weder im Repository noch auf dem Webserver.
+- Die Liste nennt Größe und SHA-256 jeder Datei. Passt eine heruntergeladene
+  Datei nicht genau, wird sie verworfen. Ein übernommener Webserver kann so
+  keine fremde Fassung unterschieben. Als Update gilt nur eine höhere
+  Versionsnummer.
+- Die Suche beim Start lässt sich abschalten. Der Server sieht dabei nur
+  IP-Adresse und Zeitpunkt.
+
 ### Auf dem Gerät
 
 - Temporäre Sitzung: Der private Schlüssel liegt nur im Speicher dieses Tabs
@@ -106,6 +143,11 @@ erfunden.
 - Konto mit „Angemeldet bleiben“: in IndexedDB der eingepackte private
   Schlüssel und ein WebCrypto-Schlüsselobjekt, das sich nicht auslesen lässt.
   Ohne das Häkchen gilt die Anmeldung nur für den Tab.
+- Konto mit Wiederherstellungscode: Dazu kommt der Anmeldeschlüssel,
+  versiegelt mit eben diesem Schlüsselobjekt (AES-256-GCM, eigene
+  Zusatzdaten). Läuft die Sitzung ab, meldet sich das Gerät damit still neu
+  an. Neue Angriffsfläche entsteht so nicht: Wer an das Schlüsselobjekt
+  kommt, packt damit ohnehin den privaten Schlüssel aus.
 
 ### Eigener Server (Windows, Docker)
 
@@ -156,6 +198,8 @@ erfunden.
   (ohne dessen Namen).
 - Welcher Briefkasten wann wie viele Einträge bekommt. Wer eine Nachricht
   abschickt, sieht er im Moment der Anfrage, speichert es aber nicht.
+- Bei Konten mit dem Postfach von achterberg.dev den SHA-256-Hash des
+  Postfachs. Wer die Adresse kennt, kann sie damit dem Konto zuordnen.
 - Bei Anrufen ohne Relay sehen sich die Gesprächspartner gegenseitig die
   IP-Adresse, der STUN-Server sieht die eigene. „IP-Adresse verbergen“ leitet
   alles über TURN, sofern einer eingerichtet ist.

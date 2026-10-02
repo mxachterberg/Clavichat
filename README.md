@@ -26,6 +26,9 @@ unverändert weiterlaufen.
   für die der Browser ein frisches PGP-Schlüsselpaar erzeugt. Wahlweise mit
   Alias. Eigene PGP-Schlüssel (GnuPG, Kleopatra) lassen sich übernehmen und mit
   Passphrase gesichert exportieren. Konten können ein Profilbild festlegen.
+  Auf achterberg.dev geht ein Konto auch ohne Passwort: Wer dort angemeldet
+  ist, bestätigt sich über sein Postfach, den Schlüssel schützt ein
+  Wiederherstellungscode.
 - **Wer ist da:** Online-Liste mit Alias und Fingerabdruck – nur für
   temporäre Sitzungen. Konten zeigen niemandem, ob sie online sind.
   Verbinden per öffentlichem Schlüssel oder Fingerabdruck.
@@ -53,6 +56,8 @@ unverändert weiterlaufen.
 | Profilbilder | nur Konten, öffentlich wie der Name; die signierte Karte nennt den SHA-256-Wert, angezeigt wird nur ein passendes Bild |
 | Anrufe, Bildschirm | WebRTC direkt zwischen den Geräten (DTLS-SRTP). Verbindungsangaben signiert und verschlüsselt, Sicherheitscode aus den DTLS-Fingerabdrücken |
 | Konten | PBKDF2-SHA-256 (600.000 Runden) → HKDF → Anmeldeschlüssel (beim Server nur als bcrypt-Hash) und ein Schlüssel, der den privaten PGP-Schlüssel einpackt |
+| Konto mit achterberg.dev | Postfach per HMAC-SHA-256-Ticket bestätigt (fünf Minuten, nur einmal); statt Passwort ein Wiederherstellungscode mit 160 Zufallsbits → HKDF-SHA-256 |
+| Updates (Windows-App) | Update-Liste mit Ed25519 signiert, Datei mit SHA-256 geprüft; der Signaturschlüssel liegt nur beim Herausgeber |
 | Länge | jeder Klartext wird vor dem Verschlüsseln auf feste Größen aufgefüllt |
 
 Details, Grenzen und was der Server trotzdem sieht: [SECURITY.md](SECURITY.md).
@@ -184,6 +189,13 @@ Unterschiede zur Web-Fassung:
 - Eigene Titelleiste im Stil der App; die Fensterknöpfe folgen Hell und Dunkel.
 - Benachrichtigungen sind von Anfang an an, eingehende Anrufe lassen das
   Fenster in der Taskleiste blinken.
+- Updates: Beim Start sucht die App im Hintergrund nach einer neuen Fassung
+  und fragt per Popup. Unter „UPDATES“ in den Einstellungen lässt sich das
+  abschalten oder von Hand anstoßen. Installiert wird nur, was mit dem
+  Schlüssel des Herausgebers signiert ist.
+
+Wer noch SecureCom installiert hat: Der Clavichat-Installer ersetzt es,
+statt daneben zu installieren. Anmeldung und Einstellungen bleiben erhalten.
 
 Die App verbindet sich mit `https://achterberg.dev`. Für einen eigenen Server
 `%APPDATA%\Clavichat\config.json` anlegen:

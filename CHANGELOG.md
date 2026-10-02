@@ -18,6 +18,19 @@ Abschnitt einer Version zum Text des GitHub-Releases
   Schlüssel des Herausgebers signiert ist (Ed25519) und zur angekündigten
   Prüfsumme passt. Die portable Fassung ersetzt sich an derselben Stelle,
   Verknüpfungen bleiben gültig.
+- **Konto mit dem Postfach von achterberg.dev** (nur auf achterberg.dev):
+  Wer dort angemeldet ist, legt ein Konto ohne Passwort an. Das Postfach
+  bestätigt ein signiertes Ticket (fünf Minuten, nur einmal), den Schlüssel
+  schützt ein Wiederherstellungscode mit 160 Zufallsbits. Das Gerät bleibt
+  angemeldet und meldet sich nach Ablauf der Sitzung still neu an. Auf einem
+  neuen Gerät findet „Mit achterberg.dev anmelden“ den Kontonamen, dazu kommt
+  der Code. In den Einstellungen lässt sich ein neuer Code erzeugen.
+- **Qualitätsmenüs:** Ton- und Bildschirmqualität stehen nach Datenrate
+  geordnet, von sparsam bis bestmöglich. Die Auswahlmenüs – auch im
+  Freigabefenster der Windows-App – passen jetzt zum Stil der App.
+- **Installer:** Ersetzt eine vorhandene SecureCom-Installation, statt
+  daneben zu installieren; die Verknüpfungen heißen danach Clavichat.
+- Meldungen bei falscher Anmeldung nennen Passwort oder Code.
 - **Portable Fassung** heißt jetzt ohne Versionsnummer `Clavichat-portable.exe`.
 - **Taskleiste:** Die portable Fassung hat eine eigene App-Kennung. Bisher
   teilte sie sich die Kennung mit der installierten Fassung. Gab es von
