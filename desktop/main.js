@@ -60,7 +60,18 @@ protocol.registerSchemesAsPrivileged([{
   privileges: { standard: true, secure: true, supportFetchAPI: true, stream: true, codeCache: true }
 }]);
 
-app.setAppUserModelId('dev.achterberg.securecom');   // Name in Windows-Benachrichtigungen
+// Kennung für Taskleiste und Benachrichtigungen – dieselbe wie appId in
+// package.json, die der Installer an seine Verknüpfungen schreibt.
+// Selbsttest und Entwicklung bekommen eigene, sonst steckt Windows sie mit
+// der echten App in einen Taskleisten-Knopf.
+const APP_ID = 'dev.achterberg.securecom' + (SMOKE ? '.selbsttest' : app.isPackaged ? '' : '.dev');
+// Die portable Fassung entpackt sich bei jedem Start in einen neuen
+// Temp-Ordner, der beim Beenden verschwindet. Taskleiste und Anheften
+// sollen auf die Datei zeigen, die bleibt.
+const EXE = process.env.PORTABLE_EXECUTABLE_FILE || process.execPath;
+const ICON = path.join(__dirname, 'build', 'icon.ico');
+
+app.setAppUserModelId(APP_ID);
 app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required');   // Klingeln ohne vorherigen Klick
 
 let win = null;
@@ -296,6 +307,7 @@ function openPicker(list, audioRequested) {
       maximizable: false,
       autoHideMenuBar: true,
       show: false,
+      icon: ICON,
       webPreferences: { preload: path.join(__dirname, 'picker-preload.js'), contextIsolation: true, sandbox: true, nodeIntegration: false }
     });
     let done = false;
@@ -330,7 +342,7 @@ function createWindow() {
     titleBarOverlay: overlay(),       // … Windows zeichnet nur die Knöpfe
     autoHideMenuBar: true,
     show: false,
-    icon: path.join(__dirname, 'build', 'icon.png'),
+    icon: ICON,
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
@@ -340,6 +352,18 @@ function createWindow() {
       devTools: !app.isPackaged
     }
   });
+  // Taskleiste: Symbol und „erneut starten“ aus der bleibenden Programmdatei.
+  // Sonst merkt sich Windows den Temp-Ordner der portablen Fassung, und ein
+  // angehefteter Knopf zeigt nach dem Beenden nur ein leeres Blatt.
+  if (process.platform === 'win32' && app.isPackaged) {
+    win.setAppDetails({
+      appId: APP_ID,
+      appIconPath: EXE,
+      appIconIndex: 0,
+      relaunchCommand: '"' + EXE + '"',
+      relaunchDisplayName: 'SecureCom'
+    });
+  }
   // Beim Selbsttest ohne Fokus anzeigen – Bildschirmfotos brauchen ein gezeichnetes Fenster.
   win.once('ready-to-show', () => { if (SMOKE) win.showInactive(); else win.show(); });
   win.on('focus', () => win.flashFrame(false));

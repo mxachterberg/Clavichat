@@ -46,7 +46,7 @@ const S = {
   vv: 1,               // Tresor-Version beim Server
   ids: new Map(),      // Kennung -> Identität (Schlüssel geprüft, Karte signiert)
   keyringCache: null,
-  online: [],          // Kennungen, die gerade online und sichtbar sind
+  online: [],          // temporäre Sitzungen, die gerade online und sichtbar sind
   pv: '',
   convs: new Map(),    // Gegenüber -> Unterhaltung
   rooms: new Map(),    // Raumkennung -> Raum
@@ -961,7 +961,7 @@ function setMe(identity, id, kind, name, vis) {
     priv: identity.privateKey,
     pub: identity.publicKey,
     armored: identity.armoredPublic,
-    vis: vis !== false
+    vis: kind === 'temp' && vis !== false   // Konten stehen nie in der Online-Liste
   };
   S.ids.set(id, { id: id, kind: kind, fp: identity.fingerprint, key: identity.publicKey, armored: identity.armoredPublic, cv: 0, name: S.me.name, on: true, changed: false });
   S.keyringCache = null;
@@ -996,7 +996,7 @@ async function restoreSession() {
 
   try {
     const me = await api('me');
-    S.me.vis = me.vis !== false;
+    S.me.vis = S.mode === 'temp' && me.vis !== false;
     await applyOwnCard(me.card);
     if (S.mode === 'account') {
       const v = await api('vault.get');
@@ -1270,7 +1270,7 @@ function renderHomeSide(head, body) {
   const online = S.online.map((id) => S.ids.get(id)).filter((i) => i && !isBlocked(i));
   body.appendChild(sectionHead('ONLINE — ' + online.length));
   const list = el('div', { class: 'sc-list' });
-  if (!online.length) list.appendChild(el('p', { class: 'sc-empty-note', text: 'Gerade ist sonst niemand sichtbar online.' }));
+  if (!online.length) list.appendChild(el('p', { class: 'sc-empty-note', text: 'Gerade ist sonst niemand sichtbar online. Hier stehen nur temporäre Sitzungen – Konten zeigen nicht, ob sie online sind.' }));
   for (const ident of online) list.appendChild(personRow(ident, () => openDm(ident.id)));
   body.appendChild(list);
 
@@ -1486,7 +1486,8 @@ function renderUser() {
   box.textContent = '';
   box.append(
     el('button', { type: 'button', class: 'sc-user-info', title: 'Dein Profil', onclick: () => showProfile(S.me.id) },
-      el('span', { class: 'sc-row-av' }, avatar(me), el('span', { class: 'sc-on' + (S.me.vis ? '' : ' is-hidden'), title: S.me.vis ? 'sichtbar' : 'unsichtbar' })),
+      el('span', { class: 'sc-row-av' }, avatar(me), el('span', { class: 'sc-on' + (S.me.vis ? '' : ' is-hidden'),
+        title: S.me.vis ? 'sichtbar' : S.mode === 'account' ? 'Online-Status verborgen (Konto)' : 'unsichtbar' })),
       el('span', { class: 'sc-row-text' },
         el('span', { class: 'sc-row-name' }, el('span', { class: 'sc-row-label', text: S.me.name || (S.mode === 'temp' ? 'Temporär' : 'Ich') })),
         el('span', { class: 'sc-row-sub', text: (S.mode === 'temp' ? 'TEMP · ' : '') + fpTail(S.me.fp) + (S.offline ? ' · offline' : '') }))),
@@ -1773,12 +1774,16 @@ function renderMembers() {
   const room = S.rooms.get(S.view.rid);
   if (!room) return;
   const members = room.members.map((m) => S.ids.get(m.id) || { id: m.id, fp: '', name: '…', kind: 'temp', on: null });
-  const on = members.filter((i) => i.id === S.me.id || i.on);
-  const off = members.filter((i) => !(i.id === S.me.id || i.on));
+  // Online: man selbst, sichtbare temporäre Sitzungen und wer im Sprachkanal
+  // ist (das sehen Mitglieder ohnehin). Konten verraten ihren Status sonst nicht.
+  const here = (i) => i.id === S.me.id || i.on === true || room.vc.includes(i.id);
+  const on = members.filter(here);
+  const hidden = members.filter((i) => !here(i) && i.on !== false);
+  const off = members.filter((i) => !here(i) && i.on === false);
   box.appendChild(el('div', { class: 'sc-members-head' },
     el('span', { class: 'sc-side-title', text: 'Mitglieder' }),
     iconBtn('x', 'Schließen', () => { S.membersOpen = false; renderAll(); }, { class: 'sc-ibtn sc-only-narrow' })));
-  for (const [label, list] of [['ONLINE — ' + on.length, on], ['OFFLINE — ' + off.length, off]]) {
+  for (const [label, list] of [['ONLINE — ' + on.length, on], ['STATUS VERBORGEN — ' + hidden.length, hidden], ['OFFLINE — ' + off.length, off]]) {
     if (!list.length) continue;
     box.appendChild(sectionHead(label));
     const l = el('div', { class: 'sc-list' });
@@ -2104,7 +2109,7 @@ function typingPing() {
   lastTyping = now;
   const peer = S.view.peer;
   const ident = S.ids.get(peer);
-  if (!ident || !ident.on) return;
+  if (!ident || ident.on === false) return;   // Konten: Status unbekannt, trotzdem senden
   sealSignal(peer, { t: 'typing' }).then((d) => api('send', { to: peer, k: 'sig', d: d })).catch(() => {});
 }
 
@@ -3535,6 +3540,7 @@ async function handleSignal(obj, from, e) {
   const call = S.call;
   switch (obj.t) {
     case 'typing': {
+      if (serverNow() - e.t * 1000 > 10000) return;   // kam an, während man weg war
       const conv = convOf(from.id);
       conv.typingUntil = Date.now() + 6000;
       renderTyping();
@@ -4150,7 +4156,10 @@ function showSettings() {
             el('span', { text: S.me.name || '(kein Alias)' })),
           S.mode === 'temp' ? el('button', { type: 'button', class: 'btn', text: 'Ändern', onclick: () => { close(); editAlias(); } }) : null),
         picRow,
-        el('label', { class: 'sc-check' }, vis, el('span', { text: 'In der Online-Liste sichtbar sein. Aus: Nur wer deinen Schlüssel oder Fingerabdruck hat, erreicht dich.' })));
+        // Konten stehen nie in der Online-Liste (mehr Anonymität), nur temporäre Sitzungen.
+        S.mode === 'temp'
+          ? el('label', { class: 'sc-check' }, vis, el('span', { text: 'In der Online-Liste sichtbar sein. Aus: Nur wer deinen Schlüssel oder Fingerabdruck hat, erreicht dich.' }))
+          : el('p', { class: 'sc-note', text: 'Konten stehen nicht in der Online-Liste und zeigen niemandem, ob sie online sind. Erreichbar bist du über deinen Schlüssel, deinen Fingerabdruck, gemeinsame Räume und bestehende Unterhaltungen.' }));
 
       // Schlüssel
       body.appendChild(sectionHead('SCHLÜSSEL'));
@@ -4383,6 +4392,7 @@ function showSecurityInfo() {
         'Alle Klartexte werden vor dem Verschlüsseln auf feste Größen aufgefüllt – „ok“ und ein langer Absatz sind gleich groß.',
         'Beim Server steht an keiner Nachricht ein Absender; wer schreibt, steht nur verschlüsselt und signiert im Inneren.',
         'Raumnamen, Raumbilder, Kanäle und Kontakte sind verschlüsselt. Der Server kennt nur zufällige Kennungen.',
+        'Konten stehen nie in der Online-Liste und zeigen niemandem, ob sie online sind. Dort erscheinen nur temporäre Sitzungen – und auch die nur, solange sie es wollen.',
         'Alle Anfragen gehen per POST an dieselbe Adresse. In den Protokollen des Webservers steht nicht, was passiert ist.',
         'Keine Cookies, keine fremden Server auf dieser Seite (auch keine Schriften von Google), strenge Content-Security-Policy.',
         'Anruf-Signale verfallen nach zwei Minuten, Nachrichten nach ' + S.cfg.retention_days + ' Tagen, temporäre Sitzungen nach ' + S.cfg.temp_hours + ' Stunden ohne Nutzung.'

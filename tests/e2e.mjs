@@ -57,7 +57,9 @@ ok(eveFailed, 'DM: Dritte können nicht entschlüsseln');
 
 const short = C.unb64(await C.sealFor({ t: 'msg', body: 'hi' }, [B.publicKey], A.privateKey)).length;
 const longer = C.unb64(await C.sealFor({ t: 'msg', body: 'x'.repeat(150) }, [B.publicKey], A.privateKey)).length;
-ok(short === longer, 'Auffüllen: 2 und 150 Zeichen ergeben gleich große Pakete (' + short + ' B)');
+// Die Signatur (Ed25519 an v4-Schlüsseln, im MPI-Format) ist selten ein Byte
+// kürzer – unabhängig vom Inhalt. Ohne Auffüllen wären es ~150 Byte Unterschied.
+ok(Math.abs(short - longer) <= 2, 'Auffüllen: 2 und 150 Zeichen ergeben gleich große Pakete (' + short + ' / ' + longer + ' B)');
 
 const roomKeyRaw = C.newRoomKey();
 const roomKey = await C.importRoomKey(roomKeyRaw);
@@ -157,6 +159,20 @@ ok(r.ok && r.wrapped === accWrapped, 'Anmelden: Server liefert den eingepackten 
 const accToken = r.token;
 const unwrapped = await C.readPrivateIdentity(await C.openText(wkey, r.wrapped, 'sc-key|' + uname.toLowerCase()));
 ok(unwrapped.fingerprint === acc.fingerprint, 'Anmelden: privater Schlüssel im Browser ausgepackt');
+
+// Konten stehen nie in der Online-Liste und verraten ihren Status niemandem.
+ok(r.vis === false, 'Konto: Anmeldeantwort meldet „nicht in der Online-Liste“');
+await call('poll', { i: { s: 0, o: 0, g: 0 } }, accToken);   // jetzt ist das Konto online
+r = await call('card', { vis: true }, accToken);
+ok(r.ok && r.vis === false, 'Konto kann sich nicht in die Online-Liste stellen');
+r = await call('online', {}, TA.token);
+ok(r.ok && !r.list.find(x => x.id === accId) && !!r.list.find(x => x.id === TB.id), 'Online-Liste: Konto fehlt, temporäre Sitzung steht drin');
+r = await call('ids', { ids: [accId] }, TA.token);
+ok(r.ok && r.list.length === 1 && r.list[0].on === null, 'Status eines Kontos per Kennung: unbekannt');
+r = await call('find', { fp: acc.fingerprint }, TA.token);
+ok(r.ok && r.list.length === 1 && r.list[0].on === null, 'Status eines Kontos per Fingerabdruck: unbekannt');
+r = await call('me', {}, accToken);
+ok(r.ok && r.vis === false && r.kind === 'account', 'Konto sieht bei sich selbst: nicht sichtbar');
 r = await call('vault', { vault: C.b64(C.te.encode('x')), vv: 1 }, accToken);
 ok(r.ok && r.vv === 2, 'Tresor gespeichert (Version 2)');
 r = await call('vault', { vault: C.b64(C.te.encode('y')), vv: 1 }, accToken);

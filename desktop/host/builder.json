@@ -15,7 +15,7 @@
   "files": [
     "package.json",
     "window.css",
-    "build/icon.png",
+    "build/icon.ico",
     "host/main.js",
     "host/preload.js",
     "host/cert.js",
@@ -29,7 +29,7 @@
   ],
   "win": {
     "target": ["nsis", "portable"],
-    "icon": "build/icon.png"
+    "icon": "build/icon.ico"
   },
   "nsis": {
     "oneClick": false,
