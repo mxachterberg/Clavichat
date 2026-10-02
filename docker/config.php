@@ -1,7 +1,7 @@
 <?php
 /**
  * ============================================================================
- *  SecureCom im Container — Einstellungen aus Umgebungsvariablen
+ *  Clavichat im Container — Einstellungen aus Umgebungsvariablen
  * ============================================================================
  *  Alle Variablen sind optional (Beispiele in compose.yaml):
  *

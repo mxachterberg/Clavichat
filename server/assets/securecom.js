@@ -1,5 +1,5 @@
 /* ==========================================================================
-   SecureCom — Oberfläche, Nachrichten, Räume und Anrufe
+   Clavichat — Oberfläche, Nachrichten, Räume und Anrufe
    --------------------------------------------------------------------------
    Aufbau wie bei Discord: links die Räume, daneben Unterhaltungen bzw.
    Kanäle, in der Mitte der Verlauf (mit Anruf darüber), rechts Mitglieder
@@ -21,7 +21,7 @@ let C = null;
 // Windows-App tragen beides am <script>-Tag ein (data-api, data-web).
 const SCRIPT   = document.getElementById('sc-script');
 const API_URL  = (SCRIPT && SCRIPT.dataset.api) || '/app/securecom/api.php';
-const WEB_URL  = (SCRIPT && SCRIPT.dataset.web) || (location.origin + '/app/securecom/');
+const WEB_URL  = (SCRIPT && SCRIPT.dataset.web) || (location.origin + '/app/clavichat/');
 const DESKTOP  = window.securecomDesktop || null;   // nur in der Windows-App
 // Wo ein temporärer Schlüssel lebt – im Browser-Tab oder in der laufenden App.
 const KEY_HOME = DESKTOP ? 'solange die App läuft' : 'in diesem Tab';
@@ -345,7 +345,7 @@ async function api(a, body) {
   const timer = ctrl ? setTimeout(() => ctrl.abort(), 20000) : 0;
   let res;
   try {
-    // Ohne Cookies: SecureCom braucht keine, und so geht auch die
+    // Ohne Cookies: Clavichat braucht keine, und so geht auch die
     // Dashboard-Sitzung nie mit.
     res = await fetch(API_URL, {
       method: 'POST', headers: headers, credentials: 'omit', cache: 'no-store',
@@ -761,7 +761,7 @@ function renderGate(tab, message) {
 function accessField() {
   if (!S.cfg || S.cfg.access !== 'code') return null;
   const input = el('input', { type: 'password', name: 'code', autocomplete: 'off', placeholder: 'Zugangscode' });
-  return field('Zugangscode', input, 'SecureCom ist hier nur mit Code offen.');
+  return field('Zugangscode', input, 'Clavichat ist hier nur mit Code offen.');
 }
 
 function gateBusy(button, text) {
@@ -1204,7 +1204,7 @@ function renderTitle() {
   for (const c of S.convs.values()) n += c.unread;
   for (const r of S.rooms.values()) for (const u of r.unread.values()) n += u;
   const ringing = S.call && S.call.state === 'incoming';
-  document.title = (ringing ? '📞 ' : '') + (n ? '(' + n + ') ' : '') + 'SecureCom';
+  document.title = (ringing ? '📞 ' : '') + (n ? '(' + n + ') ' : '') + 'Clavichat';
 }
 
 /* ---------- Leiste links --------------------------------------------------- */
@@ -1530,10 +1530,10 @@ function renderMainHead() {
       iconBtn('users', 'Mitglieder', () => { S.membersOpen = !S.membersOpen; renderAll(); }, { 'aria-pressed': S.membersOpen ? 'true' : 'false' }));
   } else {
     head.append(el('span', { class: 'sc-head-text' },
-      el('span', { class: 'sc-head-title' }, icon('radio', 15), 'SecureCom'),
+      el('span', { class: 'sc-head-title' }, icon('radio', 15), 'Clavichat'),
       el('span', { class: 'sc-head-sub', text: 'Ende-zu-Ende verschlüsselt' })),
       el('span', { class: 'sc-head-spacer' }),
-      iconBtn('info', 'Wie SecureCom schützt', showSecurityInfo));
+      iconBtn('info', 'Wie Clavichat schützt', showSecurityInfo));
   }
 }
 
@@ -1900,7 +1900,7 @@ function noteArrival(key, ts, viewing, countUnread, notice) {
     countUnread();
     if (S.cursorLoaded) {
       notifySound();
-      if (notice) notify('SecureCom', notice, key);
+      if (notice) notify('Clavichat', notice, key);
     }
   }
 }
@@ -2813,7 +2813,7 @@ async function ensureMic() {
 /** Warum es kein Mikrofon gibt – mit dem, was hilft. */
 function micError(e) {
   if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-    return 'Dieser Browser gibt hier kein Mikrofon frei. Öffne SecureCom direkt in Chrome, Safari, Firefox oder Edge – nicht im Browser einer anderen App.';
+    return 'Dieser Browser gibt hier kein Mikrofon frei. Öffne Clavichat direkt in Chrome, Safari, Firefox oder Edge – nicht im Browser einer anderen App.';
   }
   const name = e && e.name;
   if (name === 'NotAllowedError' || name === 'SecurityError') {
@@ -3198,7 +3198,7 @@ function noDirectRoute(id) {
   if (routeHint || (S.cfg && S.cfg.relay)) return;
   routeHint = true;
   toast('Zu ' + displayName(S.ids.get(id)) + ' kommt keine direkte Verbindung zustande. Das ist typisch für Mobilfunk und strenge Netze – ' +
-    'dafür braucht SecureCom einen Relay-Server (TURN), der hier noch nicht eingerichtet ist.', 'error', 14000);
+    'dafür braucht Clavichat einen Relay-Server (TURN), der hier noch nicht eingerichtet ist.', 'error', 14000);
 }
 
 /** Wie läuft eine Verbindung? Direkt im Netz, übers Internet oder über das Relay. */
@@ -4073,7 +4073,7 @@ function connectByKey() {
       const go = el('button', { type: 'button', class: 'btn btn--primary btn--block', text: 'Suchen' });
       const out = el('div', { class: 'sc-list' });
       body.append(
-        el('p', { class: 'sc-p', text: 'Füge den öffentlichen PGP-Schlüssel oder den Fingerabdruck der Person ein. Hast du ihn auf einem sicheren Weg bekommen, markiert SecureCom den Kontakt als verifiziert.' }),
+        el('p', { class: 'sc-p', text: 'Füge den öffentlichen PGP-Schlüssel oder den Fingerabdruck der Person ein. Hast du ihn auf einem sicheren Weg bekommen, markiert Clavichat den Kontakt als verifiziert.' }),
         field('Öffentlicher Schlüssel oder Fingerabdruck', input), go, out);
       go.addEventListener('click', async () => {
         out.textContent = '';
@@ -4098,11 +4098,11 @@ function connectByKey() {
             if (ident && ident.fp === fp) found.push(ident);
           }
           if (!found.length) {
-            out.appendChild(el('p', { class: 'sc-empty-note', text: 'Mit diesem Schlüssel ist gerade niemand bei SecureCom. Die Person muss SecureCom mit genau diesem Schlüssel benutzen (Konto mit eigenem Schlüssel oder ihre temporäre Sitzung).' }));
+            out.appendChild(el('p', { class: 'sc-empty-note', text: 'Mit diesem Schlüssel ist gerade niemand bei Clavichat. Die Person muss Clavichat mit genau diesem Schlüssel benutzen (Konto mit eigenem Schlüssel oder ihre temporäre Sitzung).' }));
           }
           for (const ident of found) {
             // Wer den Schlüssel selbst eingefügt hat, hat ihn außerhalb von
-            // SecureCom bekommen – das gilt als Verifikation.
+            // Clavichat bekommen – das gilt als Verifikation.
             noteContact(ident);
             if (!ident.changed) {
               S.vault.contacts[ident.id].v = true;
@@ -4187,9 +4187,9 @@ function updatePanel(s, later) {
   const latest = s.latest;
   const busy = ['checking', 'downloading', 'installing'].includes(s.status);
   const when = (ts) => (fmtDay(ts) === 'Heute' ? '' : fmtDay(ts) + ' ') + fmtTime(ts);
-  if (s.status === 'available') line('SecureCom ' + latest.version + ' ist da – du hast ' + s.version + '.');
-  else if (s.status === 'downloading') line('SecureCom ' + (latest ? latest.version + ' ' : '') + 'wird geladen … ' + Math.floor((s.progress || 0) * 100) + ' %');
-  else if (s.status === 'installing') line('Wird installiert – SecureCom startet gleich neu.');
+  if (s.status === 'available') line('Clavichat ' + latest.version + ' ist da – du hast ' + s.version + '.');
+  else if (s.status === 'downloading') line('Clavichat ' + (latest ? latest.version + ' ' : '') + 'wird geladen … ' + Math.floor((s.progress || 0) * 100) + ' %');
+  else if (s.status === 'installing') line('Wird installiert – Clavichat startet gleich neu.');
   else if (s.status === 'checking') line('Suche nach Updates …', 'sc-note');
   else if (s.status === 'current') line('Du hast die neueste Version.' + (s.checked ? ' Zuletzt gesucht: ' + when(s.checked) + '.' : ''), 'sc-note');
   else if (s.status === 'error') line(s.error || 'Die Suche nach Updates ist fehlgeschlagen.', 'sc-note sc-update-error');
@@ -4338,7 +4338,7 @@ function showSettings() {
         } }));
       body.append(themeRow,
         el('label', { class: 'sc-check' + (canNotify ? '' : ' is-disabled') }, note, el('span', { text:
-          'Benachrichtigungen, wenn SecureCom nicht im Blick ist – nur wer schreibt oder anruft, nie der Inhalt.' })));
+          'Benachrichtigungen, wenn Clavichat nicht im Blick ist – nur wer schreibt oder anruft, nie der Inhalt.' })));
 
       // Updates (nur Windows-App)
       if (UPDATES) {
@@ -4375,7 +4375,7 @@ function showSettings() {
         acts.append(el('button', { type: 'button', class: 'btn sc-btn--danger', onclick: () => { close(); logout(); } }, icon('logout', 14), 'Sitzung beenden & alles löschen'));
       }
       body.append(acts,
-        el('button', { type: 'button', class: 'btn btn--block', onclick: () => { close(); showSecurityInfo(); } }, icon('shield', 14), 'Wie SecureCom dich schützt'));
+        el('button', { type: 'button', class: 'btn btn--block', onclick: () => { close(); showSecurityInfo(); } }, icon('shield', 14), 'Wie Clavichat dich schützt'));
     }
   });
 }
@@ -4400,7 +4400,7 @@ function editAlias() {
         } catch (e) { go.disabled = false; toast(e.message, 'error'); }
       });
       input.addEventListener('keydown', (ev) => { if (ev.key === 'Enter') go.click(); });
-      body.append(field('Wie sollen andere dich sehen?', input, 'Der Alias steht auf deiner signierten Karte. Zur Unterscheidung zeigt SecureCom immer auch das Ende deines Fingerabdrucks.'), go);
+      body.append(field('Wie sollen andere dich sehen?', input, 'Der Alias steht auf deiner signierten Karte. Zur Unterscheidung zeigt Clavichat immer auch das Ende deines Fingerabdrucks.'), go);
     }
   });
 }
@@ -4530,7 +4530,7 @@ function showSecurityInfo() {
       block('GRENZEN', [
         DESKTOP
           ? 'Die Windows-App bringt ihren Programmcode selbst mit. Der Server kann ihn nicht austauschen, er reicht nur Chiffretext weiter. Neuer Code kommt nur mit einer neuen Fassung der App.'
-          : 'Wie jede Web-App lädt SecureCom seinen Programmcode vom Server. Ein Hoster, der gezielt manipulierten Code ausliefert, könnte das umgehen. Gegen Mitlesen auf dem Server, gestohlene Datenbanken und Lauscher im Netz schützt SecureCom vollständig. Die Windows-App bringt ihren Code selbst mit.',
+          : 'Wie jede Web-App lädt Clavichat seinen Programmcode vom Server. Ein Hoster, der gezielt manipulierten Code ausliefert, könnte das umgehen. Gegen Mitlesen auf dem Server, gestohlene Datenbanken und Lauscher im Netz schützt Clavichat vollständig. Die Windows-App bringt ihren Code selbst mit.',
         'Nachrichten sind mit deinem langfristigen Schlüssel verschlüsselt. Wer später an deinen privaten Schlüssel und alte Nachrichten kommt, kann diese lesen. Anrufe sind davon nicht betroffen, ihre Schlüssel gelten nur für das eine Gespräch.',
         'Die Sicherheit steht und fällt mit der Prüfung der Fingerabdrücke. Verifiziere wichtige Kontakte über einen zweiten Weg.'
       ]);
@@ -4578,7 +4578,7 @@ function bind() {
       try { screen.orientation.unlock(); } catch (e) { /* nicht gesperrt */ }
     }
   });
-  // Einladungslink in einen schon offenen SecureCom-Tab eingefügt: Die Seite
+  // Einladungslink in einen schon offenen Clavichat-Tab eingefügt: Die Seite
   // lädt dann nicht neu, nur der Teil hinter "#" ändert sich.
   window.addEventListener('hashchange', () => {
     if (!/^#join=/.test(location.hash)) return;

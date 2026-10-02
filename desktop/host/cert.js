@@ -1,5 +1,5 @@
 /* ==========================================================================
-   SecureCom Server — selbst signiertes Zertifikat (ohne fremde Pakete)
+   Clavichat Server — selbst signiertes Zertifikat (ohne fremde Pakete)
    --------------------------------------------------------------------------
    Browser geben Verschlüsselung (WebCrypto) und Mikrofon nur über HTTPS
    frei. Für den Betrieb im eigenen Netz entsteht hier beim ersten Start ein
@@ -102,8 +102,8 @@ function makeCertificate(hosts, commonName) {
   const spki = publicKey.export({ type: 'spki', format: 'der' });
   const now = Date.now();
   const name = seq(
-    set(seq(oid(OID.commonName), utf8(commonName || 'SecureCom Server'))),
-    set(seq(oid(OID.organization), utf8('SecureCom'))));
+    set(seq(oid(OID.commonName), utf8(commonName || 'Clavichat Server'))),
+    set(seq(oid(OID.organization), utf8('Clavichat'))));
   const tbs = seq(
     explicit(0, integer(Buffer.from([2]))),                       // Version 3
     integer(crypto.randomBytes(16)),                              // Seriennummer

@@ -1,8 +1,8 @@
 # syntax=docker/dockerfile:1
 # ============================================================================
-#  SecureCom – Server als Container (Apache + PHP 8.3, ohne Datenbank)
+#  Clavichat – Server als Container (Apache + PHP 8.3, ohne Datenbank)
 # ============================================================================
-#  Bauen:   docker build -t securecom .
+#  Bauen:   docker build -t clavichat .
 #  Starten: docker compose up -d   (siehe compose.yaml – mit HTTPS über Caddy)
 #
 #  Der Container spricht nur HTTP auf Port 80. Browser geben Verschlüsselung
@@ -32,7 +32,7 @@ EXPOSE 80
 HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
   CMD curl -fsS -o /dev/null -X POST -H 'Content-Type: application/json' -d '{"a":"config"}' http://127.0.0.1/api.php || exit 1
 
-LABEL org.opencontainers.image.title="SecureCom" \
+LABEL org.opencontainers.image.title="Clavichat" \
       org.opencontainers.image.description="Ende-zu-Ende verschlüsselt schreiben, telefonieren und den Bildschirm teilen" \
-      org.opencontainers.image.source="https://github.com/mxachterberg/securecom" \
+      org.opencontainers.image.source="https://github.com/mxachterberg/clavichat" \
       org.opencontainers.image.licenses="MIT"

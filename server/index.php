@@ -1,9 +1,9 @@
 <?php
 /**
  * ============================================================================
- *  SecureCom — Seite (eigenständige Fassung)
+ *  Clavichat — Seite (eigenständige Fassung)
  * ============================================================================
- *  Läuft unter jeder Adresse, etwa https://example.com/securecom/. Startet
+ *  Läuft unter jeder Adresse, etwa https://example.com/clavichat/. Startet
  *  keine PHP-Sitzung, lädt nichts von fremden Servern und erlaubt per
  *  Content-Security-Policy nur eigene Skripte – kein einziges Inline-Skript.
  * ----------------------------------------------------------------------------
@@ -47,7 +47,7 @@ $core = 'assets/securecom-core.js?v=' . $v('securecom-core.js');
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>SecureCom</title>
+<title>Clavichat</title>
 <meta name="robots" content="noindex, nofollow">
 <meta name="description" content="Ende-zu-Ende verschlüsselt schreiben, telefonieren und den Bildschirm teilen.">
 <link rel="icon" type="image/svg+xml" href="assets/securecom-icon.svg">
@@ -120,7 +120,7 @@ $core = 'assets/securecom-core.js?v=' . $v('securecom-core.js');
 <div class="sc-toasts" id="sc-toasts" aria-live="polite"></div>
 <div id="sc-audio" hidden></div>
 
-<noscript><p class="sc-noscript">SecureCom braucht JavaScript &ndash; die Verschlüsselung passiert in deinem Browser, nicht auf dem Server.</p></noscript>
+<noscript><p class="sc-noscript">Clavichat braucht JavaScript &ndash; die Verschlüsselung passiert in deinem Browser, nicht auf dem Server.</p></noscript>
 
 <script type="module" id="sc-script" src="assets/securecom.js?v=<?= $v('securecom.js') ?>"
         data-core="<?= e($core) ?>" data-api="api.php" data-web="<?= e($web) ?>"></script>

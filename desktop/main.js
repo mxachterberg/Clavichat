@@ -1,5 +1,5 @@
 /* ==========================================================================
-   SecureCom — Windows-App (Electron)
+   Clavichat — Windows-App (Electron)
    --------------------------------------------------------------------------
    Dieselbe Oberfläche wie im Browser, mit einem Unterschied, der für die
    Sicherheit zählt: Der Programmcode steckt in der App. Vom Server kommen
@@ -7,12 +7,15 @@
    keinen veränderten Code unterschieben.
 
      app://securecom/        Oberfläche (aus der App, nicht vom Server)
-     app://securecom/api     wird hier an den SecureCom-Server weitergereicht
+     app://securecom/api     wird hier an den Clavichat-Server weitergereicht
+   (Intern heißt die Oberfläche weiter securecom – daran hängen gespeicherte
+   Anmeldungen und Einstellungen aus der Zeit, als die App SecureCom hieß.)
 
-   Server einstellen (optional): %APPDATA%\SecureCom\config.json
+   Server einstellen (optional): %APPDATA%\Clavichat\config.json
+   (wer schon SecureCom benutzt hat: %APPDATA%\SecureCom\config.json)
      { "server": "https://example.com" }   oder genauer
-     { "api": "https://example.com/securecom/api.php",
-       "web": "https://example.com/securecom/" }
+     { "api": "https://example.com/clavichat/api.php",
+       "web": "https://example.com/clavichat/" }
    ========================================================================== */
 'use strict';
 
@@ -31,9 +34,17 @@ const SMOKE = process.argv.includes('--smoke');
 // Verdeckt ihn ein Vollbildfenster (etwa ein Video), soll er trotzdem
 // zeichnen – sonst sind Bildschirmfotos veraltet.
 if (SMOKE) {
-  app.setPath('userData', path.join(app.getPath('temp'), 'SecureCom-Selbsttest'));
+  app.setPath('userData', path.join(app.getPath('temp'), 'Clavichat-Selbsttest'));
   app.commandLine.appendSwitch('disable-features', 'CalculateNativeWinOcclusion');
   app.commandLine.appendSwitch('disable-backgrounding-occluded-windows');
+}
+
+// Bis Oktober 2026 hieß die App SecureCom. Wer sie schon benutzt, behält
+// Anmeldung und Einstellungen: Gibt es den alten Profilordner und noch
+// keinen neuen, bleibt es beim alten.
+if (!SMOKE && !app.commandLine.hasSwitch('user-data-dir')) {
+  const legacy = path.join(app.getPath('appData'), 'SecureCom');
+  if (fs.existsSync(legacy) && !fs.existsSync(app.getPath('userData'))) app.setPath('userData', legacy);
 }
 
 // Im Paket liegen die Dateien unter assets/, beim Entwickeln in ../server.
@@ -72,7 +83,7 @@ const EXE = PORTABLE || process.execPath;
 // Windows deren Symbol, auch für die portable Fassung; ist sie kaputt (etwa
 // nach dem Deinstallieren), zeigt die Taskleiste ein leeres Blatt. Deshalb
 // bekommen portable Fassung, Selbsttest und Entwicklung je eine eigene.
-const APP_ID = 'dev.achterberg.securecom' +
+const APP_ID = 'dev.achterberg.clavichat' +
   (SMOKE ? '.selbsttest' : !app.isPackaged ? '.dev' : PORTABLE ? '.portable' : '');
 const ICON = path.join(__dirname, 'build', 'icon.ico');
 
@@ -131,16 +142,16 @@ function loadConfig() {
     file = JSON.parse(fs.readFileSync(path.join(app.getPath('userData'), 'config.json'), 'utf8'));
   } catch (e) { /* keine Datei: Standard */ }
   const server = String(process.env.SECURECOM_SERVER || file.server || DEFAULT_SERVER).replace(/\/+$/, '');
-  const api = String(process.env.SECURECOM_API || file.api || server + '/app/securecom/api.php');
-  const web = String(process.env.SECURECOM_WEB || file.web || server + '/app/securecom/').replace(/\/?$/, '/');
+  const api = String(process.env.SECURECOM_API || file.api || server + '/app/clavichat/api.php');
+  const web = String(process.env.SECURECOM_WEB || file.web || server + '/app/clavichat/').replace(/\/?$/, '/');
   for (const value of [api, web]) {
     const u = new URL(value);
     // Unverschlüsselt nur zum Testen auf dem eigenen Rechner.
     if (u.protocol !== 'https:' && !(u.protocol === 'http:' && ['127.0.0.1', 'localhost'].includes(u.hostname))) {
-      throw new Error('Der SecureCom-Server muss per https erreichbar sein: ' + value);
+      throw new Error('Der Clavichat-Server muss per https erreichbar sein: ' + value);
     }
   }
-  // Eigener Server mit selbst erstelltem Zertifikat (SecureCom Server):
+  // Eigener Server mit selbst erstelltem Zertifikat (Clavichat Server):
   // genau diesem vertrauen – erkannt am SHA-256-Fingerabdruck.
   const pin = process.env.SECURECOM_FINGERPRINT || file.fingerprint || '';
   const fingerprint = normalizeFingerprint(pin);
@@ -221,7 +232,7 @@ async function proxyApi(request) {
         ? 'Das Zertifikat des Servers passt nicht zum Fingerabdruck in der config.json.'
         : 'Das Zertifikat des Servers ist ungültig. Bei einem eigenen Server den Fingerabdruck in die config.json eintragen.' }, 502);
     }
-    return json({ ok: false, error: 'Keine Verbindung zum SecureCom-Server.' }, 502);
+    return json({ ok: false, error: 'Keine Verbindung zum Clavichat-Server.' }, 502);
   }
 }
 
@@ -341,7 +352,7 @@ function createWindow() {
     height: 820,
     minWidth: 380,
     minHeight: 560,
-    title: 'SecureCom',
+    title: 'Clavichat',
     backgroundColor: chrome.color,
     titleBarStyle: 'hidden',          // eigene Leiste aus window.css …
     titleBarOverlay: overlay(),       // … Windows zeichnet nur die Knöpfe
@@ -366,7 +377,7 @@ function createWindow() {
       appIconPath: EXE,
       appIconIndex: 0,
       relaunchCommand: '"' + EXE + '"',
-      relaunchDisplayName: 'SecureCom'
+      relaunchDisplayName: 'Clavichat'
     });
   }
   // Beim Selbsttest ohne Fokus anzeigen – Bildschirmfotos brauchen ein gezeichnetes Fenster.
@@ -438,7 +449,7 @@ if (!app.requestSingleInstanceLock()) {
       config = loadConfig();
     } catch (e) {
       const { dialog } = require('electron');
-      dialog.showErrorBox('SecureCom', e.message);
+      dialog.showErrorBox('Clavichat', e.message);
       app.quit();
       return;
     }

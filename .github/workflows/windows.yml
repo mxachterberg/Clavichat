@@ -42,7 +42,7 @@ jobs:
           {
             echo
             echo "---"
-            echo "SecureCom (App) und SecureCom Server für Windows, gebaut von GitHub Actions aus genau diesem Stand. Nicht signiert: Windows SmartScreen fragt beim ersten Start nach. Docker: ghcr.io/${GITHUB_REPOSITORY,,}:$VERSION"
+            echo "Clavichat (App) und Clavichat Server für Windows, gebaut von GitHub Actions aus genau diesem Stand. Nicht signiert: Windows SmartScreen fragt beim ersten Start nach. Docker: ghcr.io/${GITHUB_REPOSITORY,,}:$VERSION"
           } >> notes.md
           gh release create "$GITHUB_REF_NAME" dist/*.exe dist-server/*.exe \
-            --draft --title "SecureCom $GITHUB_REF_NAME" --notes-file notes.md
+            --draft --title "Clavichat $GITHUB_REF_NAME" --notes-file notes.md

@@ -1,6 +1,6 @@
 <?php
 /**
- * SecureCom — Einstellungen
+ * Clavichat — Einstellungen
  *
  * Als config.php neben api.php speichern. Alles ist optional; ohne Datei
  * gelten die Standardwerte unten.
@@ -15,7 +15,7 @@ return [
     // Ohne Angabe wird sie aus der Anfrage ermittelt.
     'public_url' => '',
 
-    // Läuft SecureCom hinter einem Reverse-Proxy (Caddy, nginx, Traefik …),
+    // Läuft Clavichat hinter einem Reverse-Proxy (Caddy, nginx, Traefik …),
     // hier dessen Adresse eintragen – sonst teilen sich alle Besucher eine
     // Adresse und damit die Rate-Limits. Einzelne Adressen, Bereiche wie
     // '172.16.0.0/12' oder 'private' (Loopback und private Netze).
@@ -40,7 +40,7 @@ return [
     // [['urls' => 'turn:turn.example.com:3478', 'username' => '…', 'credential' => '…']]
     'securecom_turn' => [],
 
-    // Oder Cloudflare Realtime TURN: kurzlebige Zugangsdaten holt SecureCom selbst.
+    // Oder Cloudflare Realtime TURN: kurzlebige Zugangsdaten holt Clavichat selbst.
     // ['key_id' => '…', 'api_token' => '…']
     'securecom_cf_turn' => null,
 ];

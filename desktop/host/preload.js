@@ -1,4 +1,4 @@
-/* SecureCom Server — Brücke zwischen Fenster und Programm. */
+/* Clavichat Server — Brücke zwischen Fenster und Programm. */
 'use strict';
 
 const { contextBridge, ipcRenderer } = require('electron');

@@ -1,5 +1,5 @@
 /* ==========================================================================
-   SecureCom — Update veröffentlichen (nur beim Release)
+   Clavichat — Update veröffentlichen (nur beim Release)
    Signiert die Update-Liste mit dem privaten Schlüssel (update-key.js) und
    legt sie samt Installer und portabler Fassung in den Zielordner, der dann
    auf den Webserver kommt. Ältere Fassungen dort werden entfernt.
@@ -45,8 +45,8 @@ if (!target) fail('Zielordner fehlt: node scripts/publish-update.js <Ordner>');
 
 const dist = path.join(__dirname, '..', 'dist');
 const files = {
-  setup: { src: path.join(dist, 'SecureCom-Setup-' + version + '.exe'), name: 'SecureCom-Setup-' + version + '.exe' },
-  portable: { src: path.join(dist, 'SecureCom-portable.exe'), name: 'SecureCom-' + version + '-portable.exe' }
+  setup: { src: path.join(dist, 'Clavichat-Setup-' + version + '.exe'), name: 'Clavichat-Setup-' + version + '.exe' },
+  portable: { src: path.join(dist, 'Clavichat-portable.exe'), name: 'Clavichat-' + version + '-portable.exe' }
 };
 for (const f of Object.values(files)) {
   if (!fs.existsSync(f.src)) fail('Es fehlt ' + f.src + ' – erst npm run build.');
@@ -60,7 +60,7 @@ if (!fs.readFileSync(path.join(__dirname, '..', 'updater.js'), 'utf8').includes(
   fail('Der öffentliche Schlüssel in updater.js passt nicht zu ' + KEY_FILE + '.');
 }
 
-const manifest = { app: 'securecom', version: version, date: new Date().toISOString().slice(0, 10), notes: changelogNotes(version), files: {} };
+const manifest = { app: 'clavichat', version: version, date: new Date().toISOString().slice(0, 10), notes: changelogNotes(version), files: {} };
 for (const [kind, f] of Object.entries(files)) {
   const bytes = fs.readFileSync(f.src);
   manifest.files[kind] = { name: f.name, size: bytes.length, sha256: crypto.createHash('sha256').update(bytes).digest('hex') };
@@ -74,11 +74,11 @@ for (const f of Object.values(files)) fs.copyFileSync(f.src, path.join(target, f
 fs.writeFileSync(path.join(target, 'update.json'), JSON.stringify({ data: data, sig: sig }, null, 1) + '\n');
 const keep = new Set(Object.values(files).map((f) => f.name));
 for (const name of fs.readdirSync(target)) {
-  if (/^SecureCom-.*\.exe$/.test(name) && !keep.has(name)) {
+  if (/^Clavichat-.*\.exe$/.test(name) && !keep.has(name)) {
     fs.rmSync(path.join(target, name), { force: true });
     console.log('entfernt:', name);
   }
 }
-console.log('SecureCom ' + version + ' signiert und abgelegt in ' + target);
+console.log('Clavichat ' + version + ' signiert und abgelegt in ' + target);
 for (const [kind, f] of Object.entries(manifest.files)) console.log('  ' + kind + ': ' + f.name + ' (' + Math.round(f.size / 1048576) + ' MB)');
 console.log('Neuerungen: ' + manifest.notes.length + ' Stichpunkte');

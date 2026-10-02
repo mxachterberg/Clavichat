@@ -1,25 +1,28 @@
 /* ==========================================================================
-   SecureCom — nach dem Bauen aufräumen
-   In dist/ bzw. dist-server/ bleibt nur die aktuelle Version aus
-   package.json liegen; ältere Installer und portable Fassungen kommen weg.
+   Clavichat — nach dem Bauen aufräumen
+   In dist/ bzw. dist-server/ bleibt nur, was der eben gelaufene Build
+   erzeugt: Installer (samt .blockmap) und portable Fassung der aktuellen
+   Version. Alles andere an .exe/.blockmap kommt weg – ältere Versionen und
+   Dateien aus der Zeit, als die App SecureCom hieß.
    Läuft von selbst nach npm run build und npm run build:server.
-   Aufruf: node scripts/clean-dist.js dist
+   Aufruf: node scripts/clean-dist.js dist | dist-server
    ========================================================================== */
 'use strict';
 
 const fs = require('node:fs');
 const path = require('node:path');
-const { version } = require('../package.json');
+const pkg = require('../package.json');
 
-const dir = path.join(__dirname, '..', process.argv[2] || 'dist');
-// SecureCom-1.3.0-portable.exe, SecureCom-Setup-1.3.0.exe(.blockmap),
-// SecureCom-Server-1.3.0-portable.exe, SecureCom-Server-Setup-1.3.0.exe …
-const ARTIFACT = /^SecureCom(?:-Server)?(?:-Setup)?-(\d+\.\d+\.\d+)(?:-portable)?\.exe(?:\.blockmap)?$/;
+const which = process.argv[2] || 'dist';
+const conf = which === 'dist-server' ? require('../host/builder.json') : pkg.build;
+const dir = path.join(__dirname, '..', which);
+const named = (pattern) => pattern.replaceAll('${version}', pkg.version).replaceAll('${ext}', 'exe');
+const setup = named(conf.nsis.artifactName);
+const keep = new Set([setup, setup + '.blockmap', named(conf.portable.artifactName)]);
 
 if (!fs.existsSync(dir)) process.exit(0);
 for (const name of fs.readdirSync(dir)) {
-  const m = ARTIFACT.exec(name);
-  if (!m || m[1] === version) continue;
+  if (!/\.(exe|blockmap)$/i.test(name) || keep.has(name)) continue;
   try {
     fs.rmSync(path.join(dir, name), { force: true });
     console.log('entfernt:', name);

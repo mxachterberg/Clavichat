@@ -1,4 +1,4 @@
-/* SecureCom — Brücke für die Bildschirmauswahl. */
+/* Clavichat — Brücke für die Bildschirmauswahl. */
 'use strict';
 
 const { contextBridge, ipcRenderer } = require('electron');

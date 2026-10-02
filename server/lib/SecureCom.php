@@ -1,7 +1,7 @@
 <?php
 /**
  * ============================================================================
- *  SecureCom — Ende-zu-Ende verschlüsselte Nachrichten, Anrufe und Räume.
+ *  Clavichat — Ende-zu-Ende verschlüsselte Nachrichten, Anrufe und Räume.
  * ============================================================================
  *  Der Server ist hier nur Briefkasten und Vermittler. Er bekommt nie einen
  *  privaten Schlüssel, nie ein Passwort und nie einen Klartext:
@@ -85,7 +85,7 @@ class SecureCom
     const HASH_OPTS = ['cost' => 12];
 
     const RESERVED = ['admin', 'administrator', 'root', 'system', 'securecom',
-                      'support', 'moderator', 'mod', 'server', 'hetzner'];
+                      'support', 'moderator', 'mod', 'server', 'hetzner', 'clavichat'];
 
     /* ======================================================================
        Einstellungen (config.php; alle mit Standardwert, weil config.php auf
@@ -197,7 +197,7 @@ class SecureCom
             CURLOPT_HTTPHEADER     => ['Authorization: Bearer ' . $token, 'Content-Type: application/json'],
             CURLOPT_POSTFIELDS     => json_encode(['ttl' => 86400]),
         ]);
-        // Windows (SecureCom Server): Zertifikate aus der Windows-Ablage prüfen.
+        // Windows (Clavichat Server): Zertifikate aus der Windows-Ablage prüfen.
         if (PHP_OS_FAMILY === 'Windows' && defined('CURLSSLOPT_NATIVE_CA')) {
             curl_setopt($ch, CURLOPT_SSL_OPTIONS, CURLSSLOPT_NATIVE_CA);
         }
@@ -1361,7 +1361,7 @@ class SecureCom
     {
         $count = count(glob(self::dir('ids') . '/*.json') ?: []);
         if ($count >= self::maxIdentities()) {
-            throw new SecureComException('SecureCom ist gerade voll. Bitte später erneut versuchen.', 503);
+            throw new SecureComException('Clavichat ist gerade voll. Bitte später erneut versuchen.', 503);
         }
     }
 

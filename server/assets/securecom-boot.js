@@ -1,5 +1,5 @@
 /* ==========================================================================
-   SecureCom — Start: Hell/Dunkel und Ladebalken
+   Clavichat — Start: Hell/Dunkel und Ladebalken
    --------------------------------------------------------------------------
    Ein klassisches Skript (kein Modul), im <head> geladen. Es läuft also
    auch dann, wenn ein Programmteil nicht lädt, und zeigt in dem Fall den

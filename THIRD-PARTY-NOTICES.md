@@ -1,6 +1,6 @@
 # Fremde Bestandteile
 
-SecureCom selbst steht unter der MIT-Lizenz (siehe `LICENSE`). Diese Teile
+Clavichat selbst steht unter der MIT-Lizenz (siehe `LICENSE`). Diese Teile
 stammen von anderen und behalten ihre eigenen Lizenzen:
 
 | Bestandteil | Wo | Lizenz |
@@ -10,7 +10,7 @@ stammen von anderen und behalten ihre eigenen Lizenzen:
 | [JetBrains Mono](https://github.com/JetBrains/JetBrainsMono) | `server/assets/fonts/JetBrainsMono-*.ttf` | SIL Open Font License 1.1 |
 | [Electron](https://github.com/electron/electron) (Windows-App und -Server) | wird beim Bauen geladen | MIT |
 | [electron-builder](https://github.com/electron-userland/electron-builder) (nur zum Bauen) | `desktop/node_modules` | MIT |
-| [PHP](https://www.php.net/) 8.3 (nur SecureCom Server für Windows) | wird beim Bauen geladen (`npm run php`), im Programm unter `resources\php` | PHP License 3.01, Text in `resources\php\license.txt` |
+| [PHP](https://www.php.net/) 8.3 (nur Clavichat Server für Windows) | wird beim Bauen geladen (`npm run php`), im Programm unter `resources\php` | PHP License 3.01, Text in `resources\php\license.txt` |
 | OpenSSL, libcurl, libssh2, nghttp2, Brotli (Teil des PHP-Pakets) | `resources\php` | Apache-2.0, curl-Lizenz, BSD-3-Clause, MIT, MIT |
 | Microsoft Visual C++ Runtime (`vcruntime140.dll`) | `resources\php` | weitergegeben nach den Bedingungen von Microsoft für „Redistributable Code“ |
 | Docker-Images [`php:8.3-apache`](https://hub.docker.com/_/php) und [`caddy:2`](https://hub.docker.com/_/caddy) (nur Container) | werden beim Bauen bzw. Starten geladen | PHP License, Apache-2.0 und die Lizenzen der Debian-Pakete |

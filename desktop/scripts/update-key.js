@@ -1,5 +1,5 @@
 /* ==========================================================================
-   SecureCom — Schlüssel für signierte Updates
+   Clavichat — Schlüssel für signierte Updates
    Legt beim ersten Aufruf ein Ed25519-Schlüsselpaar an und zeigt danach
    immer den öffentlichen Schlüssel (der gehört in updater.js, PUBLIC_KEY).
 

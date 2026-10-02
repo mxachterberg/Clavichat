@@ -1,7 +1,7 @@
 <?php
 /**
  * ============================================================================
- *  SecureCom — kleine Helfer (eigenständige Fassung)
+ *  Clavichat — kleine Helfer (eigenständige Fassung)
  * ============================================================================
  *  Dieselben Funktionsnamen wie auf achterberg.dev, damit lib/SecureCom.php
  *  in beiden Fassungen unverändert läuft.

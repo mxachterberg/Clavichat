@@ -1,5 +1,5 @@
 /* ==========================================================================
-   SecureCom — Updates für die Windows-App
+   Clavichat — Updates für die Windows-App
    --------------------------------------------------------------------------
    Sucht beim Start (in den Einstellungen abschaltbar) und auf Knopfdruck
    nach einer neuen Fassung, lädt sie herunter und installiert sie.
@@ -24,7 +24,7 @@ const crypto = require('node:crypto');
 const fs = require('node:fs');
 const path = require('node:path');
 
-const MANIFEST_URL = 'https://achterberg.dev/downloads/securecom/update.json';
+const MANIFEST_URL = 'https://achterberg.dev/downloads/clavichat/update.json';
 // Öffentlicher Schlüssel des Herausgebers (Ed25519, SPKI/DER, Base64).
 // Den privaten erzeugt und zeigt scripts/update-key.js.
 const PUBLIC_KEY = 'MCowBQYDK2VwAyEAlGx6CauvrfaZJAUtLpqsw19KVCrB2hk2vpfBkKCYnwI=';
@@ -60,7 +60,7 @@ function init(opts) {
   state.auto = readSettings().auto !== false;
   state.status = state.mode ? 'idle' : 'unsupported';
   // Eigene Sitzung nur im Speicher: kein Zertifikats-Pinning des
-  // SecureCom-Servers, keine Cookies, kein Zwischenspeicher.
+  // Clavichat-Servers, keine Cookies, kein Zwischenspeicher.
   ses = session.fromPartition('securecom-updates');
   removeLeftovers();
   ipcMain.handle('securecom:update', handle);
@@ -181,7 +181,7 @@ function verifyManifest(text) {
   if (!valid) throw new Error('Die Signatur der Update-Liste stimmt nicht – es wird nichts installiert.');
 
   const m = JSON.parse(env.data);
-  if (!m || m.app !== 'securecom' || !VERSION.test(String(m.version))) throw new Error('Die Update-Liste gehört nicht zu SecureCom.');
+  if (!m || m.app !== 'clavichat' || !VERSION.test(String(m.version))) throw new Error('Die Update-Liste gehört nicht zu Clavichat.');
   const f = m.files && m.files[state.mode === 'portable' ? 'portable' : 'setup'];
   if (!f || !/^[A-Za-z0-9._-]{1,100}\.exe$/.test(String(f.name)) || !/^[0-9a-f]{64}$/.test(String(f.sha256)) ||
       !Number.isSafeInteger(f.size) || f.size <= 0 || f.size > 1e9) {
@@ -234,7 +234,7 @@ function portableTarget() {
 }
 
 function installerDir() {
-  return path.join(app.getPath('temp'), 'SecureCom-Update');
+  return path.join(app.getPath('temp'), 'Clavichat-Update');
 }
 
 async function download(f) {

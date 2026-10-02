@@ -1,5 +1,5 @@
 /* ==========================================================================
-   SecureCom — App-Symbol zeichnen
+   Clavichat — App-Symbol zeichnen
      build/icon.png   512 × 512 (Linux, Vorschau)
      build/icon.ico   16 … 256 (Windows: Programmdatei, Fenster, Taskleiste,
                       Infobereich – Windows nimmt je Stelle die passende Größe)
