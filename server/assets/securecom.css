@@ -846,9 +846,82 @@
 .sc-tile-label .sc-ic { color: var(--sc-danger); }
 .sc-tile-conn { color: #f97316; }
 .sc-tile-code { color: #4ade80; }
-.sc-tile-full { position: absolute; top: 6px; right: 6px; display: none; background: rgba(0, 0, 0, .55); color: #ededec; }
-.sc-tile.is-screen.has-video .sc-tile-full { display: inline-flex; }
-.sc-tile.is-screen.has-video.is-focus { cursor: zoom-in; }
+/* Oben rechts auf Bildschirm-Kacheln: Rädchen (Werte), Ausblenden, Vollbild */
+.sc-tile-tools { position: absolute; top: 6px; right: 6px; z-index: 3; display: none; gap: 4px; }
+.sc-tile.is-screen.has-video .sc-tile-tools { display: flex; }
+.sc-tile-tools .sc-ibtn { background: rgba(0, 0, 0, .55); color: #ededec; }
+.sc-tile-tools .sc-ibtn:hover { background: rgba(0, 0, 0, .8); color: #fff; }
+.sc-tile.is-screen.has-video.is-focus .sc-tile-frame { cursor: zoom-in; touch-action: none; }
+.sc-tile.is-screen video { transform-origin: 0 0; }
+.sc-tile-frame.is-zoomed { cursor: grab !important; }
+.sc-tile-frame.is-zoomed:active { cursor: grabbing !important; }
+
+/* Panel hinter dem Rädchen */
+.sc-tile-stats {
+  position: absolute;
+  top: 44px;
+  right: 6px;
+  z-index: 3;
+  min-width: 210px;
+  max-width: calc(100% - 12px);
+  padding: 8px 10px;
+  border: 1px solid #2a2a2e;
+  background: rgba(10, 10, 12, .86);
+  color: #d6d6d4;
+  font-family: var(--mono);
+  font-size: 11px;
+  cursor: default;
+}
+.sc-tile-stats-head { margin: 0 0 6px; color: #f97316; letter-spacing: .12em; font-size: 10px; }
+.sc-tile-stats-sub { margin: 8px 0 4px; color: #a2a2a7; }
+.sc-tile-stats-row { display: flex; justify-content: space-between; gap: 14px; padding: 2px 0; }
+.sc-tile-stats-row > span { color: #a2a2a7; }
+.sc-tile-stats-row > strong { font-weight: 500; color: #ededec; }
+.sc-tile-stats-row.is-warn > strong { color: #eab308; }
+.sc-tile-stats-row.is-bad > strong { color: #f87171; }
+.sc-tile-stats-note { margin: 6px 0 0; color: #a2a2a7; line-height: 1.45; white-space: normal; }
+.sc-tile-stats-note.is-bad { color: #f87171; }
+
+/* Zoom-Anzeige unten rechts */
+.sc-tile-zoom {
+  position: absolute;
+  right: 8px;
+  bottom: 8px;
+  z-index: 3;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 4px 2px 8px;
+  background: rgba(0, 0, 0, .62);
+  color: #ededec;
+  font-family: var(--mono);
+  font-size: 11px;
+}
+.sc-tile-zoom-reset { display: inline-flex; padding: 3px; border: 0; background: transparent; color: #ededec; cursor: pointer; }
+.sc-tile-zoom-reset:hover { color: #f97316; }
+
+/* Ausgeblendete Übertragung: Hinweis statt Bild */
+.sc-tile.is-hidden-screen .sc-tile-frame { border-color: transparent; background: transparent; }
+.sc-tile.is-hidden-screen .sc-tile-face { position: relative; z-index: 2; display: flex; flex-direction: column; align-items: center; gap: 10px; padding: 12px; text-align: center; }
+.sc-tile-hidden-note { max-width: 300px; margin: 0; color: #a2a2a7; font-size: 12.5px; line-height: 1.5; }
+
+/* Vollbild: die ganze Kachel, damit Zoom und Werte bleiben */
+.sc-tile:fullscreen { width: 100vw; height: 100vh; aspect-ratio: auto; border: 0; background: #000; cursor: default; }
+.sc-tile:fullscreen .sc-tile-frame { border: 0; }
+.sc-tile::backdrop { background: #000; }
+
+/* Verbindungsqualität oben rechts */
+.sc-stage-right { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.sc-netq { display: inline-flex; align-items: center; gap: 6px; padding: 5px 9px; border: 1px solid #2a2a2e; color: #a2a2a7; white-space: nowrap; cursor: help; }
+.sc-netq-bars { display: inline-flex; align-items: flex-end; gap: 2px; height: 11px; }
+.sc-netq-bars i { width: 3px; background: #3a3a40; }
+.sc-netq-bars i:nth-child(1) { height: 4px; }
+.sc-netq-bars i:nth-child(2) { height: 7px; }
+.sc-netq-bars i:nth-child(3) { height: 11px; }
+.sc-netq.is-good { color: #4ade80; }
+.sc-netq.is-fair { color: #eab308; }
+.sc-netq.is-poor { color: #f87171; }
+.sc-netq .sc-netq-bars i.is-on { background: currentColor; }
 
 .sc-controls { display: flex; justify-content: center; gap: 10px; }
 .sc-ctl {
@@ -1382,6 +1455,9 @@ html[data-theme="light"] .sc-modal { background: rgba(40, 40, 40, .3); }
   .sc-stage { max-height: 62%; padding: 10px; gap: 8px; }
   .sc-stage-top { font-size: 10px; }
   .sc-code { padding: 4px 7px; font-size: 10px; }
+  .sc-netq { padding: 4px 7px; }
+  .sc-netq > span:last-child { display: none; }   /* Handy: nur die Balken */
+  .sc-tile-stats { top: 40px; min-width: 0; left: 6px; }
   .sc-tiles, .sc-tiles[data-count="1"], .sc-tiles[data-count="2"] {
     grid-template-columns: repeat(auto-fill, minmax(104px, 1fr));
     justify-content: stretch;

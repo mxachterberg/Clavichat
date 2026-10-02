@@ -48,6 +48,7 @@ const S = {
   keyringCache: null,
   online: [],          // temporäre Sitzungen, die gerade online und sichtbar sind
   fst: new Map(),      // Freunde: Kennung -> { status: 'on' | 'busy' | 'away' | 'off' }
+  hiddenScreens: new Set(),   // Bildschirm-Übertragungen, die ich ausgeblendet habe (Kennung des Senders)
   pv: '',
   convs: new Map(),    // Gegenüber -> Unterhaltung
   rooms: new Map(),    // Raumkennung -> Raum
@@ -3761,7 +3762,7 @@ function activePeers() {
 async function pushTrack(slot) {
   for (const p of activePeers()) {
     const tx = p.tx[slot];
-    if (tx) { try { await tx.sender.replaceTrack(localTrack(slot)); } catch (e) { /* Verbindung schon zu */ } }
+    if (tx) { try { await tx.sender.replaceTrack(p.localFor(slot)); } catch (e) { /* Verbindung schon zu */ } }
     p.sendState();
     p.tune();
   }
@@ -4195,7 +4196,9 @@ class Peer {
     this.created = Date.now();
     this.tx = {};
     this.remote = {};
-    this.remoteState = { mic: true, cam: false, screen: false, deaf: false, mobile: false };
+    this.remoteState = { mic: true, cam: false, screen: false, deaf: false, mobile: false, noscreen: false };
+    this.stats = null;      // Messwerte (readStats), alle zwei Sekunden neu
+    this.statsRaw = null;
     this.localSdp = null;
     this.remoteSdp = null;
     this.code = null;
@@ -4219,7 +4222,13 @@ class Peer {
   }
 
   async attachLocal() {
-    await Promise.all(SLOTS.map((slot) => this.tx[slot] ? this.tx[slot].sender.replaceTrack(localTrack(slot)) : null));
+    await Promise.all(SLOTS.map((slot) => this.tx[slot] ? this.tx[slot].sender.replaceTrack(this.localFor(slot)) : null));
+  }
+
+  /** Was dieses Gegenüber bekommt: Hat es die Übertragung ausgeblendet, nichts vom Bildschirm. */
+  localFor(slot) {
+    if ((slot === 'screen' || slot === 'screenAudio') && this.remoteState.noscreen) return null;
+    return localTrack(slot);
   }
 
   async offer() {
@@ -4287,7 +4296,8 @@ class Peer {
   sendState() {
     if (this.dc.readyState !== 'open') return;
     try {
-      this.dc.send(JSON.stringify({ t: 'state', mic: M.micOn && !M.deaf, cam: !!M.cam, screen: !!M.screen, deaf: M.deaf, mobile: IS_MOBILE }));
+      this.dc.send(JSON.stringify({ t: 'state', mic: M.micOn && !M.deaf, cam: !!M.cam, screen: !!M.screen, deaf: M.deaf, mobile: IS_MOBILE,
+        noscreen: S.hiddenScreens.has(this.remoteId) }));
     } catch (e) { /* Kanal zu */ }
   }
 
@@ -4295,9 +4305,15 @@ class Peer {
     let m;
     try { m = JSON.parse(raw); } catch (e) { return; }
     if (m.t === 'state') {
-      const wasMobile = this.remoteState.mobile;
-      this.remoteState = { mic: !!m.mic, cam: !!m.cam, screen: !!m.screen, deaf: !!m.deaf, mobile: !!m.mobile };
-      if (this.remoteState.mobile !== wasMobile) this.tune();   // Zuschauer am Handy: Stream anpassen
+      const was = this.remoteState;
+      this.remoteState = { mic: !!m.mic, cam: !!m.cam, screen: !!m.screen, deaf: !!m.deaf, mobile: !!m.mobile, noscreen: !!m.noscreen };
+      if (this.remoteState.mobile !== was.mobile) this.tune();   // Zuschauer am Handy: Stream anpassen
+      // Ausgeblendet: an dieses Gegenüber nichts mehr vom Bildschirm senden (spart Bandbreite).
+      if (this.remoteState.noscreen !== was.noscreen) {
+        for (const slot of ['screen', 'screenAudio']) {
+          if (this.tx[slot]) this.tx[slot].sender.replaceTrack(this.localFor(slot)).then(() => this.tune()).catch(() => {});
+        }
+      }
       this.changed();
     } else if (m.t === 'bye' && this.opts.onBye) {
       this.opts.onBye(this);
@@ -4805,12 +4821,15 @@ function renderStage() {
     const conn = p.failed && p.pc.connectionState !== 'connected' ? 'nodirect' : p.pc.connectionState;
     want.push({
       key: p.remoteId + ':cam', ident: ident, stream: p.remote.cam, video: p.remoteState.cam && !!p.remote.cam,
-      muted: !p.remoteState.mic, speak: p.remoteId, conn: conn, code: p.code
+      muted: !p.remoteState.mic, speak: p.remoteId, conn: conn, code: p.code, peer: p
     });
     if (p.remoteState.screen && p.remote.screen) {
-      want.push({ key: p.remoteId + ':screen', ident: ident, stream: p.remote.screen, video: true, screen: true, label: 'Bildschirm von ' + displayName(ident) });
+      const hidden = S.hiddenScreens.has(p.remoteId);
+      want.push({ key: p.remoteId + ':screen', ident: ident, stream: hidden ? null : p.remote.screen, video: !hidden, screen: true, peer: p,
+        hiddenScreen: hidden, label: 'Bildschirm von ' + displayName(ident) + (hidden ? ' · ausgeblendet' : '') });
     }
   }
+  ensureStats();
   for (const id of people.waiting) {
     const conn = people.kind === 'call' ? (S.call.state === 'incoming' ? 'eingehend' : 'klingelt') : 'connecting';
     want.push({ key: id + ':cam', ident: S.ids.get(id), video: false, conn: conn });
@@ -4823,13 +4842,15 @@ function renderStage() {
       : call.state === 'ringing' ? 'Klingelt …' : call.state === 'incoming' ? 'Eingehender Anruf' : 'Verbindet …';
     const code = call.peer && call.peer.code;
     top.append(el('span', { class: 'sc-stage-state', id: 'sc-call-timer', text: state }),
-      el('button', { type: 'button', class: 'sc-code', title: 'Sicherheitscode vergleichen', onclick: showCodeInfo },
-        icon('lock', 13), code ? 'Ende-zu-Ende verschlüsselt · Code ' + code : 'Ende-zu-Ende verschlüsselt'));
+      el('span', { class: 'sc-stage-right' }, netQualityBadge(),
+        el('button', { type: 'button', class: 'sc-code', title: 'Sicherheitscode vergleichen', onclick: showCodeInfo },
+          icon('lock', 13), code ? 'Ende-zu-Ende verschlüsselt · Code ' + code : 'Ende-zu-Ende verschlüsselt')));
   } else {
     const room = S.rooms.get(S.voice.rid);
     top.append(el('span', { class: 'sc-stage-state', text: (room ? room.meta.name : '') + ' · Sprache' }),
-      el('button', { type: 'button', class: 'sc-code', title: 'Sicherheitscodes vergleichen', onclick: showCodeInfo },
-        icon('lock', 13), 'Ende-zu-Ende verschlüsselt · Codes an den Kacheln'));
+      el('span', { class: 'sc-stage-right' }, netQualityBadge(),
+        el('button', { type: 'button', class: 'sc-code', title: 'Sicherheitscodes vergleichen', onclick: showCodeInfo },
+          icon('lock', 13), 'Ende-zu-Ende verschlüsselt · Codes an den Kacheln')));
   }
 
   const grid = $('sc-tiles');
@@ -4881,6 +4902,136 @@ function fullscreenVideo(video) {
 }
 
 /**
+ * Vollbild für die ganze Kachel – so gehen Zoom, Rädchen und Ausblenden auch
+ * dort. iPhones kennen nur das eigene Vollbild für Videos (ohne Zoom).
+ */
+function fullscreenTile(t) {
+  if (document.fullscreenElement === t.node) { document.exitFullscreen().catch(() => {}); return; }
+  if (t.node.requestFullscreen) {
+    t.node.requestFullscreen().then(() => {
+      const v = t.video;
+      if (v.videoWidth > v.videoHeight && screen.orientation && screen.orientation.lock) {
+        screen.orientation.lock('landscape').catch(() => { /* Desktop: geht nicht, egal */ });
+      }
+    }, () => fullscreenVideo(t.video));
+  } else {
+    fullscreenVideo(t.video);
+  }
+}
+
+/* ---------- Zoom in eine Übertragung ---------------------------------------
+   Mausrad (im Mittelpunkt oder Vollbild), Ziehen zum Verschieben, zwei
+   Finger zum Zoomen, Doppelklick: hinein oder zurück. Bis zehnfach. */
+const ZOOM_MAX = 10;
+
+function zoomable(t) {
+  return t.node.classList.contains('is-screen') && t.node.classList.contains('has-video')
+    && (t.node.classList.contains('is-focus') || document.fullscreenElement === t.node);
+}
+
+function applyZoom(t) {
+  const z = t.zoom;
+  t.video.style.transform = z.s > 1 ? 'translate(' + z.x + 'px,' + z.y + 'px) scale(' + z.s + ')' : '';
+  t.frame.classList.toggle('is-zoomed', z.s > 1);
+  t.zoomBox.hidden = z.s <= 1;
+  t.zoomLabel.textContent = Math.round(z.s * 100) + ' %';
+}
+
+/** Zoomen um einen Punkt (Bildschirmkoordinaten), der dabei an Ort und Stelle bleibt. */
+function zoomAt(t, factor, cx, cy) {
+  const r = t.frame.getBoundingClientRect();
+  const z = t.zoom;
+  const s = Math.min(ZOOM_MAX, Math.max(1, z.s * factor));
+  const px = cx - r.left;
+  const py = cy - r.top;
+  z.x = px - (px - z.x) * (s / z.s);
+  z.y = py - (py - z.y) * (s / z.s);
+  z.s = s;
+  clampZoom(t, r);
+  applyZoom(t);
+}
+
+function panBy(t, dx, dy) {
+  t.zoom.x += dx;
+  t.zoom.y += dy;
+  clampZoom(t, t.frame.getBoundingClientRect());
+  applyZoom(t);
+}
+
+function clampZoom(t, r) {
+  const z = t.zoom;
+  if (z.s <= 1) { z.s = 1; z.x = 0; z.y = 0; return; }
+  z.x = Math.min(0, Math.max(r.width - r.width * z.s, z.x));
+  z.y = Math.min(0, Math.max(r.height - r.height * z.s, z.y));
+}
+
+function resetZoom(t) {
+  t.zoom = { s: 1, x: 0, y: 0 };
+  applyZoom(t);
+}
+
+function wireZoom(t) {
+  const f = t.frame;
+  const pts = new Map();
+  let pinch = null;
+  let moved = 0;
+  f.addEventListener('wheel', (ev) => {
+    if (!zoomable(t)) return;
+    ev.preventDefault();
+    zoomAt(t, Math.exp(-ev.deltaY * (ev.deltaMode === 1 ? 0.05 : 0.0015)), ev.clientX, ev.clientY);
+  }, { passive: false });
+  f.addEventListener('dblclick', (ev) => {
+    if (!zoomable(t) || ev.target.closest('button')) return;
+    ev.preventDefault();
+    if (t.zoom.s > 1) resetZoom(t); else zoomAt(t, 2.5, ev.clientX, ev.clientY);
+  });
+  f.addEventListener('pointerdown', (ev) => {
+    if (!zoomable(t) || ev.target.closest('button') || ev.target.closest('.sc-tile-stats')) return;
+    pts.set(ev.pointerId, { x: ev.clientX, y: ev.clientY });
+    moved = 0;
+    if (pts.size === 2) {
+      const [a, b] = [...pts.values()];
+      pinch = { d: Math.hypot(a.x - b.x, a.y - b.y), mx: (a.x + b.x) / 2, my: (a.y + b.y) / 2 };
+    }
+    try { f.setPointerCapture(ev.pointerId); } catch (e) { /* egal */ }
+  });
+  f.addEventListener('pointermove', (ev) => {
+    const prev = pts.get(ev.pointerId);
+    if (!prev) return;
+    const cur = { x: ev.clientX, y: ev.clientY };
+    pts.set(ev.pointerId, cur);
+    if (pts.size >= 2 && pinch) {
+      const [a, b] = [...pts.values()];
+      const d = Math.hypot(a.x - b.x, a.y - b.y);
+      const mx = (a.x + b.x) / 2;
+      const my = (a.y + b.y) / 2;
+      if (pinch.d > 0) zoomAt(t, d / pinch.d, mx, my);
+      panBy(t, mx - pinch.mx, my - pinch.my);
+      pinch = { d: d, mx: mx, my: my };
+      moved += 10;
+    } else if (t.zoom.s > 1) {
+      panBy(t, cur.x - prev.x, cur.y - prev.y);
+      moved += Math.abs(cur.x - prev.x) + Math.abs(cur.y - prev.y);
+    }
+  });
+  const end = (ev) => {
+    pts.delete(ev.pointerId);
+    if (pts.size < 2) pinch = null;
+    if (moved > 4) t.dragged = Date.now();   // danach keinen Klick auslösen
+  };
+  f.addEventListener('pointerup', end);
+  f.addEventListener('pointercancel', end);
+}
+
+function toggleHideScreen(peerId) {
+  if (S.hiddenScreens.has(peerId)) S.hiddenScreens.delete(peerId);
+  else S.hiddenScreens.add(peerId);
+  const p = activePeers().find((x) => x.remoteId === peerId);
+  if (p) p.sendState();   // der Sender schickt dann nichts mehr an uns
+  renderStage();
+}
+
+/**
  * Kachel: außen der Platz im Raster, innen ein Rahmen. Bei Bildschirmen hat
  * der Rahmen das Seitenverhältnis der Übertragung – so gibt es keine
  * schwarzen Ränder, und Name und Vollbild-Knopf sitzen auf dem Bild.
@@ -4892,40 +5043,58 @@ function makeTile(key) {
   const frame = el('div', { class: 'sc-tile-frame' });
   const face = el('div', { class: 'sc-tile-face' });
   const label = el('div', { class: 'sc-tile-label' });
-  const full = iconBtn('expand', 'Vollbild', () => fullscreenVideo(video), { class: 'sc-ibtn sc-tile-full' });
-  frame.append(video, label, full);
+  const t = { key: key, node: node, frame: frame, video: video, face: face, label: label, src: null, w: null,
+    zoom: { s: 1, x: 0, y: 0 }, statsOpen: false, dragged: 0 };
+  // Oben rechts auf Bildschirm-Kacheln: Werte (Rädchen), Ausblenden, Vollbild.
+  t.tools = el('div', { class: 'sc-tile-tools' },
+    iconBtn('settings', 'Übertragungsqualität', () => { t.statsOpen = !t.statsOpen; renderTileStats(t); }, { class: 'sc-ibtn sc-tile-gear' }),
+    t.hideBtn = iconBtn('eyeOff', 'Übertragung ausblenden', () => { if (t.w && t.w.peer) toggleHideScreen(t.w.peer.remoteId); }, { class: 'sc-ibtn sc-tile-hide' }),
+    iconBtn('expand', 'Vollbild', () => fullscreenTile(t), { class: 'sc-ibtn sc-tile-full' }));
+  t.panel = el('div', { class: 'sc-tile-stats', hidden: true });
+  t.zoomLabel = el('span', { text: '100 %' });
+  t.zoomBox = el('div', { class: 'sc-tile-zoom', hidden: true }, t.zoomLabel,
+    el('button', { type: 'button', class: 'sc-tile-zoom-reset', title: 'Zoom zurücksetzen', onclick: () => resetZoom(t) }, icon('x', 12)));
+  frame.append(video, label, t.tools, t.panel, t.zoomBox);
   node.append(frame, face);
   const ratio = () => {
     if (video.videoWidth && video.videoHeight) node.style.setProperty('--ar', String(video.videoWidth / video.videoHeight));
   };
   video.addEventListener('loadedmetadata', ratio);
   video.addEventListener('resize', ratio);
+  wireZoom(t);
   node.addEventListener('click', (ev) => {
-    if (ev.target.closest('button')) return;
-    // Die Übertragung im Mittelpunkt: direkt Vollbild. Sonst in den Mittelpunkt holen – oder zurück.
-    if (node.classList.contains('is-screen') && node.classList.contains('has-video') && focusKey === key) {
-      fullscreenVideo(video);
-      return;
-    }
+    if (ev.target.closest('button') || ev.target.closest('.sc-tile-stats')) return;
+    if (Date.now() - t.dragged < 400) return;   // war ein Verschieben, kein Klick
+    // Die Übertragung im Mittelpunkt bleibt dort (Doppelklick zoomt, Vollbild per Knopf).
+    if (node.classList.contains('is-screen') && node.classList.contains('has-video') && focusKey === key) return;
     focusKey = focusKey === key ? null : key;
+    resetZoom(t);
     renderStage();
   });
-  return { key: key, node: node, video: video, face: face, label: label, src: null };
+  return t;
 }
 
 function updateTile(t, w) {
+  t.w = w;
   t.node.className = 'sc-tile' + (w.screen ? ' is-screen' : '') + (w.video ? ' has-video' : '') + (focusKey === t.key ? ' is-focus' : '') + (w.self ? ' is-self' : '')
-    + (w.conn && w.conn !== 'connected' ? ' is-waiting' : '');
+    + (w.conn && w.conn !== 'connected' ? ' is-waiting' : '') + (w.hiddenScreen ? ' is-hidden-screen' : '');
   if (w.speak) t.node.dataset.speak = w.speak; else delete t.node.dataset.speak;
   const src = w.video ? (w.track || w.stream || null) : null;
   if (src !== t.src) {
     t.src = src;
     t.video.srcObject = src ? (src instanceof MediaStream ? src : new MediaStream([src])) : null;
     if (src) t.video.play().catch(() => {});
+    resetZoom(t);
   }
+  if (!zoomable(t) && t.zoom.s > 1) resetZoom(t);
   t.video.classList.toggle('is-mirror', !!(w.self && !w.screen));
+  t.hideBtn.hidden = !w.screen || !!w.self;
   t.face.textContent = '';
-  if (!w.video) t.face.appendChild(avatar(w.ident, 'xl'));
+  if (w.hiddenScreen) {
+    t.face.append(el('p', { class: 'sc-tile-hidden-note', text: 'Übertragung ausgeblendet – du bekommst sie nicht, das spart Bandbreite.' }),
+      el('button', { type: 'button', class: 'btn', onclick: () => toggleHideScreen(w.peer.remoteId) }, icon('eye', 14), 'Wieder anzeigen'));
+  } else if (!w.video) t.face.appendChild(avatar(w.ident, 'xl'));
+  if (t.statsOpen) renderTileStats(t);
   t.label.textContent = '';
   appendAll(t.label,
     w.muted ? icon('micOff', 13) : null,
@@ -4969,6 +5138,182 @@ setInterval(() => {
   const t = $('sc-call-timer');
   if (t && S.call && S.call.state === 'active') t.textContent = fmtDuration(Date.now() - S.call.started);
 }, 1000);
+
+/* ==========================================================================
+   Verbindungsqualität und Stream-Werte
+   Alle zwei Sekunden getStats() je Verbindung: Ping, Paketverlust, Weg
+   (direkt oder Relay), für Bildschirm und Kamera Auflösung, Bilder pro
+   Sekunde, Datenrate und Codec. Daraus „Verbindung gut/mittel/schlecht“
+   oben rechts und das Panel hinter dem Rädchen auf Bildschirm-Kacheln.
+   ========================================================================== */
+const NETQ = {
+  good: { label: 'gut', bars: 3 },
+  fair: { label: 'mittel', bars: 2 },
+  poor: { label: 'schlecht', bars: 1 }
+};
+const NETQ_ORDER = ['good', 'fair', 'poor'];
+let statsTimer = 0;
+
+function ensureStats() {
+  if (statsTimer) return;
+  statsTimer = setInterval(async () => {
+    const peers = activePeers();
+    if (!peers.length) { clearInterval(statsTimer); statsTimer = 0; return; }
+    await Promise.all(peers.map(readStats));
+    refreshStatsUi();
+  }, 2000);
+}
+
+function codecName(report, id) {
+  const c = id && report.get(id);
+  return c && c.mimeType ? c.mimeType.split('/')[1] : '';
+}
+
+async function readStats(p) {
+  if (p.closed || !p.pc || p.pc.connectionState === 'closed') return;
+  let report;
+  try { report = await p.pc.getStats(); } catch (e) { return; }
+  const now = performance.now();
+  const prev = p.statsRaw || {};
+  const raw = { t: now };
+  const dt = prev.t ? (now - prev.t) / 1000 : 0;
+  // Welche Messung gehört zu welchem Platz (Ton, Kamera, Bildschirm …)?
+  const bySlot = {};
+  p.pc.getTransceivers().forEach((tr, i) => {
+    const slot = SLOTS[i];
+    if (!slot) return;
+    if (tr.mid != null) bySlot['mid:' + tr.mid] = slot;
+    if (tr.receiver && tr.receiver.track) bySlot['in:' + tr.receiver.track.id] = slot;
+    if (tr.sender && tr.sender.track) bySlot['out:' + tr.sender.track.id] = slot;
+  });
+  const sources = {};
+  report.forEach((s) => { if (s.type === 'media-source') sources[s.id] = s; });
+  const outSlot = (s) => {
+    const src = s.mediaSourceId ? sources[s.mediaSourceId] : null;
+    return bySlot['mid:' + s.mid] || (src ? bySlot['out:' + src.trackIdentifier] : null);
+  };
+
+  const st = { rtt: null, relay: false, loss: 0, in: {}, out: {} };
+  let pair = null;
+  report.forEach((s) => { if (s.type === 'transport' && s.selectedCandidatePairId) pair = report.get(s.selectedCandidatePairId); });
+  if (!pair) report.forEach((s) => { if (!pair && s.type === 'candidate-pair' && s.nominated && s.state === 'succeeded') pair = s; });
+  if (pair) {
+    if (typeof pair.currentRoundTripTime === 'number') st.rtt = Math.round(pair.currentRoundTripTime * 1000);
+    st.relay = [report.get(pair.localCandidateId), report.get(pair.remoteCandidateId)].some((c) => c && c.candidateType === 'relay');
+  }
+  report.forEach((s) => {
+    if (s.type === 'inbound-rtp') {
+      const slot = bySlot['mid:' + s.mid] || bySlot['in:' + s.trackIdentifier];
+      if (!slot) return;
+      const cur = { b: s.bytesReceived || 0, rcv: s.packetsReceived || 0, lost: Math.max(0, s.packetsLost || 0) };
+      raw['in:' + slot] = cur;
+      const pv = prev['in:' + slot];
+      const dr = pv ? cur.rcv - pv.rcv : 0;
+      const dl = pv ? Math.max(0, cur.lost - pv.lost) : 0;
+      st.in[slot] = {
+        w: s.frameWidth || 0, h: s.frameHeight || 0, fps: Math.round(s.framesPerSecond || 0),
+        kbps: pv && dt > 0 ? Math.round((cur.b - pv.b) * 8 / dt / 1000) : 0,
+        loss: dr + dl > 0 ? dl / (dr + dl) * 100 : 0,
+        freezes: s.freezeCount || 0, codec: codecName(report, s.codecId)
+      };
+    } else if (s.type === 'outbound-rtp') {
+      const slot = outSlot(s);
+      if (!slot) return;
+      const cur = { b: s.bytesSent || 0 };
+      raw['out:' + slot] = cur;
+      const pv = prev['out:' + slot];
+      st.out[slot] = {
+        w: s.frameWidth || 0, h: s.frameHeight || 0, fps: Math.round(s.framesPerSecond || 0),
+        kbps: pv && dt > 0 ? Math.round((cur.b - pv.b) * 8 / dt / 1000) : 0,
+        limit: s.qualityLimitationReason || 'none', codec: codecName(report, s.codecId), loss: 0
+      };
+    }
+  });
+  // Was beim Gegenüber von uns ankommt (Verlust in Senderichtung).
+  report.forEach((s) => {
+    if (s.type !== 'remote-inbound-rtp') return;
+    const ob = report.get(s.localId);
+    const slot = ob ? outSlot(ob) : null;
+    if (slot && st.out[slot]) st.out[slot].loss = (s.fractionLost || 0) * 100;
+  });
+  const losses = Object.values(st.in).map((x) => x.loss).concat(Object.values(st.out).map((x) => x.loss));
+  st.loss = losses.length ? Math.max.apply(null, losses) : 0;
+  st.quality = !pair || p.pc.connectionState !== 'connected' ? 'poor'
+    : (st.rtt > 400 || st.loss > 8) ? 'poor' : (st.rtt > 200 || st.loss > 2) ? 'fair' : 'good';
+  p.statsRaw = raw;
+  p.stats = st;
+}
+
+function fmtLoss(x) { return (Math.round(x * 10) / 10).toLocaleString('de-DE') + ' %'; }
+function fmtRate(kbps) { return kbps >= 1000 ? (Math.round(kbps / 100) / 10).toLocaleString('de-DE') + ' Mbit/s' : kbps + ' kbit/s'; }
+
+/** Oben rechts: Balken und „Verbindung gut/mittel/schlecht“ (bei mehreren: die schwächste). */
+function netQualityBadge() {
+  const peers = activePeers().filter((p) => p.stats);
+  const box = el('span', { class: 'sc-netq', id: 'sc-netq', hidden: !peers.length });
+  if (!peers.length) return box;
+  const worst = peers.reduce((w, p) => (NETQ_ORDER.indexOf(p.stats.quality) > NETQ_ORDER.indexOf(w.stats.quality) ? p : w));
+  const q = worst.stats.quality;
+  box.className = 'sc-netq is-' + q;
+  box.title = peers.map((p) => displayName(S.ids.get(p.remoteId)) + ': ' + NETQ[p.stats.quality].label
+    + (p.stats.rtt !== null ? ' · Ping ' + p.stats.rtt + ' ms' : '') + ' · Verlust ' + fmtLoss(p.stats.loss)
+    + ' · ' + (p.stats.relay ? 'über Relay' : 'direkt')).join('\n');
+  const bars = el('span', { class: 'sc-netq-bars', 'aria-hidden': 'true' });
+  for (let i = 1; i <= 3; i++) bars.appendChild(el('i', { class: i <= NETQ[q].bars ? 'is-on' : '' }));
+  box.append(bars, el('span', { text: 'Verbindung ' + NETQ[q].label }));
+  return box;
+}
+
+function refreshStatsUi() {
+  const old = $('sc-netq');
+  if (old) old.replaceWith(netQualityBadge());
+  for (const t of tiles.values()) if (t.statsOpen) renderTileStats(t);
+}
+
+/** Panel hinter dem Rädchen: was bei dieser Übertragung gerade ankommt (oder rausgeht). */
+function renderTileStats(t) {
+  const panel = t.panel;
+  panel.hidden = !t.statsOpen || !t.w || !t.w.screen;
+  if (panel.hidden) return;
+  panel.textContent = '';
+  const row = (k, v, cls) => panel.appendChild(el('div', { class: 'sc-tile-stats-row' + (cls ? ' ' + cls : '') }, el('span', { text: k }), el('strong', { text: v })));
+  const w = t.w;
+  if (w.self) {
+    const q = screenQuality();
+    panel.appendChild(el('p', { class: 'sc-tile-stats-head', text: 'DU SENDEST · ' + q.name.toUpperCase() }));
+    const hiddenBy = activePeers().filter((p) => p.remoteState.noscreen).map((p) => displayName(S.ids.get(p.remoteId)));
+    const peers = activePeers().filter((p) => !p.remoteState.noscreen && p.stats && p.stats.out.screen && p.tx.screen && p.tx.screen.sender.track);
+    if (hiddenBy.length) panel.appendChild(el('p', { class: 'sc-tile-stats-note', text: 'Ausgeblendet bei ' + hiddenBy.join(', ') + ' – dorthin geht gerade nichts.' }));
+    if (!peers.length) { if (!hiddenBy.length) panel.appendChild(el('p', { class: 'sc-tile-stats-note', text: 'Noch keine Messwerte …' })); return; }
+    for (const p of peers) {
+      const o = p.stats.out.screen;
+      if (peers.length > 1) panel.appendChild(el('p', { class: 'sc-tile-stats-sub', text: 'an ' + displayName(S.ids.get(p.remoteId)) }));
+      row('Auflösung', o.w && o.h ? o.w + ' × ' + o.h : '–');
+      row('Bilder/s', String(o.fps));
+      row('Datenrate', fmtRate(o.kbps));
+      row('Verlust beim Zuschauer', fmtLoss(o.loss), o.loss > 5 ? 'is-bad' : '');
+      if (o.limit === 'bandwidth') row('Begrenzt durch', 'Bandbreite', 'is-warn');
+      else if (o.limit === 'cpu') row('Begrenzt durch', 'Prozessor', 'is-warn');
+    }
+    return;
+  }
+  const p = w.peer;
+  const s = p && p.stats;
+  const i = s && s.in.screen;
+  panel.appendChild(el('p', { class: 'sc-tile-stats-head', text: 'EMPFANG' }));
+  if (!i) { panel.appendChild(el('p', { class: 'sc-tile-stats-note', text: 'Noch keine Messwerte …' })); return; }
+  row('Auflösung', i.w && i.h ? i.w + ' × ' + i.h : '–');
+  row('Bilder/s', String(i.fps), i.fps === 0 ? 'is-bad' : '');
+  row('Datenrate', fmtRate(i.kbps));
+  row('Paketverlust', fmtLoss(i.loss), i.loss > 5 ? 'is-bad' : i.loss > 2 ? 'is-warn' : '');
+  if (s.rtt !== null) row('Ping', s.rtt + ' ms', s.rtt > 400 ? 'is-bad' : s.rtt > 200 ? 'is-warn' : '');
+  row('Weg', s.relay ? 'über Relay' : 'direkt');
+  if (i.codec) row('Codec', i.codec.toUpperCase());
+  let hint = '';
+  if (i.fps === 0 && i.kbps < 20) hint = 'Kein neues Bild – entweder ändert sich auf dem Bildschirm gerade nichts, oder die Verbindung ist abgerissen.';
+  else if (i.loss > 5 || s.quality === 'poor') hint = 'Die Verbindung ist zu schlecht für diese Qualität – das Bild kann ruckeln oder kurz stehen.';
+  if (hint) panel.appendChild(el('p', { class: 'sc-tile-stats-note is-bad', text: hint }));
+}
 
 function showCodeInfo() {
   openModal({
