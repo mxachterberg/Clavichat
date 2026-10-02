@@ -304,7 +304,7 @@ class SecureCom
         $acc      = self::readJson(self::accountFile($username));
         // Gleiche Antwort für "gibt es nicht" und "falsches Passwort".
         if (!$acc || !preg_match('/^[0-9a-f]{64}$/', $auth) || !password_verify($auth, (string)$acc['auth'])) {
-            throw new SecureComException('Name oder Passwort stimmen nicht.', 401);
+            throw new SecureComException('Name, Passwort oder Code stimmen nicht.', 401);
         }
         $ident = self::identity($acc['id']);
         if (!$ident) throw new SecureComException('Das Konto ist beschädigt.', 500);
@@ -496,7 +496,7 @@ class SecureCom
     {
         $acc = self::accountFor($me);
         if (!password_verify(self::str($b, 'auth'), (string)$acc['auth'])) {
-            throw new SecureComException('Das Passwort stimmt nicht.', 403);
+            throw new SecureComException('Passwort oder Code stimmen nicht.', 403);
         }
         self::purgeIdentity($me['id']);
     }
@@ -505,7 +505,7 @@ class SecureCom
     {
         $acc = self::accountFor($me);
         if (!password_verify(self::str($b, 'old_auth'), (string)$acc['auth'])) {
-            throw new SecureComException('Das bisherige Passwort stimmt nicht.', 403);
+            throw new SecureComException('Bisheriges Passwort oder Code stimmen nicht.', 403);
         }
         $auth  = self::hex64(self::str($b, 'auth'));
         $wrap  = self::b64(self::str($b, 'wrapped'), self::MAX_WRAPPED, 'Schlüssel');
