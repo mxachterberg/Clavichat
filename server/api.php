@@ -150,6 +150,11 @@ try {
             sc_limit('pres:' . $me['id'], 600, 3600);
             json_out(['ok' => true] + SecureCom::presence($me, $body));
 
+        case 'inbox.trim':
+            // Aufbewahrung verkürzt: eigene ältere Einträge löschen.
+            sc_limit('trim:' . $me['id'], 120, 3600);
+            json_out(['ok' => true] + SecureCom::trimInbox($me, $body));
+
         case 'rooms':
             json_out(['ok' => true, 'rooms' => SecureCom::rooms($me)]);
 
@@ -159,6 +164,9 @@ try {
 
         case 'room.meta':
             json_out(['ok' => true, 'room' => SecureCom::updateMeta($me, $body)]);
+
+        case 'room.ttl':
+            json_out(['ok' => true, 'room' => SecureCom::setRoomTtl($me, $body)]);
 
         case 'room.invite':
             sc_limit('inv:' . $me['id'], 60, 3600);
