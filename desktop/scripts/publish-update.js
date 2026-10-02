@@ -24,6 +24,26 @@ function fail(message) {
   process.exit(1);
 }
 
+// Die App zeigt höchstens 12 Stichpunkte zu je 400 Zeichen und schneidet
+// hart ab (updater.js) – deshalb hier vorher an einer Wortgrenze kürzen.
+// Der Text des GitHub-Releases behält den vollen Wortlaut.
+const MAX_NOTES = 12;
+const MAX_NOTE = 400;
+
+function shorten(text) {
+  if (text.length <= MAX_NOTE) return text;
+  const cut = text.slice(0, MAX_NOTE - 1);
+  // Am liebsten nach einem ganzen Satz, sonst an einem Wortende mit „…“.
+  const sentence = cut.lastIndexOf('. ');
+  if (sentence > MAX_NOTE * 0.6) return cut.slice(0, sentence + 1);
+  const space = cut.lastIndexOf(' ');
+  return (space > MAX_NOTE / 2 ? cut.slice(0, space) : cut).replace(/[\s,;:–(„"-]+$/, '') + '…';
+}
+
+function sha256File(file) {
+  return crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex');
+}
+
 /** Stichpunkte der Version aus CHANGELOG.md, ohne Markdown. */
 function changelogNotes(v) {
   const file = process.env.SECURECOM_CHANGELOG || path.join(__dirname, '..', '..', 'CHANGELOG.md');
@@ -37,7 +57,10 @@ function changelogNotes(v) {
     else if (/^\s+\S/.test(l) && notes.length) notes[notes.length - 1] += ' ' + l.trim();
   }
   if (!notes.length) fail('Der Abschnitt „## ' + v + '“ in CHANGELOG.md hat keine Stichpunkte.');
-  return notes.map((n) => n.replace(/\*\*(.+?)\*\*/g, '$1').replace(/`([^`]+)`/g, '$1').replace(/\[([^\]]+)\]\([^)]+\)/g, '$1'));
+  if (notes.length > MAX_NOTES) console.warn('Hinweis: Das Popup zeigt nur die ersten ' + MAX_NOTES + ' von ' + notes.length + ' Stichpunkten.');
+  return notes.slice(0, MAX_NOTES)
+    .map((n) => n.replace(/\*\*(.+?)\*\*/g, '$1').replace(/\*([^*\s][^*]*)\*/g, '$1').replace(/`([^`]+)`/g, '$1').replace(/\[([^\]]+)\]\([^)]+\)/g, '$1'))
+    .map(shorten);
 }
 
 const target = process.argv[2];
@@ -70,7 +93,13 @@ const sig = crypto.sign(null, Buffer.from(data, 'utf8'), crypto.createPrivateKey
 if (!crypto.verify(null, Buffer.from(data, 'utf8'), crypto.createPublicKey(pem), Buffer.from(sig, 'base64'))) fail('Signatur lässt sich nicht prüfen.');
 
 fs.mkdirSync(target, { recursive: true });
-for (const f of Object.values(files)) fs.copyFileSync(f.src, path.join(target, f.name));
+for (const [kind, f] of Object.entries(files)) {
+  // Unveränderte Dateien nicht neu schreiben: Das Hochladen nach
+  // Änderungszeit würde sie sonst ein zweites Mal übertragen.
+  const dest = path.join(target, f.name);
+  const same = fs.existsSync(dest) && fs.statSync(dest).size === manifest.files[kind].size && sha256File(dest) === manifest.files[kind].sha256;
+  if (!same) fs.copyFileSync(f.src, dest);
+}
 fs.writeFileSync(path.join(target, 'update.json'), JSON.stringify({ data: data, sig: sig }, null, 1) + '\n');
 const keep = new Set(Object.values(files).map((f) => f.name));
 for (const name of fs.readdirSync(target)) {
