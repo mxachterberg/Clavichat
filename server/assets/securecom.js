@@ -129,6 +129,7 @@ const ICONS = {
   info: '<circle cx="12" cy="12" r="9"/><path d="M12 11v6M12 7.5v.5"/>',
   download: '<path d="M12 4v11M7 10l5 5 5-5M5 20h14"/>',
   refresh: '<path d="M20 11a8 8 0 0 0-14.3-4.9L4 8"/><path d="M4 4v4h4"/><path d="M4 13a8 8 0 0 0 14.3 4.9L20 16"/><path d="M20 20v-4h-4"/>',
+  chevron: '<path d="M6 9l6 6 6-6"/>',
   back: '<path d="M15 5l-7 7 7 7"/>',
   expand: '<path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/>',
   alert: '<path d="M12 3l10 18H2z"/><path d="M12 10v5M12 18v.5"/>',
@@ -303,6 +304,89 @@ function field(label, input, note) {
     input,
     note ? el('span', { class: 'sc-field-note', text: note }) : null);
 }
+
+/* ---------- Auswahl im Stil der App ----------------------------------------
+   Statt <select>: Dessen aufgeklappte Liste zeichnet das Betriebssystem, sie
+   passt weder zu Farben noch zur Schrift. items: [{ id, name, info, note }];
+   onChange(id) nur bei echter Änderung. Bedienung wie eine Auswahlliste:
+   Klick oder Pfeiltasten, Pos1/Ende, Enter, Escape. Gibt { el, setItems }. */
+function choice(items, value, onChange) {
+  const box = el('div', { class: 'sc-choice' });
+  const button = el('button', { type: 'button', class: 'sc-choice-btn', 'aria-haspopup': 'listbox', 'aria-expanded': 'false' });
+  const list = el('div', { class: 'sc-choice-list', role: 'listbox', hidden: true });
+  const hint = el('span', { class: 'sc-field-note' });
+  box.append(button, list, hint);
+  let options = [];
+  let current = value;
+
+  const label = (item) => [el('span', { class: 'sc-choice-name', text: item.name }),
+    item.info ? el('span', { class: 'sc-choice-info', text: item.info }) : null];
+
+  function draw() {
+    const item = options.find((o) => o.id === current) || options[0];
+    button.textContent = '';
+    if (item) appendAll(button, ...label(item));
+    button.appendChild(icon('chevron', 14));
+    hint.textContent = item && item.note ? item.note : '';
+    hint.hidden = !hint.textContent;
+    list.textContent = '';
+    for (const o of options) {
+      const opt = el('button', {
+        type: 'button', class: 'sc-choice-opt', role: 'option', 'aria-selected': o.id === current ? 'true' : 'false',
+        onclick: () => pick(o.id)
+      }, el('span', { class: 'sc-choice-head' }, ...label(o)), o.id === current ? icon('check', 14) : null);
+      if (o.note) opt.appendChild(el('span', { class: 'sc-choice-note', text: o.note }));
+      list.appendChild(opt);
+    }
+  }
+  function open() {
+    list.hidden = false;
+    box.classList.add('is-open');
+    button.setAttribute('aria-expanded', 'true');
+    const sel = list.querySelector('[aria-selected="true"]') || list.firstChild;
+    if (sel) sel.focus();
+  }
+  function close(refocus) {
+    if (list.hidden) return;
+    list.hidden = true;
+    box.classList.remove('is-open');
+    button.setAttribute('aria-expanded', 'false');
+    if (refocus) button.focus();
+  }
+  function pick(id) {
+    const changed = id !== current;
+    current = id;
+    draw();
+    close(true);
+    if (changed) onChange(id);
+  }
+  box.closeChoice = close;
+  button.addEventListener('click', () => (list.hidden ? open() : close(false)));
+  button.addEventListener('keydown', (e) => {
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') { e.preventDefault(); open(); }
+  });
+  list.addEventListener('keydown', (e) => {
+    const opts = [...list.querySelectorAll('.sc-choice-opt')];
+    const i = opts.indexOf(document.activeElement);
+    const go = (n) => { e.preventDefault(); if (opts[n]) opts[n].focus(); };
+    if (e.key === 'ArrowDown') go(i < opts.length - 1 ? i + 1 : 0);
+    else if (e.key === 'ArrowUp') go(i > 0 ? i - 1 : opts.length - 1);
+    else if (e.key === 'Home') go(0);
+    else if (e.key === 'End') go(opts.length - 1);
+    else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); close(true); }
+    else if (e.key === 'Tab') close(false);
+  });
+  const api = { el: box, setItems(next) { options = next; draw(); } };
+  api.setItems(items);
+  return api;
+}
+
+// Klick neben eine offene Auswahl schließt sie.
+document.addEventListener('pointerdown', (e) => {
+  for (const box of document.querySelectorAll('.sc-choice.is-open')) {
+    if (!box.contains(e.target)) box.closeChoice(false);
+  }
+});
 
 async function copyText(text, what) {
   try {
@@ -2927,21 +3011,24 @@ async function toggleCam() {
  * Stream an jeden einzeln, also mal Zahl der Leute. Die Kennungen stehen
  * genauso in desktop/picker.js (Auswahlfenster der Windows-App).
  */
+// Aufsteigend nach Datenrate (rate: Höchstwert im Zweiergespräch). Dieselben
+// Kennungen und dieselbe Reihenfolge stehen in desktop/picker.js.
 const SCREEN_QUALITY = [
-  { id: 'normal', name: 'Ausgewogen', info: '1080p · 30 fps', note: 'Für das meiste genau richtig.', w: 1920, h: 1080, fps: 30, rate: 3000000, mesh: 1500000, hint: 'detail' },
-  { id: 'text', name: 'Text & Code', info: 'Originalauflösung · 15 fps', note: 'Gestochen scharf für Code, Dokumente und Tabellen.', w: 0, h: 0, fps: 15, rate: 4000000, mesh: 2000000, hint: 'text' },
-  { id: 'smooth', name: 'Flüssig', info: '720p · 60 fps', note: 'Für Videos und Spiele: Bewegung vor Schärfe.', w: 1280, h: 720, fps: 60, rate: 4000000, mesh: 2000000, hint: 'motion' },
-  { id: 'max', name: 'Hoch', info: '1440p · 60 fps', note: 'Scharf und flüssig, braucht einen schnellen Upload.', w: 2560, h: 1440, fps: 60, rate: 10000000, mesh: 4000000, hint: 'motion' },
-  { id: 'source', name: 'Quelle', info: 'Originalauflösung · 60 fps', note: 'Der Bildschirm 1:1 und flüssig – braucht den meisten Upload.', w: 0, h: 0, fps: 60, rate: 16000000, mesh: 6000000, hint: 'motion' },
-  { id: 'low', name: 'Sparsam', info: '720p · 10 fps', note: 'Für schwache Leitungen und Mobilfunk.', w: 1280, h: 720, fps: 10, rate: 800000, mesh: 500000, hint: 'detail' }
+  { id: 'low', name: 'Sparsam', info: '720p · 10 fps · bis 0,8 Mbit/s', note: 'Für schwache Leitungen und Mobilfunk.', w: 1280, h: 720, fps: 10, rate: 800000, mesh: 500000, hint: 'detail' },
+  { id: 'normal', name: 'Ausgewogen', info: '1080p · 30 fps · bis 3 Mbit/s', note: 'Für das meiste genau richtig.', w: 1920, h: 1080, fps: 30, rate: 3000000, mesh: 1500000, hint: 'detail' },
+  { id: 'text', name: 'Text & Code', info: 'Originalauflösung · 15 fps · bis 4 Mbit/s', note: 'Gestochen scharf für Code, Dokumente und Tabellen.', w: 0, h: 0, fps: 15, rate: 4000000, mesh: 2000000, hint: 'text' },
+  { id: 'smooth', name: 'Flüssig', info: '720p · 60 fps · bis 4 Mbit/s', note: 'Für Videos und Spiele: Bewegung vor Schärfe.', w: 1280, h: 720, fps: 60, rate: 4000000, mesh: 2000000, hint: 'motion' },
+  { id: 'max', name: 'Hoch', info: '1440p · 60 fps · bis 10 Mbit/s', note: 'Scharf und flüssig, braucht einen schnellen Upload.', w: 2560, h: 1440, fps: 60, rate: 10000000, mesh: 4000000, hint: 'motion' },
+  { id: 'source', name: 'Quelle', info: 'Originalauflösung · 60 fps · bis 16 Mbit/s', note: 'Der Bildschirm 1:1 und flüssig – braucht den meisten Upload.', w: 0, h: 0, fps: 60, rate: 16000000, mesh: 6000000, hint: 'motion' }
 ];
 const SQ_KEY = 'sc-screen-quality';   // je Gerät, nicht im Tresor: der Upload hängt am Anschluss
+const SQ_DEFAULT = 'normal';
 let screenQualityId = null;           // falls localStorage gesperrt ist
 
 function screenQuality() {
   let id = screenQualityId;
   try { id = localStorage.getItem(SQ_KEY) || id; } catch (e) { /* privater Modus */ }
-  return SCREEN_QUALITY.find((q) => q.id === id) || SCREEN_QUALITY[0];
+  return SCREEN_QUALITY.find((q) => q.id === id) || SCREEN_QUALITY.find((q) => q.id === SQ_DEFAULT);
 }
 
 /** w = 0: keine Obergrenze, also die Auflösung des Bildschirms selbst. */
@@ -3000,19 +3087,20 @@ function showScreenQuality() {
  * beim Verbindungsaufbau ausgehandelt und gilt deshalb ab dem nächsten
  * Anruf; Datenrate und Filter wechseln sofort. Je Gerät gespeichert.
  */
-const AUDIO_QUALITY = [
+const AUDIO_QUALITY = [   // aufsteigend nach Datenrate
+  { id: 'low', name: 'Sparsam', info: '16 kbit/s', note: 'Für schwache Leitungen und Mobilfunk.', rate: 16000, stereo: false, clean: true },
   { id: 'voice', name: 'Sprache', info: '32 kbit/s', note: 'Klar und sparsam, mit Echo- und Rauschunterdrückung.', rate: 32000, stereo: false, clean: true },
   { id: 'high', name: 'Hoch', info: '64 kbit/s', note: 'Mehr Klangdetails, die Unterdrückung bleibt an.', rate: 64000, stereo: false, clean: true },
-  { id: 'music', name: 'Musik', info: '128 kbit/s · Stereo', note: 'Für Musik und Instrumente, ohne Filter – nur mit Kopfhörer.', rate: 128000, stereo: true, clean: false },
-  { id: 'low', name: 'Sparsam', info: '16 kbit/s', note: 'Für schwache Leitungen und Mobilfunk.', rate: 16000, stereo: false, clean: true }
+  { id: 'music', name: 'Musik', info: '128 kbit/s · Stereo', note: 'Für Musik und Instrumente, ohne Filter – nur mit Kopfhörer.', rate: 128000, stereo: true, clean: false }
 ];
 const AQ_KEY = 'sc-audio-quality';
+const AQ_DEFAULT = 'voice';
 let audioQualityId = null;   // falls localStorage gesperrt ist
 
 function audioQuality() {
   let id = audioQualityId;
   try { id = localStorage.getItem(AQ_KEY) || id; } catch (e) { /* privater Modus */ }
-  return AUDIO_QUALITY.find((q) => q.id === id) || AUDIO_QUALITY[0];
+  return AUDIO_QUALITY.find((q) => q.id === id) || AUDIO_QUALITY.find((q) => q.id === AQ_DEFAULT);
 }
 
 function micConstraints() {
@@ -4277,36 +4365,28 @@ function showSettings() {
       hide.addEventListener('change', () => { S.vault.settings.hideIp = hide.checked; saveVault(); });
       const sound = el('input', { type: 'checkbox', checked: S.vault.settings.sound !== false });
       sound.addEventListener('change', () => { S.vault.settings.sound = sound.checked; saveVault(); });
-      const micSel = el('select');
-      micSel.appendChild(el('option', { value: '', text: 'Standard-Mikrofon' }));
+      // Auswahlfelder in einem schlichten Container statt <label>: Ein Klick
+      // auf den Hinweistext soll die Liste nicht aufklappen.
+      const pickField = (label, picker, note) => el('div', { class: 'field' },
+        el('span', { class: 'field-label', text: label }), picker.el,
+        note ? el('span', { class: 'sc-field-note', text: note }) : null);
+      const mic = choice([{ id: '', name: 'Standard-Mikrofon' }], S.vault.settings.mic || '', (id) => { S.vault.settings.mic = id; saveVault(); });
       if (navigator.mediaDevices && navigator.mediaDevices.enumerateDevices) {
         navigator.mediaDevices.enumerateDevices().then((list) => {
+          const items = [{ id: '', name: 'Standard-Mikrofon' }];
           for (const d of list) {
             if (d.kind !== 'audioinput' || !d.deviceId || d.deviceId === 'default') continue;
-            micSel.appendChild(el('option', { value: d.deviceId, text: d.label || 'Mikrofon', selected: d.deviceId === S.vault.settings.mic }));
+            items.push({ id: d.deviceId, name: d.label || 'Mikrofon ' + items.length });
           }
+          mic.setItems(items);
         }).catch(() => {});
       }
-      micSel.addEventListener('change', () => { S.vault.settings.mic = micSel.value; saveVault(); });
-      const qualSel = el('select');
-      const curQ = screenQuality();
-      for (const q of SCREEN_QUALITY) qualSel.appendChild(el('option', { value: q.id, text: q.name + ' – ' + q.info, selected: q.id === curQ.id }));
-      qualSel.addEventListener('change', () => setScreenQuality(qualSel.value));
-      const audioSel = el('select');
-      const curA = audioQuality();
-      for (const q of AUDIO_QUALITY) audioSel.appendChild(el('option', { value: q.id, text: q.name + ' – ' + q.info, selected: q.id === curA.id }));
-      const audioNote = el('span', { class: 'sc-field-note', text: curA.note });
-      audioSel.addEventListener('change', () => {
-        setAudioQuality(audioSel.value);
-        audioNote.textContent = audioQuality().note;
-      });
-      const audioField = field('Tonqualität', audioSel);
-      audioField.appendChild(audioNote);
-      audioField.appendChild(el('span', { class: 'sc-field-note', text: 'Gilt für dieses Gerät, Datenrate und Filter sofort, Stereo ab dem nächsten Anruf.' }));
+      const audio = choice(AUDIO_QUALITY, audioQuality().id, setAudioQuality);
+      const screenPick = choice(SCREEN_QUALITY, screenQuality().id, setScreenQuality);
       body.append(
-        field('Mikrofon', micSel, 'Namen erscheinen, sobald du einmal das Mikrofon erlaubt hast.'),
-        audioField,
-        field('Bildschirm teilen', qualSel, 'Gilt für dieses Gerät. Während einer Übertragung lässt sie sich über den Regler-Knopf neben „Bildschirm teilen“ ändern.'),
+        pickField('Mikrofon', mic, 'Namen erscheinen, sobald du einmal das Mikrofon erlaubt hast.'),
+        pickField('Tonqualität', audio, 'Gilt für dieses Gerät, Datenrate und Filter sofort, Stereo ab dem nächsten Anruf.'),
+        pickField('Bildschirm teilen', screenPick, 'Gilt für dieses Gerät. Während einer Übertragung lässt sie sich über den Regler-Knopf neben „Bildschirm teilen“ ändern.'),
         el('label', { class: 'sc-check' + (S.cfg.relay ? '' : ' is-disabled') }, hide, el('span', { text: S.cfg.relay
           ? 'IP-Adresse verbergen: Anrufe nur über den Relay-Server. Dein Gegenüber sieht deine IP dann nicht.'
           : 'IP-Adresse verbergen – braucht einen Relay-Server (TURN), der auf diesem Server noch nicht eingerichtet ist.' })),

@@ -510,7 +510,7 @@ async function smoke() {
   await frame(win, 'smoke-2c-hell');
   await run("document.documentElement.setAttribute('data-theme', 'dark'); true");
   await wait(500);
-  check('Qualität in den Einstellungen', await run("(async () => { const b = [...document.querySelectorAll('#sc-user button')].find((x) => x.title === 'Einstellungen'); b.click(); await new Promise((r) => setTimeout(r, 300)); const ok = [...document.querySelectorAll('#sc-modal-panel select')].some((s) => [...s.options].some((o) => o.value === 'smooth')); document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' })); return ok; })()"));
+  check('Qualität in den Einstellungen', await run("(async () => { const b = [...document.querySelectorAll('#sc-user button')].find((x) => x.title === 'Einstellungen'); b.click(); await new Promise((r) => setTimeout(r, 300)); const names = [...document.querySelectorAll('#sc-modal-panel .sc-choice-opt .sc-choice-name')].map((n) => n.textContent); document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' })); return names.includes('Flüssig') && names.indexOf('Sparsam') < names.indexOf('Quelle'); })()"));
 
   const sources = await desktopCapturer.getSources({ types: ['screen', 'window'], thumbnailSize: { width: 320, height: 180 } });
   check('Bildschirmquellen gefunden', sources.length > 0, sources.length + ' Quellen');
@@ -521,7 +521,7 @@ async function smoke() {
     await shot(pk.webContents, 'smoke-3-auswahl');
     await frame(pk, 'smoke-3b-auswahl-fenster');
     // Das Auswahlfenster legt die Qualität dort ab, wo das Hauptfenster sie liest.
-    check('Qualitätsauswahl im Auswahlfenster', (await pk.webContents.executeJavaScript("document.getElementById('pk-quality').options.length", true)) === 6);
+    check('Qualitätsauswahl im Auswahlfenster', (await pk.webContents.executeJavaScript("document.querySelectorAll('#pk-quality .pk-choice-opt').length", true)) === 6);
     const before = await run("localStorage.getItem('sc-screen-quality')");
     await pk.webContents.executeJavaScript("localStorage.setItem('sc-screen-quality', 'smooth'); true", true);
     await wait(500);
