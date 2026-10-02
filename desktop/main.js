@@ -60,15 +60,19 @@ protocol.registerSchemesAsPrivileged([{
   privileges: { standard: true, secure: true, supportFetchAPI: true, stream: true, codeCache: true }
 }]);
 
-// Kennung für Taskleiste und Benachrichtigungen – dieselbe wie appId in
-// package.json, die der Installer an seine Verknüpfungen schreibt.
-// Selbsttest und Entwicklung bekommen eigene, sonst steckt Windows sie mit
-// der echten App in einen Taskleisten-Knopf.
-const APP_ID = 'dev.achterberg.securecom' + (SMOKE ? '.selbsttest' : app.isPackaged ? '' : '.dev');
-// Die portable Fassung entpackt sich bei jedem Start in einen neuen
-// Temp-Ordner, der beim Beenden verschwindet. Taskleiste und Anheften
-// sollen auf die Datei zeigen, die bleibt.
-const EXE = process.env.PORTABLE_EXECUTABLE_FILE || process.execPath;
+// Die portable Fassung entpackt sich bei jedem Start in einen Temp-Ordner,
+// der beim Beenden verschwindet. Taskleiste und Anheften sollen auf die
+// Datei zeigen, die bleibt.
+const PORTABLE = process.env.PORTABLE_EXECUTABLE_FILE || '';
+const EXE = PORTABLE || process.execPath;
+// Kennung für Taskleiste und Benachrichtigungen. Nur die installierte App
+// nimmt appId aus package.json – die schreibt der Installer an seine
+// Verknüpfungen. Gibt es eine Verknüpfung mit derselben Kennung, nimmt
+// Windows deren Symbol, auch für die portable Fassung; ist sie kaputt (etwa
+// nach dem Deinstallieren), zeigt die Taskleiste ein leeres Blatt. Deshalb
+// bekommen portable Fassung, Selbsttest und Entwicklung je eine eigene.
+const APP_ID = 'dev.achterberg.securecom' +
+  (SMOKE ? '.selbsttest' : !app.isPackaged ? '.dev' : PORTABLE ? '.portable' : '');
 const ICON = path.join(__dirname, 'build', 'icon.ico');
 
 app.setAppUserModelId(APP_ID);

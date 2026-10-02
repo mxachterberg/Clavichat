@@ -17,10 +17,12 @@
     "icon": "node scripts/make-icon.js",
     "smoke": "electron . --smoke",
     "build": "electron-builder --win nsis portable --publish never",
+    "postbuild": "node scripts/clean-dist.js dist",
     "server": "electron host/main.js",
     "smoke:server": "electron host/main.js --smoke",
     "php": "node scripts/fetch-php.js",
-    "build:server": "electron-builder --config host/builder.json --win nsis portable --publish never"
+    "build:server": "electron-builder --config host/builder.json --win nsis portable --publish never",
+    "postbuild:server": "node scripts/clean-dist.js dist-server"
   },
   "devDependencies": {
     "electron": "44.5.1",

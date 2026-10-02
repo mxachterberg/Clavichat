@@ -32,6 +32,17 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          # Text des Releases: der Abschnitt dieser Version aus CHANGELOG.md
+          VERSION="${GITHUB_REF_NAME#v}"
+          awk -v v="$VERSION" '
+            /^## / { if (found) exit; if (index($0, "## " v " ") == 1 || $0 == "## " v) { found = 1; next } }
+            found { print }
+          ' ../CHANGELOG.md > notes.md
+          [ -s notes.md ] || echo "Keine Einträge in CHANGELOG.md für $VERSION." > notes.md
+          {
+            echo
+            echo "---"
+            echo "SecureCom (App) und SecureCom Server für Windows, gebaut von GitHub Actions aus genau diesem Stand. Nicht signiert: Windows SmartScreen fragt beim ersten Start nach. Docker: ghcr.io/${GITHUB_REPOSITORY,,}:$VERSION"
+          } >> notes.md
           gh release create "$GITHUB_REF_NAME" dist/*.exe dist-server/*.exe \
-            --draft --title "SecureCom $GITHUB_REF_NAME" \
-            --notes "SecureCom (App) und SecureCom Server für Windows, gebaut von GitHub Actions aus genau diesem Stand. Nicht signiert: Windows SmartScreen fragt beim ersten Start nach. Docker: ghcr.io/${GITHUB_REPOSITORY,,}:${GITHUB_REF_NAME#v}"
+            --draft --title "SecureCom $GITHUB_REF_NAME" --notes-file notes.md
