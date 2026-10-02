@@ -116,6 +116,11 @@ erfunden.
   selbst durch.
 - Abgelaufenes wird nicht mehr ausgeliefert und stündlich aus den Dateien
   gelöscht.
+- Räume, die eine temporäre Sitzung angelegt hat, löscht der Server nach
+  7 Tagen ohne Aktivität (keine Nachricht, kein Beitritt, niemand im
+  Sprachkanal, keine Änderung) samt Verlauf – auch wenn noch Konten darin
+  sind. Dafür merkt er sich pro Raum den Zeitpunkt der letzten Aktivität
+  (höchstens stündlich aktualisiert), nicht wer aktiv war.
 
 ### Konten
 
@@ -220,8 +225,9 @@ erfunden.
   Content-Security-Policy ohne Inline-Skripte.
 - Anruf-Signale verfallen nach zwei Minuten, Nachrichten nach der für die
   Unterhaltung gewählten Zeit (Standard 7 Tage, höchstens 30 Tage),
-  temporäre Sitzungen nach 24 Stunden ohne Nutzung (Höchstdauer und
-  Leerlaufzeit lassen sich in `config.php` einstellen).
+  temporäre Sitzungen nach 24 Stunden ohne Nutzung, Räume aus temporären
+  Sitzungen nach 7 Tagen ohne Aktivität (alle drei Fristen lassen sich in
+  `config.php` einstellen).
 
 ## Was der Server trotzdem sieht
 

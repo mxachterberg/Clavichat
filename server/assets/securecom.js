@@ -1730,6 +1730,7 @@ function renderRoomSide(head, body, room) {
   const isOwner = room.owner === S.me.id;
   appendAll(head, room.meta.img ? el('img', { class: 'sc-side-pic', src: room.meta.img, alt: '' }) : null,
     el('span', { class: 'sc-side-title', text: room.meta.name, title: room.meta.name }),
+    room.tmp ? el('span', { class: 'sc-kind', text: 'TEMP', title: tempRoomNote(room) }) : null,
     iconBtn('more', 'Raum-Menü', () => roomMenu(room)));
 
   body.appendChild(sectionHead('TEXTKANÄLE', isOwner ? iconBtn('plus', 'Kanal anlegen', () => addChannel(room), { class: 'sc-ibtn sc-ibtn--tiny' }) : null));
@@ -3071,6 +3072,8 @@ async function loadRooms() {
     room.epoch = raw.epoch;
     room.members = raw.members;
     room.ttl = Number(raw.ttl) || 0;   // Aufbewahrung (Sekunden), legt der Besitzer fest
+    room.tmp = !!raw.tmp;              // aus einer temporären Sitzung: verfällt ohne Aktivität
+    room.exp = Number(raw.exp) || 0;   // dann weg (Unix-Zeit), wenn bis dahin nichts passiert
     setVoiceState(room, raw.vcs, raw.vc);
     room.rev = raw.rev;
     room.pendingKey = !roomKeyRaw(room.id, room.epoch);
@@ -3113,6 +3116,19 @@ async function decryptMeta(room) {
   } catch (e) { /* bleibt beim Platzhalter */ }
 }
 
+/** Räume aus temporären Sitzungen löscht der Server nach so vielen Tagen ohne Aktivität. */
+function tempRoomDays() {
+  const d = S.cfg && Number(S.cfg.temp_room_days);
+  return d > 0 ? d : 7;
+}
+
+function tempRoomNote(room) {
+  const d = tempRoomDays();
+  const when = room.exp ? new Date(room.exp * 1000).toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit', year: 'numeric' }) : '';
+  return 'Aus einer temporären Sitzung erstellt: Der Server löscht den Raum samt Verlauf nach ' + (d === 1 ? '1 Tag' : d + ' Tagen') +
+    ' ohne Aktivität' + (when ? ' – ohne neue Nachricht, Sprachkanal oder Beitritt am ' + when : '') + '.';
+}
+
 function dropRoomLocal(rid) {
   if (S.voice && S.voice.rid === rid) leaveVoice(true);
   S.rooms.delete(rid);
@@ -3143,7 +3159,12 @@ function roomDialog() {
             try { await createRoom(n); close(); } catch (e) { go.disabled = false; toast(e.message, 'error'); }
           });
           name.addEventListener('keydown', (ev) => { if (ev.key === 'Enter') go.click(); });
-          panel.append(field('Name des Raums', name, 'Name und Kanäle sind verschlüsselt – der Server sieht nur eine zufällige Kennung.'), go);
+          panel.append(field('Name des Raums', name, 'Name und Kanäle sind verschlüsselt – der Server sieht nur eine zufällige Kennung.'));
+          if (S.mode === 'temp') {
+            const d = tempRoomDays();
+            panel.append(el('p', { class: 'sc-note', text: 'Du bist temporär angemeldet: Diesen Raum löscht der Server nach ' + (d === 1 ? '1 Tag' : d + ' Tagen') + ' ohne Aktivität – auch wenn andere drin sind.' }));
+          }
+          panel.append(go);
         } else {
           const link = el('input', { type: 'text', placeholder: WEB_URL + '#join=…' });
           const go = el('button', { type: 'button', class: 'btn btn--primary btn--block', text: 'Beitreten' });
@@ -3207,7 +3228,8 @@ function roomMenu(room) {
         owner ? item('key', 'Raumschlüssel erneuern', () => rotateRoom(room.id, true)) : null,
         item('leave', 'Raum verlassen', () => leaveRoom(room), true),
         owner ? item('trash', 'Raum löschen', () => deleteRoom(room), true) : null,
-        el('p', { class: 'sc-note', text: 'Schlüsselgeneration ' + room.epoch + ' · ' + room.members.length + ' Mitglieder · Besitzer: ' + displayName(S.ids.get(room.owner)) }));
+        el('p', { class: 'sc-note', text: 'Schlüsselgeneration ' + room.epoch + ' · ' + room.members.length + ' Mitglieder · Besitzer: ' + displayName(S.ids.get(room.owner)) }),
+        room.tmp ? el('p', { class: 'sc-note', text: tempRoomNote(room) }) : null);
     }
   });
 }
@@ -5989,7 +6011,7 @@ function showSecurityInfo() {
         'Konten stehen nie in der Online-Liste; ob sie online sind, sehen nur ihre Freunde. In der Liste erscheinen nur temporäre Sitzungen – und auch die nur, solange sie es wollen.',
         'Alle Anfragen gehen per POST an dieselbe Adresse. In den Protokollen des Webservers steht nicht, was passiert ist.',
         'Keine Cookies (einzige Ausnahme: „Mit achterberg.dev“ fragt auf deinen Klick das Dashboard nach deinem Postfach), keine fremden Server auf dieser Seite (auch keine Schriften von Google), strenge Content-Security-Policy.',
-        'Anruf-Signale verfallen nach zwei Minuten. Nachrichten bleiben so lange, wie es für die Unterhaltung eingestellt ist (Standard ' + ttlLabel(defaultTtl()) + ', höchstens ' + S.cfg.retention_days + ' Tage) – dann löscht sie der Server. Temporäre Sitzungen verschwinden nach ' + S.cfg.temp_hours + ' Stunden ohne Nutzung.'
+        'Anruf-Signale verfallen nach zwei Minuten. Nachrichten bleiben so lange, wie es für die Unterhaltung eingestellt ist (Standard ' + ttlLabel(defaultTtl()) + ', höchstens ' + S.cfg.retention_days + ' Tage) – dann löscht sie der Server. Temporäre Sitzungen verschwinden nach ' + S.cfg.temp_hours + ' Stunden ohne Nutzung, Räume aus temporären Sitzungen nach ' + tempRoomDays() + ' Tagen ohne Aktivität.'
       ]);
       block('WAS DER SERVER TROTZDEM SIEHT', [
         'IP-Adressen und Zeitpunkte der Anfragen (der Webserver des Hosters protokolliert sie).',

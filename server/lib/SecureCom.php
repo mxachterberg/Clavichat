@@ -34,7 +34,9 @@
  *                            eingepackter privater Schlüssel, Tresor
  *    inbox/<id>.jsonl|.n     Briefkasten (Einträge + Zähler)
  *    rooms/<rid>.json        Raum: Mitglieder, Einladungen, wer in welchem
- *                            Sprachkanal ist (Namen der Kanäle: verschlüsselt)
+ *                            Sprachkanal ist (Namen der Kanäle: verschlüsselt),
+ *                            letzte Aktivität; von einer temporären Sitzung
+ *                            angelegt: nach tempRoomDays() ohne Aktivität weg
  *    feeds/<rid>.jsonl|.n    Verlauf eines Raums
  *    avatars/<id>.json       Profilbild eines Kontos (öffentlich wie der Name)
  *    mem/<id>.json           Räume einer Identität
@@ -69,6 +71,7 @@ class SecureCom
     const PRES_TTL      = 150;       // Status-Fach eines Freundes: so lange gilt der letzte Stand
     const MAX_PRES      = 512;       // verschlüsselter Status (Base64)
     const MAX_SLOTS     = 200;       // Fächer je Aufruf (schreiben, lesen, löschen)
+    const ACTIVE_EVERY  = 3600;      // letzte Aktivität eines Raums höchstens stündlich schreiben
 
     const MAX_ENTRY     = 98304;     // verschlüsselter Eintrag (Base64)
     const MAX_SIGNAL    = 49152;
@@ -107,6 +110,12 @@ class SecureCom
         return max(1, min(168, (int)cfg('securecom_temp_hours', 24)));
     }
 
+    /** Räume aus temporären Sitzungen: so viele Tage ohne Aktivität, dann weg. */
+    public static function tempRoomDays()
+    {
+        return max(1, min(365, (int)cfg('securecom_temp_room_days', 7)));
+    }
+
     public static function accessCode()
     {
         return trim((string)cfg('securecom_access_code', ''));
@@ -131,6 +140,7 @@ class SecureCom
             'retention_days' => self::retentionDays(),      // höchste Aufbewahrung
             'default_ttl'    => min(self::DEFAULT_TTL, self::retentionDays() * 86400),
             'temp_hours'     => self::tempHours(),
+            'temp_room_days' => self::tempRoomDays(),
             'access'         => self::accessCode() !== '' ? 'code' : 'open',
             // Anmelden mit dem Postfach: Adresse, unter der das Dashboard von
             // achterberg.dev Tickets ausstellt (siehe ssoTicket). Sonst leer.
@@ -818,6 +828,8 @@ class SecureCom
             'mem' => [$me['id'] => time()],
             'inv' => [],
             'vc'  => [],
+            'tmp' => $me['k'] === 'temp' ? 1 : 0,   // aus einer temporären Sitzung: verfällt ohne Aktivität
+            'la'  => time(),                         // letzte Aktivität
         ];
         self::writeJson($file, $room);
         self::addMembership($me['id'], $rid);
@@ -834,6 +846,7 @@ class SecureCom
             if ($epoch !== (int)$room['e']) throw new SecureComException('Veralteter Raumschlüssel.', 409);
             $room['m']  = $meta;
             $room['me'] = $epoch;
+            $room['la'] = time();
             $room['rev']++;
             return self::publicRoom($room, $me['id']);
         });
@@ -853,6 +866,7 @@ class SecureCom
             if (count($room['inv']) >= 50) throw new SecureComException('Zu viele offene Einladungen.', 409);
             $code = self::randomId();
             $room['inv'][$code] = ['b' => $me['id'], 'c' => $now, 'x' => $now + $days * 86400, 'n' => 0, 'max' => $max];
+            $room['la'] = $now;
             return ['code' => $code, 'epoch' => (int)$room['e'], 'x' => $now + $days * 86400];
         });
     }
@@ -875,6 +889,7 @@ class SecureCom
             }
             $room['inv'][$code]['n']++;
             $room['mem'][$me['id']] = time();
+            $room['la'] = time();
             $room['rev']++;
             return $room;
         }, true);
@@ -918,6 +933,7 @@ class SecureCom
             $room['m']   = $meta;
             $room['me']  = $epoch;
             $room['inv'] = [];
+            $room['la']  = time();
             $room['rev']++;
             return $room;
         }, true);
@@ -945,6 +961,10 @@ class SecureCom
         $room = self::readJson(self::roomFile($rid), true);
         if (!$room) throw new SecureComException('Raum nicht gefunden.', 404);
         self::requireMember($room, $me['id']);
+        // Letzte Aktivität (fürs Aufräumen temporärer Räume) – höchstens stündlich schreiben.
+        if ($kind === 'msg' && time() - self::lastActive($room) >= self::ACTIVE_EVERY) {
+            self::roomMutate($rid, function (&$r) { $r['la'] = time(); });
+        }
 
         $entry = ['t' => time(), 'k' => $kind];
         if ($kind === 'sig') {
@@ -988,6 +1008,7 @@ class SecureCom
         $room = self::roomMutate($rid, function (&$room) use ($me, $ttl) {
             self::requireOwner($room, $me['id']);
             $room['ttl'] = $ttl;
+            $room['la']  = time();
             $room['rev']++;
             return $room;
         });
@@ -1042,6 +1063,7 @@ class SecureCom
                     throw new SecureComException('Im Sprachkanal sind schon ' . self::MAX_VOICE . ' Personen.', 409);
                 }
                 $room['vc'][$me['id']] = $now;
+                $room['la'] = $now;
                 if ($ch === '') unset($room['vch'][$me['id']]);
                 else $room['vch'][$me['id']] = $ch;
             } else {
@@ -1298,10 +1320,21 @@ class SecureCom
             'me'      => (int)$room['me'],
             'rev'     => (int)$room['rev'],
             'ttl'     => self::roomTtl($room),              // Aufbewahrung der Nachrichten (Sekunden)
+            'tmp'     => !empty($room['tmp']),              // aus einer temporären Sitzung angelegt
+            'exp'     => !empty($room['tmp']) ? self::lastActive($room) + self::tempRoomDays() * 86400 : 0,
             'members' => $members,
             'vc'      => self::voiceList($room),            // erster Sprachkanal (ältere Apps)
             'vcs'     => (object)self::voiceMap($room),     // alle: Kanal => wer drin ist
         ];
+    }
+
+    /**
+     * Letzte Aktivität eines Raums: Nachricht, Beitritt, Sprachkanal,
+     * Einladung oder Änderung am Raum. Verlassen und Entfernen zählen nicht.
+     */
+    private static function lastActive(array $room)
+    {
+        return (int)($room['la'] ?? $room['c'] ?? 0);
     }
 
     /** Wer gerade in einem Sprachkanal ist ("" = der erste). */
@@ -1342,7 +1375,7 @@ class SecureCom
         $room = self::readJson(self::roomFile($rid), true);
         if (!$room || !isset($room['vc'][$id]) || time() - (int)$room['vc'][$id] < 8) return $room;
         return self::roomMutate($rid, function (&$r) use ($id) {
-            if (isset($r['vc'][$id])) $r['vc'][$id] = time();
+            if (isset($r['vc'][$id])) $r['vc'][$id] = $r['la'] = time();   // wer spricht, ist aktiv
             return $r;
         }, true);
     }
@@ -1629,6 +1662,8 @@ class SecureCom
             // löschen. Sonst läge es weiter in der Datei (nur nicht mehr
             // ausgeliefert), bis sie groß genug fürs Aufräumen wird.
             if ($now - (int)($state['h'] ?? 0) > 3600) {
+                self::expireTempRooms($now);
+                self::dropOrphans($now);
                 $logs = array_merge(glob(self::dir('inbox') . '/*.n') ?: [], glob(self::dir('feeds') . '/*.n') ?: []);
                 foreach ($logs as $nf) self::rewriteLog(substr($nf, 0, -2));
                 $state['h'] = $now;
@@ -1668,6 +1703,154 @@ class SecureCom
             flock($h, LOCK_UN);
             fclose($h);
         }
+    }
+
+    /**
+     * Räume, die eine temporäre Sitzung angelegt hat, löscht der Server nach
+     * tempRoomDays() ohne Aktivität – samt Verlauf, auch wenn noch Konten
+     * drin sind. Räume von vor dieser Regel bekommen die Angaben hier
+     * einmalig: temporär, wenn der Besitzer den Raum selbst angelegt hat und
+     * eine temporäre Sitzung ist. Ihre Frist beginnt dann jetzt.
+     */
+    private static function expireTempRooms($now)
+    {
+        $limit = self::tempRoomDays() * 86400;
+        foreach (glob(self::dir('rooms') . '/*.json') ?: [] as $file) {
+            $rid  = basename($file, '.json');
+            $room = self::readJson($file, true);
+            if (!$room || !preg_match('/^[A-Za-z0-9_-]{22}$/', $rid)) continue;
+            try {
+                if (!isset($room['tmp'], $room['la'])) {
+                    $room = self::roomMutate($rid, function (&$r) use ($now) {
+                        if (!isset($r['tmp'])) {
+                            $o = (string)($r['o'] ?? '');
+                            $founder = isset($r['mem'][$o]) && abs((int)$r['mem'][$o] - (int)($r['c'] ?? 0)) <= 5;
+                            $ident = $founder ? self::identity($o) : null;
+                            $r['tmp'] = $ident && ($ident['k'] ?? '') === 'temp' ? 1 : 0;
+                        }
+                        if (!isset($r['la'])) $r['la'] = $now;
+                        return $r;
+                    }, true);
+                }
+                if (empty($room['tmp']) || $now - self::lastActive($room) <= $limit) continue;
+                // Unter der Sperre nochmal prüfen – vielleicht schreibt gerade jemand.
+                $expired = false;
+                $room = self::roomMutate($rid, function (&$r) use ($now, $limit, &$expired) {
+                    $expired = !empty($r['tmp']) && $now - self::lastActive($r) > $limit;
+                    return $r;
+                }, true);
+                if ($expired) self::destroyRoom($rid, $room);
+            } catch (SecureComException $ex) {
+                // Raum ist inzwischen weg
+            }
+        }
+    }
+
+    /**
+     * Reste ohne Bezug: leer zurückgebliebene Raumdateien, Verläufe ohne
+     * Raum und Briefkästen ohne Identität. Entstehen, wenn jemand genau
+     * beim Löschen noch schreibt – zählen sonst ewig beim Speicher mit.
+     */
+    private static function dropOrphans($now)
+    {
+        foreach (glob(self::dir('rooms') . '/*.json') ?: [] as $file) {
+            clearstatcache(true, $file);
+            if (@filesize($file) === 0 && $now - (int)@filemtime($file) > 3600) @unlink($file);
+        }
+        foreach (glob(self::dir('feeds') . '/*.n') ?: [] as $nf) {
+            $rid = basename($nf, '.n');
+            if (is_file(self::roomFile($rid))) continue;
+            foreach (['.jsonl', '.n'] as $ext) @unlink(self::dir('feeds') . '/' . $rid . $ext);
+        }
+        foreach (glob(self::dir('inbox') . '/*.n') ?: [] as $nf) {
+            $id = basename($nf, '.n');
+            if (is_file(self::idFile($id))) continue;
+            foreach (['.jsonl', '.n'] as $ext) @unlink(self::dir('inbox') . '/' . $id . $ext);
+        }
+    }
+
+    /* ======================================================================
+       Speicher (für das Adminpanel der Website)
+       ====================================================================== */
+    /**
+     * Wie viel Platz Clavichat belegt – nach Ordnern der Ablage, dazu ein
+     * paar Anzahlen und die Fristen. Nur Größen und Zählungen; die Inhalte
+     * sind ohnehin verschlüsselt.
+     */
+    public static function storageStats()
+    {
+        $base  = self::dir();
+        $parts = [];
+        $bytes = 0;
+        $files = 0;
+        foreach (scandir($base) ?: [] as $name) {
+            if ($name === '.' || $name === '..') continue;
+            $path = $base . '/' . $name;
+            if (is_dir($path)) {
+                [$b, $n] = self::dirSize($path);
+                $key = $name;
+            } else {
+                $b = (int)@filesize($path);
+                $n = 1;
+                $key = '_';          // Verwaltung: Anwesenheit, Index, Aufräumen …
+            }
+            if (!isset($parts[$key])) $parts[$key] = ['bytes' => 0, 'files' => 0];
+            $parts[$key]['bytes'] += $b;
+            $parts[$key]['files'] += $n;
+            $bytes += $b;
+            $files += $n;
+        }
+
+        $rooms = 0;
+        $tempRooms = 0;
+        foreach (glob(self::dir('rooms') . '/*.json') ?: [] as $file) {
+            $room = self::readJson($file, true);
+            if (!$room) continue;
+            $rooms++;
+            if (!empty($room['tmp'])) $tempRooms++;
+        }
+        $accounts = 0;
+        foreach (glob(self::dir('accounts') . '/*.json') ?: [] as $file) {
+            if (@filesize($file) > 0) $accounts++;
+        }
+        $temp = self::readJson($base . '/temp.json', true) ?: [];
+
+        return [
+            'bytes'  => $bytes,
+            'files'  => $files,
+            'parts'  => $parts,
+            'counts' => [
+                'accounts'   => $accounts,
+                'temp'       => count($temp),
+                'rooms'      => $rooms,
+                'temp_rooms' => $tempRooms,
+            ],
+            'rules'  => [
+                'retention_days' => self::retentionDays(),
+                'default_ttl'    => min(self::DEFAULT_TTL, self::retentionDays() * 86400),
+                'temp_hours'     => self::tempHours(),
+                'temp_room_days' => self::tempRoomDays(),
+            ],
+        ];
+    }
+
+    /** Größe und Anzahl der Dateien unter einem Ordner (samt Unterordnern). */
+    public static function dirSize($dir)
+    {
+        $bytes = 0;
+        $files = 0;
+        if (!is_dir($dir)) return [0, 0];
+        try {
+            $it = new RecursiveIteratorIterator(new RecursiveDirectoryIterator($dir, FilesystemIterator::SKIP_DOTS));
+            foreach ($it as $f) {
+                if (!$f->isFile()) continue;
+                $bytes += $f->getSize();
+                $files++;
+            }
+        } catch (Throwable $ex) {
+            // nicht lesbar: zählt nicht mit
+        }
+        return [$bytes, $files];
     }
 
     /* ======================================================================

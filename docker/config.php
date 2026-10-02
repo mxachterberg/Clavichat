@@ -47,6 +47,7 @@ return [
     'securecom_access_code'    => (string)$env('SECURECOM_ACCESS_CODE', ''),
     'securecom_retention_days' => (int)$env('SECURECOM_RETENTION_DAYS', 30),
     'securecom_temp_hours'     => (int)$env('SECURECOM_TEMP_HOURS', 24),
+    'securecom_temp_room_days' => (int)$env('SECURECOM_TEMP_ROOM_DAYS', 7),
     'securecom_max_identities' => (int)$env('SECURECOM_MAX_IDENTITIES', 2000),
     'securecom_stun'           => $list($env('SECURECOM_STUN', 'stun:stun.cloudflare.com:3478')),
     'securecom_turn'           => $turn,
