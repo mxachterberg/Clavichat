@@ -6,35 +6,91 @@
   var share = document.getElementById('pk-share');
 
   /* ---- Qualität ---------------------------------------------------------
-     Dieselben Kennungen wie SCREEN_QUALITY in server/assets/securecom.js.
-     Die Wahl landet in localStorage; das Hauptfenster (gleiche Herkunft)
-     liest sie, sobald die Übertragung startet. */
+     Dieselben Kennungen und dieselbe Reihenfolge (aufsteigend nach
+     Datenrate) wie SCREEN_QUALITY in server/assets/securecom.js. Die Wahl
+     landet in localStorage; das Hauptfenster (gleiche Herkunft) liest sie,
+     sobald die Übertragung startet. Auswahl im Stil der App statt <select>:
+     klappt nach oben auf, weil sie unten in der Fußzeile steht. */
   var QUALITY = [
-    { id: 'normal', name: 'Ausgewogen', info: '1080p · 30 fps', note: 'Für das meiste genau richtig.' },
-    { id: 'text', name: 'Text & Code', info: 'Originalauflösung · 15 fps', note: 'Gestochen scharf für Code, Dokumente und Tabellen.' },
-    { id: 'smooth', name: 'Flüssig', info: '720p · 60 fps', note: 'Für Videos und Spiele: Bewegung vor Schärfe.' },
-    { id: 'max', name: 'Hoch', info: '1440p · 60 fps', note: 'Scharf und flüssig, braucht einen schnellen Upload.' },
-    { id: 'source', name: 'Quelle', info: 'Originalauflösung · 60 fps', note: 'Der Bildschirm 1:1 und flüssig – braucht den meisten Upload.' },
-    { id: 'low', name: 'Sparsam', info: '720p · 10 fps', note: 'Für schwache Leitungen und Mobilfunk.' }
+    { id: 'low', name: 'Sparsam', info: '720p · 10 fps · bis 0,8 Mbit/s', note: 'Für schwache Leitungen und Mobilfunk.' },
+    { id: 'normal', name: 'Ausgewogen', info: '1080p · 30 fps · bis 3 Mbit/s', note: 'Für das meiste genau richtig.' },
+    { id: 'text', name: 'Text & Code', info: 'Originalauflösung · 15 fps · bis 4 Mbit/s', note: 'Gestochen scharf für Code, Dokumente und Tabellen.' },
+    { id: 'smooth', name: 'Flüssig', info: '720p · 60 fps · bis 4 Mbit/s', note: 'Für Videos und Spiele: Bewegung vor Schärfe.' },
+    { id: 'max', name: 'Hoch', info: '1440p · 60 fps · bis 10 Mbit/s', note: 'Scharf und flüssig, braucht einen schnellen Upload.' },
+    { id: 'source', name: 'Quelle', info: 'Originalauflösung · 60 fps · bis 16 Mbit/s', note: 'Der Bildschirm 1:1 und flüssig – braucht den meisten Upload.' }
   ];
   var KEY = 'sc-screen-quality';
-  var quality = document.getElementById('pk-quality');
+  var box = document.getElementById('pk-quality');
   var note = document.getElementById('pk-quality-note');
   var current = null;
   try { current = localStorage.getItem(KEY); } catch (e) { /* gesperrt: Standard */ }
-  QUALITY.forEach(function (q) {
-    var option = document.createElement('option');
-    option.value = q.id;
-    option.textContent = q.name + ' – ' + q.info;
-    option.selected = q.id === current;
-    quality.appendChild(option);
-  });
-  function showNote() {
-    var q = QUALITY.filter(function (x) { return x.id === quality.value; })[0];
-    note.textContent = q ? q.note : '';
+  if (!QUALITY.some(function (q) { return q.id === current; })) current = 'normal';
+
+  var qButton = document.createElement('button');
+  qButton.type = 'button';
+  qButton.className = 'pk-choice-btn';
+  qButton.setAttribute('aria-haspopup', 'listbox');
+  qButton.setAttribute('aria-expanded', 'false');
+  qButton.setAttribute('aria-labelledby', 'pk-quality-label');
+  var qList = document.createElement('div');
+  qList.className = 'pk-choice-list';
+  qList.setAttribute('role', 'listbox');
+  qList.hidden = true;
+  box.append(qButton, qList);
+
+  function span(cls, text) {
+    var s = document.createElement('span');
+    s.className = cls;
+    s.textContent = text;
+    return s;
   }
-  quality.addEventListener('change', showNote);
-  showNote();
+  function drawQuality() {
+    var q = QUALITY.filter(function (x) { return x.id === current; })[0];
+    qButton.textContent = '';
+    qButton.append(span('pk-choice-name', q.name), span('pk-choice-info', q.info), span('pk-choice-arrow', '▾'));
+    note.textContent = q.note;
+    qList.textContent = '';
+    QUALITY.forEach(function (x) {
+      var opt = document.createElement('button');
+      opt.type = 'button';
+      opt.className = 'pk-choice-opt';
+      opt.setAttribute('role', 'option');
+      opt.setAttribute('aria-selected', x.id === current ? 'true' : 'false');
+      opt.append(span('pk-choice-name', x.name), span('pk-choice-info', x.info), span('pk-choice-note', x.note));
+      opt.addEventListener('click', function () { current = x.id; drawQuality(); closeQuality(true); });
+      qList.appendChild(opt);
+    });
+  }
+  function openQuality() {
+    qList.hidden = false;
+    box.classList.add('is-open');
+    qButton.setAttribute('aria-expanded', 'true');
+    var sel = qList.querySelector('[aria-selected="true"]');
+    if (sel) sel.focus();
+  }
+  function closeQuality(refocus) {
+    if (qList.hidden) return;
+    qList.hidden = true;
+    box.classList.remove('is-open');
+    qButton.setAttribute('aria-expanded', 'false');
+    if (refocus) qButton.focus();
+  }
+  qButton.addEventListener('click', function () { if (qList.hidden) openQuality(); else closeQuality(false); });
+  qList.addEventListener('keydown', function (ev) {
+    var opts = Array.prototype.slice.call(qList.children);
+    var i = opts.indexOf(document.activeElement);
+    if (ev.key === 'ArrowDown' || ev.key === 'ArrowUp') {
+      ev.preventDefault();
+      var n = ev.key === 'ArrowDown' ? (i + 1) % opts.length : (i - 1 + opts.length) % opts.length;
+      opts[n].focus();
+    } else if (ev.key === 'Escape') {
+      ev.preventDefault();
+      ev.stopPropagation();   // sonst schlösse Escape gleich das ganze Fenster
+      closeQuality(true);
+    }
+  });
+  document.addEventListener('pointerdown', function (ev) { if (!box.contains(ev.target)) closeQuality(false); });
+  drawQuality();
 
   function card(source) {
     var button = document.createElement('button');
@@ -65,7 +121,7 @@
 
   function done() {
     if (!selected) return;
-    try { localStorage.setItem(KEY, quality.value); } catch (e) { /* dann Standard */ }
+    try { localStorage.setItem(KEY, current); } catch (e) { /* dann Standard */ }
     window.picker.choose({ id: selected, audio: document.getElementById('pk-audio').checked });
   }
 
@@ -85,6 +141,7 @@
   document.getElementById('pk-cancel').addEventListener('click', function () { window.picker.choose(null); });
   document.addEventListener('keydown', function (ev) {
     if (ev.key === 'Escape') window.picker.choose(null);
-    if (ev.key === 'Enter' && selected) done();
+    // Enter in der Qualitätsauswahl wählt nur die Qualität, teilt noch nicht.
+    if (ev.key === 'Enter' && selected && !box.contains(document.activeElement)) done();
   });
 })();

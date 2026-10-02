@@ -1001,6 +1001,66 @@ html[data-theme="light"] .sc-modal { background: rgba(40, 40, 40, .3); }
 .sc-quality-opt[aria-pressed="true"] .sc-quality-info { color: var(--accent); }
 .sc-quality-note { grid-column: 1 / -1; font-size: 12.5px; line-height: 1.5; }
 
+/* ---- Auswahl im Stil der App (choice() in securecom.js) ----------------- */
+/* Die Liste klappt im Fluss auf, nicht schwebend: In scrollenden Dialogen
+   würde sie sonst abgeschnitten. */
+.sc-choice-btn {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 10px 13px;
+  border: 1px solid var(--border);
+  background: var(--panel);
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: border-color .15s ease;
+}
+.sc-choice-btn:hover,
+.sc-choice-btn:focus-visible,
+.sc-choice.is-open .sc-choice-btn { border-color: var(--accent); outline: none; }
+.sc-choice-btn > .sc-ic { margin-left: auto; color: var(--muted); transition: transform .15s ease, color .15s ease; }
+.sc-choice.is-open .sc-choice-btn > .sc-ic { transform: rotate(180deg); color: var(--accent); }
+.sc-choice-name { min-width: 0; overflow: hidden; font-size: 13.5px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
+.sc-choice-info { flex: none; font-family: var(--mono); font-size: 11px; letter-spacing: .04em; color: var(--muted); white-space: nowrap; }
+.sc-choice-list {
+  display: flex;
+  flex-direction: column;
+  max-height: 340px;
+  overflow-y: auto;
+  border: 1px solid var(--accent);
+  border-top: 0;
+  background: var(--panel);
+}
+.sc-choice-list[hidden] { display: none; }
+.sc-choice-opt {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 14px;
+  align-items: center;
+  gap: 3px 12px;
+  padding: 10px 13px 10px 11px;
+  border: 0;
+  border-top: 1px solid var(--border-soft);
+  border-left: 2px solid transparent;
+  background: transparent;
+  color: var(--text-body);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: background .12s ease, border-color .12s ease, color .12s ease;
+}
+.sc-choice-opt:first-child { border-top: 0; }
+.sc-choice-opt:hover,
+.sc-choice-opt:focus-visible { border-left-color: var(--accent); background: var(--accent-soft); color: var(--text); outline: none; }
+.sc-choice-opt[aria-selected="true"] { border-left-color: var(--accent); color: var(--text); }
+.sc-choice-opt[aria-selected="true"] .sc-choice-info,
+.sc-choice-opt > .sc-ic { color: var(--accent); }
+.sc-choice-head { display: flex; align-items: baseline; gap: 12px; min-width: 0; }
+.sc-choice-head .sc-choice-info { margin-left: auto; }
+.sc-choice-note { grid-column: 1 / -1; font-size: 12px; line-height: 1.45; color: var(--muted); }
+
 .sc-toasts {
   position: fixed;
   right: 18px;
