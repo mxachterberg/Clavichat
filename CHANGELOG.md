@@ -4,7 +4,10 @@ Was sich von Version zu Version ändert. Beim Veröffentlichen wird der
 Abschnitt einer Version zum Text des GitHub-Releases
 (`.github/workflows/windows.yml`).
 
-## Unveröffentlicht
+## 1.5.0 – 02.10.2026
+
+Freunde mit Status, Aufbewahrung pro Unterhaltung und mehr Kontrolle beim
+Bildschirmteilen. Die Windows-App 1.4.0 holt sich diese Version von selbst.
 
 - **Freunde:** „Freund hinzufügen“ per PGP-Schlüssel oder Fingerabdruck,
   mit Anfrage und Annahme. Freunde sehen gegenseitig ihren Status –
