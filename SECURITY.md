@@ -84,6 +84,38 @@ erfunden.
   unveränderten, signierten Angaben.
 - In einem Sprachkanal ist jeder mit jedem verbunden (bis 8 Personen), es gibt
   keinen Server, der Ton oder Bild mischt.
+- Über einen Relay-Server (TURN) laufen dieselben DTLS-SRTP-Pakete; der
+  Betreiber sieht IP-Adressen, Zeit und Datenmenge, aber keinen Inhalt.
+- Blendet ein Zuschauer eine Bildschirmübertragung aus, meldet er das über
+  den verschlüsselten Datenkanal; der Sender schickt ihm dann nichts mehr
+  davon.
+
+### Freunde und Status
+
+- Die Freundschaftsanfrage ist eine Direktnachricht (OpenPGP, signiert) mit
+  einem gemeinsamen Geheimnis aus 32 Zufallsbytes. Erst nach der Annahme
+  tauschen beide ihren Status aus.
+- Aus dem Geheimnis entstehen per HKDF-SHA-256 zwei Fächer beim Server (je
+  Person eins, 256-Bit-Kennungen) und ein gemeinsamer AES-256-GCM-Schlüssel.
+  Jeder legt seinen Status dort verschlüsselt und immer gleich lang ab;
+  lesen kann ihn nur der Freund. „Als offline anzeigen“ leert die eigenen
+  Fächer.
+- Der Server kennt das Geheimnis nicht, weiß nicht, wem ein Fach gehört,
+  und hebt nur den jüngsten Stand auf – nach 150 Sekunden ist er weg.
+- Beenden oder Blockieren löscht die eigenen Fächer; ohne Geheimnis kann die
+  andere Seite nichts mehr lesen.
+
+### Aufbewahrung
+
+- Jede Direktnachricht trägt beim Server ein Ablaufdatum, das die
+  Unterhaltung festlegt (1 Stunde bis 30 Tage, Standard 7 Tage). Beide
+  Seiten stimmen sich per verschlüsselter Nachricht ab.
+- Wird die Dauer kürzer, löscht jede Seite ihre älteren Einträge beim Server
+  (nur im eigenen Briefkasten – welche zu welcher Unterhaltung gehören, weiß
+  nur der Browser). In Räumen setzt der Server die Dauer des Besitzers
+  selbst durch.
+- Abgelaufenes wird nicht mehr ausgeliefert und stündlich aus den Dateien
+  gelöscht.
 
 ### Konten
 
@@ -175,7 +207,8 @@ erfunden.
   Webservers steht nicht, was passiert ist.
 - Konten stehen nie in der Online-Liste, und der Server gibt ihren
   Online-Status an niemanden heraus – sonst ließe sich ein dauerhafter Name
-  mit Uhrzeiten verknüpfen. In der Liste erscheinen nur temporäre Sitzungen,
+  mit Uhrzeiten verknüpfen. Freunde sehen ihn über die verschlüsselten
+  Fächer (siehe oben). In der Liste erscheinen nur temporäre Sitzungen,
   solange sie sichtbar sein wollen. Wer in einem Sprachkanal ist, sehen
   weiterhin die Mitglieder dieses Raums.
 - Kennungen sind zufällig. Sitzungs-Token liegen beim Server nur als
@@ -185,9 +218,10 @@ erfunden.
   Sitzungen heraus, nicht der öffentlichen Seite.
 - Keine Cookies, keine Anfragen an fremde Server (Schriften liegen bei), strenge
   Content-Security-Policy ohne Inline-Skripte.
-- Anruf-Signale verfallen nach zwei Minuten, Nachrichten nach 30 Tagen,
-  temporäre Sitzungen nach 24 Stunden ohne Nutzung (die letzten beiden lassen
-  sich in `config.php` einstellen).
+- Anruf-Signale verfallen nach zwei Minuten, Nachrichten nach der für die
+  Unterhaltung gewählten Zeit (Standard 7 Tage, höchstens 30 Tage),
+  temporäre Sitzungen nach 24 Stunden ohne Nutzung (Höchstdauer und
+  Leerlaufzeit lassen sich in `config.php` einstellen).
 
 ## Was der Server trotzdem sieht
 
@@ -198,6 +232,9 @@ erfunden.
   (ohne dessen Namen).
 - Welcher Briefkasten wann wie viele Einträge bekommt. Wer eine Nachricht
   abschickt, sieht er im Moment der Anfrage, speichert es aber nicht.
+- Dass Status-Fächer beschrieben und gelesen werden – im Moment der Anfrage
+  auch von wem, gespeichert wird das nicht. Den Status selbst und wem ein
+  Fach gehört, kennt er nicht.
 - Bei Konten mit dem Postfach von achterberg.dev den SHA-256-Hash des
   Postfachs. Wer die Adresse kennt, kann sie damit dem Konto zuordnen.
 - Bei Anrufen ohne Relay sehen sich die Gesprächspartner gegenseitig die

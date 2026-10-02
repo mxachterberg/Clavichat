@@ -29,22 +29,31 @@ unverändert weiterlaufen.
   Auf achterberg.dev geht ein Konto auch ohne Passwort: Wer dort angemeldet
   ist, bestätigt sich über sein Postfach, den Schlüssel schützt ein
   Wiederherstellungscode.
+- **Freunde:** per öffentlichem Schlüssel oder Fingerabdruck hinzufügen;
+  nach der Annahme seht ihr gegenseitig euren Status (Online, Beschäftigt,
+  Abwesend – nach 10 Minuten ohne Eingabe von selbst – oder „Als offline
+  anzeigen“). Verschlüsselt: Der Server weiß nicht, wer mit wem befreundet
+  ist.
 - **Wer ist da:** Online-Liste mit Alias und Fingerabdruck – nur für
-  temporäre Sitzungen. Konten zeigen niemandem, ob sie online sind.
-  Verbinden per öffentlichem Schlüssel oder Fingerabdruck.
+  temporäre Sitzungen. Konten zeigen ihren Status nur Freunden.
 - **Schreiben:** Direktnachrichten und Räume mit Textkanälen und Raumbild.
   Einladung per Link oder direkt; wer den Raum verlässt oder entfernt wird,
-  löst einen neuen Raumschlüssel aus.
+  löst einen neuen Raumschlüssel aus. Wie lange Nachrichten bleiben, legt
+  jede Unterhaltung fest (1 Stunde bis 30 Tage, Standard 7 Tage) – danach
+  löscht sie der Server.
 - **Sprechen und zeigen:** Sprach- und Videoanrufe in wählbarer Tonqualität
-  (bis 128 kbit/s in Stereo), mehrere Sprachkanäle je Raum (je bis 8 Personen),
-  Bildschirm teilen in wählbarer Qualität (von „Sparsam“ bis „Quelle“:
-  Originalauflösung mit 60 fps, auch während der Übertragung) – in der
-  Windows-App auch mit dem Ton des Computers. Ein Sicherheitscode zeigt, dass
-  niemand dazwischensitzt.
+  (bis 128 kbit/s in Stereo; in Räumen auf Wunsch für alle festgelegt),
+  mehrere Sprachkanäle je Raum (je bis 8 Personen), Bildschirm teilen in
+  wählbarer Qualität (von „Sparsam“ bis „Quelle“: Originalauflösung mit
+  60 fps, auch während der Übertragung) – in der Windows-App auch mit dem Ton
+  des Computers. Zuschauer können bis zehnfach hineinzoomen, die Werte der
+  Übertragung sehen oder sie ausblenden. Verbindungsqualität und ein
+  Sicherheitscode stehen oben rechts.
 - **Benachrichtigungen** nennen nur Absender oder Anrufer, nie den Inhalt.
-- **Kleinigkeiten:** Unterhaltungen per Rechtsklick (Handy: lange drücken) als
-  gelesen markieren oder löschen; temporäre Sitzungen ohne Alias bekommen einen
-  Zufallsnamen; nach einem Anruf steht die Dauer im Verlauf.
+- **Kleinigkeiten:** Unterhaltungen und Kanäle per Rechtsklick (Handy: lange
+  drücken) als gelesen markieren, umbenennen oder löschen; temporäre
+  Sitzungen ohne Alias bekommen einen Zufallsnamen; nach einem Anruf steht
+  die Dauer im Verlauf.
 
 ## So schützt Clavichat
 
@@ -57,6 +66,8 @@ unverändert weiterlaufen.
 | Anrufe, Bildschirm | WebRTC direkt zwischen den Geräten (DTLS-SRTP). Verbindungsangaben signiert und verschlüsselt, Sicherheitscode aus den DTLS-Fingerabdrücken |
 | Konten | PBKDF2-SHA-256 (600.000 Runden) → HKDF → Anmeldeschlüssel (beim Server nur als bcrypt-Hash) und ein Schlüssel, der den privaten PGP-Schlüssel einpackt |
 | Konto mit achterberg.dev | Postfach per HMAC-SHA-256-Ticket bestätigt (fünf Minuten, nur einmal); statt Passwort ein Wiederherstellungscode mit 160 Zufallsbits → HKDF-SHA-256 |
+| Freunde, Status | gemeinsames Geheimnis aus der PGP-verschlüsselten Anfrage → HKDF → zwei zufällige Fächer beim Server und ein AES-256-GCM-Schlüssel; der Server sieht weder Status noch Freundschaften |
+| Aufbewahrung | Ablaufdatum je Nachricht beim Server (Standard 7 Tage); verkürzt eine Unterhaltung, löscht jede Seite ihre älteren Einträge; Abgelaufenes wird stündlich gelöscht |
 | Updates (Windows-App) | Update-Liste mit Ed25519 signiert, Datei mit SHA-256 geprüft; der Signaturschlüssel liegt nur beim Herausgeber |
 | Länge | jeder Klartext wird vor dem Verschlüsseln auf feste Größen aufgefüllt |
 

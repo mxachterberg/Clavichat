@@ -4,6 +4,32 @@ Was sich von Version zu Version ändert. Beim Veröffentlichen wird der
 Abschnitt einer Version zum Text des GitHub-Releases
 (`.github/workflows/windows.yml`).
 
+## Unveröffentlicht
+
+- **Freunde:** „Freund hinzufügen“ per PGP-Schlüssel oder Fingerabdruck,
+  mit Anfrage und Annahme. Freunde sehen gegenseitig ihren Status –
+  verschlüsselt, der Server weiß nicht, wer mit wem befreundet ist.
+- **Status** per Klick auf das eigene Profil unten links: Online,
+  Beschäftigt, Abwesend, Als offline anzeigen. Nach 10 Minuten ohne
+  Eingabe automatisch abwesend (Windows-App: am ganzen Rechner).
+- **Aufbewahrung pro Unterhaltung:** 1 Stunde, 24 Stunden, 7 Tage
+  (Standard) oder 30 Tage, für beide Seiten; in Räumen legt sie der
+  Besitzer fest. Danach löscht der Server die Nachrichten wirklich.
+- **Bildschirm teilen:** Rädchen mit Auflösung, Bildrate, Datenrate und
+  Paketverlust; Zoom bis zehnfach (auch im Vollbild); Übertragung
+  ausblenden – der Sender schickt dann nichts mehr.
+- **Verbindungsqualität** oben rechts in Anrufen und Sprachkanälen.
+- **Räume:** Rechtsklick-Menüs für Text- und Sprachkanäle; der Besitzer
+  kann eine Sprachqualität für den ganzen Raum festlegen.
+- **Relay-Server (TURN)** in den Einstellungen: zeigt, ob er da und
+  erreichbar ist (mit Probe-Verbindung).
+- Behoben: Nach einem Qualitätswechsel beim Bildschirmteilen blieb bei
+  Zuschauern am Handy das Bild stehen. Die Qualität setzt jetzt der
+  Encoder um; Handys bekommen höchstens 1080p mit 30 Bildern pro Sekunde.
+- Behoben: Auf dem Handy klingelte ein eingehender Anruf nicht. Der Ton
+  wird beim ersten Tippen freigeschaltet; Android vibriert.
+- Kästchen im Stil der Seite.
+
 ## 1.4.0 – 02.10.2026
 
 Erste Version unter neuem Namen und die erste, die sich selbst
