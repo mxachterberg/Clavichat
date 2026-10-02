@@ -106,7 +106,7 @@ $core = 'assets/securecom-core.js?v=' . $v('securecom-core.js');
 
 <div class="sc-boot" id="sc-boot" role="status" aria-live="polite">
   <div class="sc-boot-box">
-    <p class="sc-boot-head"><span class="sc-boot-sq"></span>SECURECOM</p>
+    <p class="sc-boot-head"><span class="sc-boot-sq"></span>CLAVICHAT</p>
     <div class="sc-boot-bar"><span id="sc-boot-fill"></span></div>
     <p class="sc-boot-status" id="sc-boot-status">WIRD GELADEN</p>
     <p class="sc-boot-error" id="sc-boot-error" hidden></p>
