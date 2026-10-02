@@ -1,6 +1,6 @@
 {
-  "appId": "dev.achterberg.securecom.server",
-  "productName": "SecureCom Server",
+  "appId": "dev.achterberg.clavichat.server",
+  "productName": "Clavichat Server",
   "copyright": "© 2026 Max Achterberg",
   "directories": {
     "output": "dist-server",
@@ -8,9 +8,9 @@
   },
   "extraMetadata": {
     "main": "host/main.js",
-    "name": "securecom-server",
-    "productName": "SecureCom Server",
-    "description": "SecureCom-Server für das eigene Netz – mit HTTPS, Daten bleiben auf diesem Rechner."
+    "name": "clavichat-server",
+    "productName": "Clavichat Server",
+    "description": "Clavichat-Server für das eigene Netz – mit HTTPS, Daten bleiben auf diesem Rechner."
   },
   "files": [
     "package.json",
@@ -36,12 +36,12 @@
     "perMachine": false,
     "allowToChangeInstallationDirectory": true,
     "createDesktopShortcut": true,
-    "shortcutName": "SecureCom Server",
+    "shortcutName": "Clavichat Server",
     "installerLanguages": ["de_DE", "en_US"],
     "language": "1031",
-    "artifactName": "SecureCom-Server-Setup-${version}.${ext}"
+    "artifactName": "Clavichat-Server-Setup-${version}.${ext}"
   },
   "portable": {
-    "artifactName": "SecureCom-Server-portable.${ext}"
+    "artifactName": "Clavichat-Server-portable.${ext}"
   }
 }

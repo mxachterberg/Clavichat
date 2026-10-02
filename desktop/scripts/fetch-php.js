@@ -1,5 +1,5 @@
 /* ==========================================================================
-   SecureCom Server — PHP bereitstellen (host/php)
+   Clavichat Server — PHP bereitstellen (host/php)
    --------------------------------------------------------------------------
    Der Windows-Server bringt PHP mit. Dieses Skript holt das offizielle
    Paket von php.net, prüft es gegen die festgelegte SHA-256-Prüfsumme und

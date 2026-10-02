@@ -1,5 +1,5 @@
 /* ==========================================================================
-   SecureCom — Kryptografie
+   Clavichat — Kryptografie
    --------------------------------------------------------------------------
    Alles, was ver- und entschlüsselt, läuft hier im Browser. Der Server sieht
    nur, was diese Funktionen herausgeben: Chiffretext, öffentliche Schlüssel
@@ -119,7 +119,7 @@ export async function generateIdentity() {
   const pair = await openpgp.generateKey({
     type: 'ecc',
     curve: 'curve25519Legacy',
-    userIDs: [{ name: 'SecureCom' }],
+    userIDs: [{ name: 'Clavichat' }],
     format: 'object',
     config: Object.assign({}, PGP, { aeadProtect: true })
   });

@@ -1,4 +1,4 @@
-/* SecureCom — Auswahl beim Bildschirm teilen (Windows-App). */
+/* Clavichat — Auswahl beim Bildschirm teilen (Windows-App). */
 (function () {
   'use strict';
 

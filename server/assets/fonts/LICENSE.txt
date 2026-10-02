@@ -1,4 +1,4 @@
-Schriften für SecureCom (werden vom eigenen Server geladen statt von Google):
+Schriften für Clavichat (werden vom eigenen Server geladen statt von Google):
 
 Inter (400, 500, 600)
   Copyright (c) 2016 The Inter Project Authors (https://github.com/rsms/inter)

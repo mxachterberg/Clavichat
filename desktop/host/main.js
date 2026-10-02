@@ -1,5 +1,5 @@
 /* ==========================================================================
-   SecureCom Server — der SecureCom-Server als Windows-Programm
+   Clavichat Server — der Clavichat-Server als Windows-Programm
    --------------------------------------------------------------------------
    Startet das mitgelieferte PHP mit dem eigenständigen Server (server/) und
    setzt HTTPS davor – Browser geben Verschlüsselung (WebCrypto) und
@@ -11,7 +11,8 @@
    Das Zertifikat entsteht beim ersten Start (cert.js). Wer aus Versehen
    http:// tippt, wird auf demselben Port zu https:// umgeleitet.
 
-   Alles Veränderliche liegt in %APPDATA%\SecureCom Server:
+   Alles Veränderliche liegt in %APPDATA%\Clavichat Server (wer den Server
+   schon als SecureCom Server hatte: weiter in %APPDATA%\SecureCom Server):
      data\          Ablage (Konten, Räume, Briefkästen – verschlüsselt)
      config.php     Einstellungen (Zugangscode, Relay-Server …)
      settings.json  Port, Heimnetz, Autostart
@@ -43,16 +44,25 @@ const EXE = PORTABLE || process.execPath;
 // Installiert wie appId in host/builder.json (steht so an den Verknüpfungen
 // des Installers). Die portable Fassung bekommt eine eigene Kennung, sonst
 // nähme Windows das Symbol einer – womöglich kaputten – Verknüpfung.
-const APP_ID = 'dev.achterberg.securecom.server' +
+const APP_ID = 'dev.achterberg.clavichat.server' +
   (SMOKE ? '.selbsttest' : !PACKED ? '.dev' : PORTABLE ? '.portable' : '');
 
 // Eigener Ordner, auch beim Entwickeln (sonst teilte er sich den der App).
-app.setName('SecureCom Server');
+app.setName('Clavichat Server');
 app.setAppUserModelId(APP_ID);
 // SECURECOM_SERVER_HOME: anderer Ordner für Daten und Einstellungen (Tests, mehrere Server).
+// Bis Oktober 2026 hieß der Server SecureCom Server – vorhandene Daten,
+// Zertifikat (und damit der Fingerabdruck) bleiben dann, wo sie sind.
 app.setPath('userData', process.env.SECURECOM_SERVER_HOME || (SMOKE
-  ? path.join(app.getPath('temp'), 'SecureCom-Server-Selbsttest')
-  : path.join(app.getPath('appData'), 'SecureCom Server')));
+  ? path.join(app.getPath('temp'), 'Clavichat-Server-Selbsttest')
+  : profileDir('Clavichat Server', 'SecureCom Server')));
+
+/** Neuer Profilordner – oder der alte, solange es nur den gibt. */
+function profileDir(name, legacyName) {
+  const now = path.join(app.getPath('appData'), name);
+  const legacy = path.join(app.getPath('appData'), legacyName);
+  return !fs.existsSync(now) && fs.existsSync(legacy) ? legacy : now;
+}
 if (SMOKE) {
   app.commandLine.appendSwitch('disable-features', 'CalculateNativeWinOcclusion');
   app.commandLine.appendSwitch('disable-backgrounding-occluded-windows');
@@ -113,7 +123,7 @@ function ensureConfig() {
   fs.writeFileSync(FILES.config, [
     '<?php',
     '/**',
-    ' * SecureCom Server – Einstellungen. Nach Änderungen im Fenster',
+    ' * Clavichat Server – Einstellungen. Nach Änderungen im Fenster',
     ' * „Neu starten“ wählen. Alle Möglichkeiten zeigt config.sample.php',
     ' * im Programmordner (resources\\server).',
     ' */',
@@ -157,7 +167,7 @@ function ensureCertificate() {
   } catch (e) { /* noch keins */ }
   const host = os.hostname();
   const made = makeCertificate(['localhost', host, host + '.local', '127.0.0.1', '::1', ...lanAddresses()],
-    'SecureCom Server (' + host + ')');
+    'Clavichat Server (' + host + ')');
   fs.writeFileSync(FILES.cert, made.cert);
   fs.writeFileSync(FILES.key, made.key, { mode: 0o600 });
   S.tls = { cert: made.cert, key: made.key, fingerprint: made.fingerprint };
@@ -253,7 +263,7 @@ function proxy(req, res) {
   });
   upstream.on('error', () => {
     if (!res.headersSent) res.writeHead(502, { 'Content-Type': 'text/plain; charset=utf-8' });
-    res.end('SecureCom Server: PHP antwortet gerade nicht.');
+    res.end('Clavichat Server: PHP antwortet gerade nicht.');
   });
   req.pipe(upstream);
 }
@@ -266,7 +276,7 @@ function startFront() {
     const plain = http.createServer((req, res) => {
       const host = req.headers.host || ('localhost:' + S.settings.port);
       res.writeHead(301, { Location: 'https://' + host + (req.url || '/'), 'Content-Type': 'text/plain; charset=utf-8' });
-      res.end('SecureCom läuft nur über https://');
+      res.end('Clavichat läuft nur über https://');
     });
     const front = net.createServer((socket) => {
       socket.on('error', () => {});
@@ -341,7 +351,7 @@ function state() {
     data: FILES.data,
     config: FILES.config,
     version: app.getVersion(),
-    // Zum Einfügen in %APPDATA%\SecureCom\config.json der Windows-App
+    // Zum Einfügen in %APPDATA%\Clavichat\config.json der Windows-App
     client: JSON.stringify({ api: main + 'api.php', web: main, fingerprint: S.tls ? S.tls.fingerprint : '' }, null, 2),
     log: S.log
   };
@@ -349,7 +359,7 @@ function state() {
 
 function push() {
   if (win && !win.isDestroyed()) win.webContents.send('host:state', state());
-  if (tray) tray.setToolTip('SecureCom Server – ' + (S.status === 'läuft' ? 'läuft' : S.status === 'fehler' ? 'Fehler' : 'startet'));
+  if (tray) tray.setToolTip('Clavichat Server – ' + (S.status === 'läuft' ? 'läuft' : S.status === 'fehler' ? 'Fehler' : 'startet'));
 }
 
 ipcMain.handle('host:state', () => state());
@@ -369,7 +379,7 @@ ipcMain.handle('host:copy', (event, text) => { clipboard.writeText(String(text |
 ipcMain.handle('host:open', (event, what) => {
   if (what === 'data') return shell.openPath(FILES.data);
   if (what === 'config') return shell.openPath(FILES.config);
-  if (what === 'client') return shell.openPath(path.join(app.getPath('appData'), 'SecureCom'));
+  if (what === 'client') return shell.openPath(profileDir('Clavichat', 'SecureCom'));
   if (typeof what === 'string' && /^https:\/\/[^\s]+$/.test(what)) return shell.openExternal(what);
   return null;
 });
@@ -393,7 +403,7 @@ function createWindow(show) {
     height: 760,
     minWidth: 560,
     minHeight: 520,
-    title: 'SecureCom Server',
+    title: 'Clavichat Server',
     backgroundColor: '#0b0b0d',
     titleBarStyle: 'hidden',
     titleBarOverlay: { color: '#0b0b0d', symbolColor: '#a2a2a7', height: 35 },
@@ -414,7 +424,7 @@ function createWindow(show) {
       appIconPath: EXE,
       appIconIndex: 0,
       relaunchCommand: '"' + EXE + '"',
-      relaunchDisplayName: 'SecureCom Server'
+      relaunchDisplayName: 'Clavichat Server'
     });
   }
   win.once('ready-to-show', () => { if (SMOKE) win.showInactive(); else if (show) win.show(); });
@@ -427,7 +437,7 @@ function createWindow(show) {
     win.hide();
     if (!S.hinted && tray) {
       S.hinted = true;
-      tray.displayBalloon({ title: 'SecureCom Server läuft weiter', content: 'Beenden über das Symbol im Infobereich.', iconType: 'info' });
+      tray.displayBalloon({ title: 'Clavichat Server läuft weiter', content: 'Beenden über das Symbol im Infobereich.', iconType: 'info' });
     }
   });
   win.loadFile(path.join(__dirname, 'window.html'));

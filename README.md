@@ -1,13 +1,19 @@
-# SecureCom
+# Clavichat
 
 Ende-zu-Ende verschlüsselt schreiben, telefonieren und den Bildschirm teilen –
 im Browser oder als Windows-App. Der Server speichert und verteilt nur
 Chiffretext, öffentliche Schlüssel und Signaturen.
 
-**Ausprobieren:** <https://achterberg.dev/app/securecom/> ·
-**Windows-App:** [Releases](https://github.com/mxachterberg/securecom/releases)
+**Ausprobieren:** <https://achterberg.dev/app/clavichat/> ·
+**Windows-App:** [Releases](https://github.com/mxachterberg/clavichat/releases)
 
-> **English:** SecureCom is an end-to-end encrypted messenger with voice and
+Der Name kommt vom lateinischen *clavis*, „der Schlüssel“. Bis Oktober 2026
+hieß das Projekt SecureCom; einige Dateien und Einstellungen tragen den alten
+Namen weiter (`securecom.js`, `SecureCom.php`, Umgebungsvariablen
+`SECURECOM_*`), damit bestehende Installationen, Konten und Daten
+unverändert weiterlaufen.
+
+> **English:** Clavichat is an end-to-end encrypted messenger with voice and
 > video calls and screen sharing, built on OpenPGP.js, WebCrypto and WebRTC.
 > The PHP server needs no database and only ever handles ciphertext. The
 > Windows app (Electron) ships the client code itself, so the server cannot
@@ -37,7 +43,7 @@ Chiffretext, öffentliche Schlüssel und Signaturen.
   gelesen markieren oder löschen; temporäre Sitzungen ohne Alias bekommen einen
   Zufallsnamen; nach einem Anruf steht die Dauer im Verlauf.
 
-## So schützt SecureCom
+## So schützt Clavichat
 
 | Was | Wie |
 |---|---|
@@ -62,7 +68,7 @@ server/            PHP-Server ohne Datenbank, dazu die Web-Oberfläche
                    OpenPGP.js unter vendor/, Schriften unter fonts/
   router.php       Weiche für den eingebauten PHP-Server (php -S)
 desktop/           Windows-App (Electron), nimmt die Oberfläche aus server/assets
-  host/            SecureCom Server für Windows: PHP + HTTPS als Programm
+  host/            Clavichat Server für Windows: PHP + HTTPS als Programm
 Dockerfile         Server als Container (Apache + PHP)
 compose.yaml       Container samt Caddy für HTTPS – fürs Homelab
 docker/            Einstellungen für den Container
@@ -78,13 +84,13 @@ Gebraucht wird ein Webspace mit **PHP 8** (getestet mit 8.3), **HTTPS** und
 Apache. Keine Datenbank, kein Composer; die PHP-Erweiterung `curl` nur für
 Cloudflare-TURN.
 
-1. Den Inhalt von `server/` hochladen, zum Beispiel nach `/securecom/`.
+1. Den Inhalt von `server/` hochladen, zum Beispiel nach `/clavichat/`.
 2. Optional `config.sample.php` als `config.php` speichern und anpassen. Am
    wichtigsten: `storage_dir` **außerhalb** des Webroots.
-3. Ohne `storage_dir` legt SecureCom `storage/` neben `api.php` an und sperrt
+3. Ohne `storage_dir` legt Clavichat `storage/` neben `api.php` an und sperrt
    den Ordner per `.htaccess`. PHP muss dort schreiben dürfen (Ordner 755,
    Dateien 644, nie 777).
-4. `https://example.com/securecom/` aufrufen.
+4. `https://example.com/clavichat/` aufrufen.
 
 **nginx** liest keine `.htaccess`. Dann selbst sperren: `lib/`, `storage/`,
 `config.php` und Dateien mit den Endungen `.json`, `.jsonl`, `.key`, `.md`,
@@ -105,9 +111,9 @@ Rate-Limits.
 
 ## Server unter Windows
 
-Ohne Webspace, etwa für das Heimnetz: **SecureCom Server** startet den Server
+Ohne Webspace, etwa für das Heimnetz: **Clavichat Server** startet den Server
 per Doppelklick (Installer oder portable Fassung unter
-[Releases](https://github.com/mxachterberg/securecom/releases)). PHP ist dabei,
+[Releases](https://github.com/mxachterberg/clavichat/releases)). PHP ist dabei,
 einrichten muss man nichts.
 
 - Das Fenster zeigt die Adressen, etwa `https://192.168.1.10:8443/`. Andere
@@ -117,7 +123,7 @@ einrichten muss man nichts.
   und Mikrofon nur über HTTPS frei. Beim ersten Aufruf warnt der Browser
   einmal; der Fingerabdruck im Fenster zeigt, ob es das richtige Zertifikat ist.
 - Läuft im Hintergrund weiter (Symbol im Infobereich), auf Wunsch mit Windows.
-- Daten und Einstellungen liegen in `%APPDATA%\SecureCom Server`: `data` und
+- Daten und Einstellungen liegen in `%APPDATA%\Clavichat Server`: `data` und
   `config.php` (Zugangscode, Relay-Server). Ein Update ändert daran nichts.
 - Aus dem Internet erreichbar machen geht auch (Portweiterleitung), dann aber
   besser mit eigener Domain und Docker – siehe unten.
@@ -128,7 +134,7 @@ einrichten muss man nichts.
 docker compose up -d
 ```
 
-`compose.yaml` startet SecureCom (Apache + PHP) und davor Caddy, das sich um
+`compose.yaml` startet Clavichat (Apache + PHP) und davor Caddy, das sich um
 HTTPS kümmert. Die Adresse steht in `SECURECOM_SITE` (in einer `.env`-Datei
 daneben oder in der Shell):
 
@@ -139,9 +145,9 @@ daneben oder in der Shell):
 | leer | `localhost` |
 
 Schon ein Reverse-Proxy im Einsatz (Traefik, Nginx Proxy Manager …)? Dann nur
-den Dienst `securecom` nehmen, einen Port freigeben (`"8080:80"`) und den Proxy
+den Dienst `clavichat` nehmen, einen Port freigeben (`"8080:80"`) und den Proxy
 dorthin zeigen lassen. Ab dem ersten Release gibt es das Image fertig (amd64
-und arm64, also auch für den Raspberry Pi): `ghcr.io/mxachterberg/securecom`.
+und arm64, also auch für den Raspberry Pi): `ghcr.io/mxachterberg/clavichat`.
 
 Einstellungen über Umgebungsvariablen, alle optional (Liste in
 `docker/config.php`): `SECURECOM_PUBLIC_URL`, `SECURECOM_ACCESS_CODE`,
@@ -160,12 +166,12 @@ node tests/e2e.mjs
 Der Test (Node 20 oder neuer) legt Identitäten, ein Konto und einen Raum an,
 prüft Verschlüsselung, Signaturen, Rechte und Schlüsselwechsel und löscht am
 Ende alles wieder. Gegen einen anderen Server:
-`SECURECOM_API=https://example.com/securecom/api.php node tests/e2e.mjs`.
+`SECURECOM_API=https://example.com/clavichat/api.php node tests/e2e.mjs`.
 
 ## Windows-App
 
 Installer und portable Fassung liegen unter
-[Releases](https://github.com/mxachterberg/securecom/releases). Die App ist
+[Releases](https://github.com/mxachterberg/clavichat/releases). Die App ist
 nicht signiert; Windows SmartScreen fragt deshalb beim ersten Start nach
 („Weitere Informationen“ → „Trotzdem ausführen“).
 
@@ -180,18 +186,18 @@ Unterschiede zur Web-Fassung:
   Fenster in der Taskleiste blinken.
 
 Die App verbindet sich mit `https://achterberg.dev`. Für einen eigenen Server
-`%APPDATA%\SecureCom\config.json` anlegen:
+`%APPDATA%\Clavichat\config.json` anlegen:
 
 ```json
 {
-  "api": "https://example.com/securecom/api.php",
-  "web": "https://example.com/securecom/"
+  "api": "https://example.com/clavichat/api.php",
+  "web": "https://example.com/clavichat/"
 }
 ```
 
-`web` ist die Adresse für Einladungslinks. Liegt SecureCom wie auf
-achterberg.dev unter `/app/securecom/`, reicht `{ "server": "https://example.com" }`.
-Für den **SecureCom Server** (selbst erstelltes Zertifikat) kommt
+`web` ist die Adresse für Einladungslinks. Liegt Clavichat wie auf
+achterberg.dev unter `/app/clavichat/`, reicht `{ "server": "https://example.com" }`.
+Für den **Clavichat Server** (selbst erstelltes Zertifikat) kommt
 `"fingerprint"` dazu – den fertigen Text zeigt dessen Fenster. Die App vertraut
 dann genau diesem Zertifikat und keinem anderen.
 Dieselben Angaben gehen auch über die Umgebungsvariablen `SECURECOM_SERVER`,

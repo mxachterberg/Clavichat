@@ -1,11 +1,11 @@
 <?php
 /**
  * ============================================================================
- *  SecureCom — Schnittstelle für den Browser.
+ *  Clavichat — Schnittstelle für den Browser.
  * ============================================================================
  *  Alle Aufrufe: POST an genau diese Adresse, JSON {"a": "<aktion>", …}.
  *  Die Aktion steht bewusst nicht in der Adresse: In den Zugriffsprotokollen
- *  des Servers steht so nur, DASS SecureCom benutzt wird – nicht was.
+ *  des Servers steht so nur, DASS Clavichat benutzt wird – nicht was.
  *
  *  Angemeldet wird mit dem Kopf "X-SC-Token" statt mit einem Cookie. Ein
  *  Kopf wird nie von selbst mitgeschickt, fremde Seiten können also keine

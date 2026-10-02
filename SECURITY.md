@@ -6,9 +6,9 @@ Bitte nicht als öffentliches Issue melden, sondern vertraulich über
 **Security → Report a vulnerability** in diesem Repository. Ich melde mich so
 schnell wie möglich.
 
-## Wovor SecureCom schützt
+## Wovor Clavichat schützt
 
-SecureCom geht davon aus, dass der Server mitliest, Daten herausgibt oder
+Clavichat geht davon aus, dass der Server mitliest, Daten herausgibt oder
 gestohlen wird. Dagegen hilft die Ende-zu-Ende-Verschlüsselung: Alles
 Verschlüsseln und Entschlüsseln passiert auf den Geräten
 (`server/assets/securecom-core.js`). Der Server bekommt nur Chiffretext,
@@ -29,7 +29,7 @@ erfunden.
   Namen an den Schlüssel. Ändert der Server einen Namen, passt die Signatur
   nicht mehr.
 - Kontakte werden beim ersten Kontakt gemerkt (Trust on first use). Taucht
-  später ein anderer Schlüssel auf, warnt SecureCom deutlich und sperrt das
+  später ein anderer Schlüssel auf, warnt Clavichat deutlich und sperrt das
   Schreiben, bis man den neuen Schlüssel annimmt. Wer den Fingerabdruck über
   einen zweiten Weg geprüft hat, markiert den Kontakt als verifiziert.
 - Der Export zum Sichern ist mit einer Passphrase geschützt (Iterated+Salted
@@ -79,7 +79,7 @@ erfunden.
   über den Server und verfallen nach zwei Minuten.
 - Sicherheitscode: SHA-256 über die beiden DTLS-Fingerabdrücke, daraus sechs
   Ziffern. Sehen beide dieselbe Zahl, sitzt niemand dazwischen.
-- Für Stereo-Ton ergänzt SecureCom vor dem Übernehmen der Verbindungsangaben
+- Für Stereo-Ton ergänzt Clavichat vor dem Übernehmen der Verbindungsangaben
   des Gegenübers `stereo=1`. Der Sicherheitscode rechnet weiter mit den
   unveränderten, signierten Angaben.
 - In einem Sprachkanal ist jeder mit jedem verbunden (bis 8 Personen), es gibt
@@ -109,7 +109,7 @@ erfunden.
 
 ### Eigener Server (Windows, Docker)
 
-- **SecureCom Server für Windows** erzeugt beim ersten Start ein eigenes
+- **Clavichat Server für Windows** erzeugt beim ersten Start ein eigenes
   Zertifikat (EC P-256, 800 Tage). Browser warnen beim ersten Aufruf; ob es
   das richtige ist, zeigt der Fingerabdruck im Fenster des Servers. Die
   Windows-App vertraut dem Zertifikat nur mit passendem Fingerabdruck in der
@@ -117,7 +117,7 @@ erfunden.
 - Der HTTPS-Teil lauscht auf dem eingestellten Port, PHP nur auf `127.0.0.1`.
   Programmteile, Einstellungen und Daten liefert der eingebaute PHP-Server über
   `router.php` nie aus; die Daten liegen ohnehin außerhalb des Programmordners.
-- **Im Container** spricht SecureCom nur HTTP; HTTPS übernimmt der Proxy davor
+- **Im Container** spricht Clavichat nur HTTP; HTTPS übernimmt der Proxy davor
   (Caddy in `compose.yaml`). Die Daten liegen im Volume `/data`, außerhalb des
   Webroots.
 - Hinter einem Proxy zählt für die Rate-Limits die Adresse aus
@@ -162,7 +162,7 @@ erfunden.
 
 ## Grenzen
 
-- **Web-Fassung:** Wie jede Web-App lädt SecureCom seinen Programmcode vom
+- **Web-Fassung:** Wie jede Web-App lädt Clavichat seinen Programmcode vom
   Server. Ein Betreiber, der gezielt veränderten Code ausliefert, könnte
   Schlüssel abgreifen. Die Windows-App bringt ihren Code selbst mit (Protokoll
   `app://securecom`, Content-Security-Policy nur für eigene Dateien). Der
@@ -178,4 +178,4 @@ erfunden.
   einen zweiten Weg geprüft werden. Ohne Prüfung schützt nur Trust on first use.
 - **Gerät:** Gegen Schadsoftware oder Browser-Erweiterungen mit Zugriff auf die
   Seite hilft keine Verschlüsselung.
-- **Prüfung:** SecureCom hat kein externes Sicherheitsaudit hinter sich.
+- **Prüfung:** Clavichat hat kein externes Sicherheitsaudit hinter sich.

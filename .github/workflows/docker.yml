@@ -1,6 +1,6 @@
 # Baut das Server-Image (amd64 und arm64, etwa für den Raspberry Pi) bei
 # jedem Versions-Tag und legt es in der GitHub Container Registry ab:
-#   ghcr.io/<besitzer>/securecom:<version> und :latest
+#   ghcr.io/<besitzer>/clavichat:<version> und :latest
 # Nur Bordmittel des Runners (docker buildx) – keine fremden Actions.
 name: Docker
 
@@ -25,7 +25,7 @@ jobs:
         run: |
           IMAGE="ghcr.io/${GITHUB_REPOSITORY,,}"
           VERSION="${GITHUB_REF_NAME#v}"
-          docker buildx create --use --name securecom
+          docker buildx create --use --name clavichat
           docker buildx build --platform linux/amd64,linux/arm64 \
             --tag "$IMAGE:$VERSION" --tag "$IMAGE:latest" \
             --label "org.opencontainers.image.version=$VERSION" \

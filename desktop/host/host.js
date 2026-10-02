@@ -1,4 +1,4 @@
-/* SecureCom Server — Statusfenster. Alles Handeln läuft über window.host (preload.js). */
+/* Clavichat Server — Statusfenster. Alles Handeln läuft über window.host (preload.js). */
 (function () {
   'use strict';
 
@@ -53,7 +53,7 @@
     var atEnd = log.scrollTop + log.clientHeight >= log.scrollHeight - 8;
     log.textContent = s.log.join('\n');
     if (atEnd) log.scrollTop = log.scrollHeight;
-    $('hs-version').textContent = 'SecureCom Server ' + s.version;
+    $('hs-version').textContent = 'Clavichat Server ' + s.version;
   }
 
   $('hs-restart').addEventListener('click', function () { window.host.restart(); });

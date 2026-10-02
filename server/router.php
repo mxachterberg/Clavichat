@@ -1,7 +1,7 @@
 <?php
 /**
  * ============================================================================
- *  SecureCom — Weiche für den eingebauten PHP-Server
+ *  Clavichat — Weiche für den eingebauten PHP-Server
  * ============================================================================
  *    php -S 127.0.0.1:8130 -t server server/router.php
  *

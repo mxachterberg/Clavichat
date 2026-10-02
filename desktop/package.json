@@ -1,14 +1,14 @@
 {
-  "name": "securecom",
-  "productName": "SecureCom",
+  "name": "clavichat",
+  "productName": "Clavichat",
   "version": "1.3.1",
   "description": "Ende-zu-Ende verschlüsselt schreiben, telefonieren und den Bildschirm teilen.",
   "author": "Max Achterberg",
   "license": "MIT",
-  "homepage": "https://achterberg.dev/app/securecom/",
+  "homepage": "https://achterberg.dev/app/clavichat/",
   "repository": {
     "type": "git",
-    "url": "https://github.com/mxachterberg/securecom.git"
+    "url": "https://github.com/mxachterberg/clavichat.git"
   },
   "private": true,
   "main": "main.js",
@@ -29,8 +29,8 @@
     "electron-builder": "26.15.3"
   },
   "build": {
-    "appId": "dev.achterberg.securecom",
-    "productName": "SecureCom",
+    "appId": "dev.achterberg.clavichat",
+    "productName": "Clavichat",
     "copyright": "© 2026 Max Achterberg",
     "directories": {
       "output": "dist",
@@ -59,13 +59,13 @@
       "perMachine": false,
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,
-      "shortcutName": "SecureCom",
+      "shortcutName": "Clavichat",
       "installerLanguages": ["de_DE", "en_US"],
       "language": "1031",
-      "artifactName": "SecureCom-Setup-${version}.${ext}"
+      "artifactName": "Clavichat-Setup-${version}.${ext}"
     },
     "portable": {
-      "artifactName": "SecureCom-portable.${ext}"
+      "artifactName": "Clavichat-portable.${ext}"
     }
   }
 }

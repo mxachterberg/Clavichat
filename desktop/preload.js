@@ -1,4 +1,4 @@
-/* SecureCom — Brücke zwischen Oberfläche und App. */
+/* Clavichat — Brücke zwischen Oberfläche und App. */
 'use strict';
 
 const { contextBridge, ipcRenderer } = require('electron');

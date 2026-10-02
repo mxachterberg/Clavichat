@@ -1,4 +1,4 @@
-// SecureCom — Ende-zu-Ende-Test: Kryptografie-Modul und Server zusammen.
+// Clavichat — Ende-zu-Ende-Test: Kryptografie-Modul und Server zusammen.
 //
 //   php -S 127.0.0.1:8130 -t server        (in einem zweiten Fenster)
 //   node tests/e2e.mjs
