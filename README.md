@@ -215,8 +215,12 @@ Installer und portable Fassung in `desktop/dist/` ab. Der Windows-Server:
 weil npm das Installationsskript übersprungen hat:
 `node node_modules/electron/install.js`.
 
+`npm run build` und `npm run build:server` räumen danach auf: Im Ausgabeordner
+bleibt nur die aktuelle Version.
+
 Ein Tag wie `v1.3.0` baut über GitHub Actions App und Server und legt beide als
-Entwurf unter Releases ab; dasselbe Tag baut das Docker-Image
+Entwurf unter Releases ab; der Text kommt aus dem passenden Abschnitt von
+[CHANGELOG.md](CHANGELOG.md). Dasselbe Tag baut das Docker-Image
 (`.github/workflows/`).
 
 ## Lizenz

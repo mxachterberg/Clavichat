@@ -37,10 +37,14 @@ const SERVER_DIR = PACKED ? path.join(process.resourcesPath, 'server') : path.jo
 // Mehrere Größen in einer Datei: Windows nimmt für Fenster, Taskleiste und
 // Infobereich jeweils die passende.
 const ICON = path.join(__dirname, '..', 'build', 'icon.ico');
-// Wie appId in host/builder.json (steht so an den Verknüpfungen des Installers).
-const APP_ID = 'dev.achterberg.securecom.server' + (SMOKE ? '.selbsttest' : PACKED ? '' : '.dev');
 // Die portable Fassung läuft aus einem Temp-Ordner – für die Taskleiste zählt die Originaldatei.
-const EXE = process.env.PORTABLE_EXECUTABLE_FILE || process.execPath;
+const PORTABLE = process.env.PORTABLE_EXECUTABLE_FILE || '';
+const EXE = PORTABLE || process.execPath;
+// Installiert wie appId in host/builder.json (steht so an den Verknüpfungen
+// des Installers). Die portable Fassung bekommt eine eigene Kennung, sonst
+// nähme Windows das Symbol einer – womöglich kaputten – Verknüpfung.
+const APP_ID = 'dev.achterberg.securecom.server' +
+  (SMOKE ? '.selbsttest' : !PACKED ? '.dev' : PORTABLE ? '.portable' : '');
 
 // Eigener Ordner, auch beim Entwickeln (sonst teilte er sich den der App).
 app.setName('SecureCom Server');
