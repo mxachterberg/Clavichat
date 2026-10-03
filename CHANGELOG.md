@@ -4,6 +4,23 @@ Was sich von Version zu Version ändert. Beim Veröffentlichen wird der
 Abschnitt einer Version zum Text des GitHub-Releases
 (`.github/workflows/windows.yml`).
 
+## 1.6.3 – 03.10.2026
+
+Feinschliff an der Oberfläche. Die Windows-App 1.6.2 holt sich diese
+Version von selbst.
+
+- **Scrollleisten im Stil der Seite:** In den Einstellungen und allen anderen
+  Scrollbereichen (Dialoge, Auswahllisten, Verlauf, Seitenleiste,
+  Mitgliederliste) eine haarfeine Spur mit schmalem, eckigem Griff – beim
+  Darüberfahren und Ziehen orange. Hell und dunkel.
+- **Eigener Name unten links:** Die Seitenleiste ist etwas breiter, die
+  Knöpfe daneben schmaler – der Name hat jetzt Platz für mindestens 12
+  Zeichen, auch mit dem Schloss der App-Sperre (vorher teils nur 4).
+- Behoben: In den Einstellungen stand in der Zeile „Relay-Server (TURN)“
+  kurz „null“, solange die Verbindung geprüft wurde.
+- Repository: `scripts/upload-update.ps1` lädt ein Update hoch (Programme
+  zuerst, Update-Liste zuletzt) und löscht ältere Fassungen auf dem Server.
+
 ## 1.6.2 – 03.10.2026
 
 Mehr Sicherheit in vielen Ecken: Forward Secrecy, verschlüsselte Dateien und
