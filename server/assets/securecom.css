@@ -1431,6 +1431,25 @@ html[data-theme="light"] .sc-modal { background: rgba(40, 40, 40, .3); }
 }
 .sc-gate-note--warn { color: var(--accent); }
 .sc-field-note { display: block; margin-top: 6px; font-size: 11.5px; line-height: 1.5; color: var(--muted); }
+
+/* Passwortstärke: vier Striche, Wort, Tipp */
+.sc-pw { display: block; margin-top: 8px; }
+.sc-pw-row { display: flex; align-items: center; gap: 10px; min-height: 14px; }
+.sc-pw-bar { display: grid; grid-template-columns: repeat(4, 1fr); gap: 3px; width: 140px; flex: none; }
+.sc-pw-bar span { height: 3px; background: var(--border); transition: background .15s ease; }
+.sc-pw-label { font-family: var(--mono); font-size: 10px; letter-spacing: .12em; text-transform: uppercase; color: var(--muted); }
+.sc-pw-tip { display: block; margin-top: 4px; font-size: 11.5px; line-height: 1.5; color: var(--text-body); }
+.sc-pw-tip:empty { display: none; }
+.sc-pw[data-score="0"] .sc-pw-bar span:nth-child(-n+1),
+.sc-pw[data-score="1"] .sc-pw-bar span:nth-child(-n+2) { background: var(--sc-danger); }
+.sc-pw[data-score="2"] .sc-pw-bar span:nth-child(-n+3) { background: var(--accent); }
+.sc-pw[data-score="3"] .sc-pw-bar span,
+.sc-pw[data-score="4"] .sc-pw-bar span { background: var(--green); }
+.sc-pw[data-score="0"] .sc-pw-label,
+.sc-pw[data-score="1"] .sc-pw-label { color: var(--sc-danger); }
+.sc-pw[data-score="2"] .sc-pw-label { color: var(--accent); }
+.sc-pw[data-score="3"] .sc-pw-label,
+.sc-pw[data-score="4"] .sc-pw-label { color: var(--green); }
 .sc-check {
   display: flex;
   align-items: flex-start;

@@ -303,11 +303,43 @@ function confirmBox(title, text, okLabel, danger) {
   });
 }
 
-function field(label, input, note) {
+function field(label, input, note, extra) {
   return el('label', { class: 'field' },
     el('span', { class: 'field-label', text: label }),
     input,
+    extra || null,
     note ? el('span', { class: 'sc-field-note', text: note }) : null);
+}
+
+/* ---------- Passwortstärke ----------------------------------------------------
+   Aus dem Passwort entsteht der Schlüssel, der den privaten Schlüssel
+   einpackt. Wer die Daten des Servers stiehlt, kann offline raten – deshalb
+   muss ein neues Passwort mindestens „okay“ sein (C.passwordStrength). */
+const PW_LABELS = ['sehr schwach', 'schwach', 'okay', 'stark', 'sehr stark'];
+const PW_MIN_SCORE = 2;
+
+function strengthMeter(input, hints) {
+  const bar = el('span', { class: 'sc-pw-bar', 'aria-hidden': 'true' }, el('span'), el('span'), el('span'), el('span'));
+  const label = el('span', { class: 'sc-pw-label' });
+  const tip = el('span', { class: 'sc-pw-tip' });
+  const box = el('span', { class: 'sc-pw' }, el('span', { class: 'sc-pw-row' }, bar, label), tip);
+  const update = () => {
+    const r = C.passwordStrength(input.value, hints ? hints() : []);
+    box.dataset.score = input.value ? String(r.score) : '';
+    label.textContent = input.value ? 'Stärke: ' + PW_LABELS[r.score] : '';
+    tip.textContent = input.value && r.score < 3 ? r.tip : '';
+  };
+  input.addEventListener('input', update);
+  update();
+  return box;
+}
+
+/** Fehlertext, wenn ein neues Passwort zu schwach ist – sonst ''. */
+function passwordProblem(pw, hints, what) {
+  if (pw.length < 10) return (what || 'Das Passwort') + ' braucht mindestens 10 Zeichen.';
+  const r = C.passwordStrength(pw, hints || []);
+  if (r.score >= PW_MIN_SCORE) return '';
+  return (what || 'Das Passwort') + ' ist zu leicht zu erraten (' + PW_LABELS[r.score] + '). ' + (r.tip || 'Nimm zum Beispiel vier zufällige Wörter.');
 }
 
 /* ---------- Auswahl im Stil der App ----------------------------------------
@@ -910,6 +942,10 @@ function gateLogin(panel) {
     gateBusy(go, 'Passwort wird geprüft …');
     try {
       await loginAccount(user.value.trim(), pass.value, remember.checked);
+      // Bestehende Konten mit schwachem Passwort: nur ein Hinweis, kein Zwang.
+      if (!C.isRecoveryCode(pass.value) && C.passwordStrength(pass.value, [user.value.trim()]).score < PW_MIN_SCORE) {
+        toast('Dein Passwort ist leicht zu erraten. Ändere es unter Einstellungen → KONTO → „Passwort ändern“.', 'error', 12000);
+      }
     } catch (e) {
       gateIdle(go);
       toast(e.message, 'error');
@@ -937,7 +973,8 @@ function gateRegister(panel) {
 
   const form = el('form', { class: 'sc-gate-form' },
     field('Name', user, '3–24 Zeichen. Andere sehen dich unter diesem Namen. Keine E-Mail nötig.'),
-    field('Passwort', pass, 'Mindestens 10 Zeichen. Lang ist besser als kompliziert.'),
+    field('Passwort', pass, 'Mindestens „okay“. Lang schlägt kompliziert – am einfachsten vier zufällige Wörter.',
+      strengthMeter(pass, () => [user.value.trim()])),
     field('Passwort wiederholen', pass2),
     el('fieldset', { class: 'sc-fieldset' },
       el('legend', { class: 'field-label', text: 'Dein PGP-Schlüssel' }),
@@ -951,7 +988,8 @@ function gateRegister(panel) {
 
   form.addEventListener('submit', async (ev) => {
     ev.preventDefault();
-    if (pass.value.length < 10) { toast('Das Passwort braucht mindestens 10 Zeichen.', 'error'); return; }
+    const weak = passwordProblem(pass.value, [user.value.trim()]);
+    if (weak) { toast(weak, 'error', 9000); return; }
     if (pass.value !== pass2.value) { toast('Die Passwörter stimmen nicht überein.', 'error'); return; }
     if (!/^[A-Za-z0-9][A-Za-z0-9_.-]{2,23}$/.test(user.value.trim())) {
       toast('Der Name braucht 3–24 Zeichen: Buchstaben, Ziffern, Punkt, Strich, Unterstrich.', 'error');
@@ -5965,7 +6003,8 @@ function showKeyBackup(password, fresh) {
       if (password) pass.value = password;
       const go = el('button', { type: 'button', class: 'btn btn--primary btn--block' }, icon('download', 14), 'Privaten Schlüssel herunterladen');
       go.addEventListener('click', async () => {
-        if (pass.value.length < 10) { toast('Die Passphrase braucht mindestens 10 Zeichen.', 'error'); return; }
+        const weak = passwordProblem(pass.value, [S.me.name], 'Die Passphrase');
+        if (weak) { toast(weak, 'error', 9000); return; }
         go.disabled = true;
         try {
           const armored = await C.exportProtectedKey(S.me.priv, pass.value);
@@ -5978,7 +6017,8 @@ function showKeyBackup(password, fresh) {
         fresh ? el('p', { class: 'sc-p', text: 'Willkommen, ' + S.me.name + '! Dein Konto steht. Weil es keine E-Mail gibt, kann niemand es zurücksetzen – sichere deshalb jetzt deinen privaten Schlüssel.' }) : null,
         el('p', { class: 'field-label', text: 'Dein Fingerabdruck' }),
         el('p', { class: 'sc-fp', text: C.formatFingerprint(S.me.fp) }),
-        field('Passphrase', pass, fresh ? 'Vorbelegt mit deinem Kontopasswort. Die Datei ist damit geschützt und lässt sich auch in GnuPG oder Kleopatra importieren.' : 'Schützt die Datei. Lässt sich auch in GnuPG oder Kleopatra importieren.'),
+        field('Passphrase', pass, fresh ? 'Vorbelegt mit deinem Kontopasswort. Die Datei ist damit geschützt und lässt sich auch in GnuPG oder Kleopatra importieren.' : 'Schützt die Datei. Lässt sich auch in GnuPG oder Kleopatra importieren.',
+          strengthMeter(pass, () => [S.me.name])),
         go,
         el('div', { class: 'sc-card-actions' },
           el('button', { type: 'button', class: 'btn', onclick: () => copyText(S.me.armored, 'Öffentlicher Schlüssel') }, icon('copy', 14), 'Öffentlichen Schlüssel kopieren'),
@@ -5996,7 +6036,8 @@ function changePassword() {
       const p2 = el('input', { type: 'password', autocomplete: 'new-password' });
       const go = el('button', { type: 'button', class: 'btn btn--primary btn--block', text: 'Ändern' });
       go.addEventListener('click', async () => {
-        if (p1.value.length < 10) { toast('Das neue Passwort braucht mindestens 10 Zeichen.', 'error'); return; }
+        const weak = passwordProblem(p1.value, [S.username], 'Das neue Passwort');
+        if (weak) { toast(weak, 'error', 9000); return; }
         if (p1.value !== p2.value) { toast('Die neuen Passwörter stimmen nicht überein.', 'error'); return; }
         go.disabled = true;
         go.textContent = 'Wird gehärtet …';
@@ -6019,7 +6060,9 @@ function changePassword() {
           toast(e.message, 'error');
         }
       });
-      body.append(field('Bisheriges Passwort oder Wiederherstellungscode', old), field('Neues Passwort', p1), field('Neues Passwort wiederholen', p2), go);
+      body.append(field('Bisheriges Passwort oder Wiederherstellungscode', old),
+        field('Neues Passwort', p1, 'Mindestens „okay“ – am einfachsten vier zufällige Wörter.', strengthMeter(p1, () => [S.username])),
+        field('Neues Passwort wiederholen', p2), go);
     }
   });
 }
