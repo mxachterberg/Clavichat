@@ -87,6 +87,7 @@ class SecureCom
     const MAX_MEMBERS   = 50;
     const MAX_VOICE     = 8;         // Direktverbindungen: jeder mit jedem
     const MAX_TOKENS    = 10;        // angemeldete Geräte je Konto
+    const MAX_DEVICES   = 50;        // gemerkte Geräte-Kennungen (bekannt bzw. abgemeldet)
     const PAGE          = 250;       // Einträge je Abruf
     const PAGE_BYTES    = 1500000;
 
@@ -332,8 +333,8 @@ class SecureCom
         if ($mailbox !== null) $account['sso'] = hash('sha256', $mailbox);   // nur der Hash des Postfachs
         self::writeJson($file, $account);
         if ($link) self::writeJson($link, ['u' => $username, 'c' => time()]);
-        $token = self::issueToken($id);
-        return ['token' => $token, 'id' => $id, 'kind' => 'account', 'username' => $username, 'vv' => 1];
+        $token = self::issueToken($id, self::devOf($b));
+        return ['token' => $token, 'id' => $id, 'kind' => 'account', 'username' => $username, 'vv' => 1, 'tv' => 1];
     }
 
     public static function login(array $b)
@@ -348,13 +349,27 @@ class SecureCom
         $ident = self::identity($acc['id']);
         if (!$ident) throw new SecureComException('Das Konto ist beschädigt.', 500);
 
+        // Aus der Ferne abgemeldetes Gerät: Still (mit gespeichertem Code)
+        // kommt es nicht wieder rein – wer Passwort oder Code eintippt, schon.
+        $dev = self::devOf($b);
+        if ($dev !== '' && in_array($dev, (array)($ident['rev'] ?? []), true)) {
+            if (!empty($b['silent'])) {
+                throw new SecureComException('Dieses Gerät wurde aus deinem Konto abgemeldet. Melde dich neu an.', 403, ['revoked' => true]);
+            }
+            self::mutate(self::idFile($acc['id']), function (&$i) use ($dev) {
+                if ($i) $i['rev'] = array_values(array_diff((array)($i['rev'] ?? []), [$dev]));
+            });
+        }
+
         if (password_needs_rehash($acc['auth'], PASSWORD_DEFAULT, self::HASH_OPTS)) {
             self::mutate(self::accountFile($username), function (&$a) use ($auth) {
                 if ($a) $a['auth'] = password_hash($auth, PASSWORD_DEFAULT, self::HASH_OPTS);
             });
         }
-        $token = self::issueToken($acc['id']);
+        $token = self::issueToken($acc['id'], $dev);
+        $after = self::identity($acc['id']);
         return [
+            'tv'       => (int)($after['tv'] ?? 0),
             'token'    => $token,
             'id'       => $acc['id'],
             'kind'     => 'account',
@@ -493,6 +508,10 @@ class SecureCom
         $file = self::dir('tokens') . '/' . hash('sha256', $token) . '.json';
         $tok  = self::readJson($file);
         if (!$tok) throw new SecureComException('Die Sitzung ist abgelaufen.', 401);
+        if (!empty($tok['x'])) {
+            // Grabstein (revokeToken): Das Gerät soll erfahren, warum es draußen ist.
+            throw new SecureComException('Dieses Gerät wurde aus deinem Konto abgemeldet.', 401, ['revoked' => true]);
+        }
 
         $ident = self::identity($tok['id']);
         if (!$ident) {
@@ -516,6 +535,11 @@ class SecureCom
         $out = self::publicIdentity($me, true);
         $out['kind'] = $me['k'];
         if ($me['k'] === 'temp') $out['exp'] = self::lastSeen($me['id']) + self::tempHours() * 3600;
+        if ($me['k'] === 'account') {
+            // Hat diese Sitzung schon einen (verschlüsselten) Gerätenamen?
+            $tok = self::readJson(self::dir('tokens') . '/' . $me['_th'] . '.json');
+            $out['dl'] = !empty($tok['n']);
+        }
         return $out;
     }
 
@@ -789,6 +813,7 @@ class SecureCom
             'r'     => (object)$feeds,
             'rooms' => (object)$rooms,
             'pv'    => self::presenceVersion($presence, $me['id']),
+            'tv'    => $me['k'] === 'account' ? (int)($me['tv'] ?? 0) : null,   // Anmeldungen am Konto
         ];
     }
 
@@ -1195,23 +1220,110 @@ class SecureCom
         return $acc;
     }
 
-    private static function issueToken($id)
+    /**
+     * Neue Sitzung. $dev ist die zufällige Kennung des Geräts (bleibt dort
+     * gespeichert) – damit lässt sich ein Gerät aus der Ferne abmelden, ohne
+     * dass es sich still wieder anmeldet. "tv" zählt Anmeldungen von Geräten,
+     * die das Konto noch nicht kennt ("kd"): Steigt er, melden die anderen
+     * Geräte „Neue Anmeldung bei deinem Konto“. Erneutes Anmelden auf einem
+     * bekannten Gerät zählt nicht, ein aus der Ferne abgemeldetes ist wieder neu.
+     */
+    private static function issueToken($id, $dev = '')
     {
         $token = rtrim(strtr(base64_encode(random_bytes(32)), '+/', '-_'), '=');
         $hash  = hash('sha256', $token);
         $now   = time();
-        self::writeJson(self::dir('tokens') . '/' . $hash . '.json', ['id' => $id, 'c' => $now, 's' => $now]);
+        $rec   = ['id' => $id, 'c' => $now, 's' => $now];
+        if ($dev !== '') $rec['d'] = $dev;
+        self::writeJson(self::dir('tokens') . '/' . $hash . '.json', $rec);
 
         $drop = [];
-        self::mutate(self::idFile($id), function (&$i) use ($hash, &$drop) {
+        self::mutate(self::idFile($id), function (&$i) use ($hash, $dev, &$drop) {
             if (!$i) return;
             $list = (array)($i['tok'] ?? []);
             $list[] = $hash;
             while (count($list) > self::MAX_TOKENS) $drop[] = array_shift($list);
             $i['tok'] = $list;
+            $known = (array)($i['kd'] ?? []);
+            if ($dev === '' || !in_array($dev, $known, true)) {
+                $i['tv'] = (int)($i['tv'] ?? 0) + 1;
+                if ($dev !== '') $i['kd'] = array_slice(array_merge($known, [$dev]), -self::MAX_DEVICES);
+            }
         });
         foreach ($drop as $old) @unlink(self::dir('tokens') . '/' . $old . '.json');
         return $token;
+    }
+
+    /** Geräte-Kennung aus einer Anfrage (22 Zeichen Base64url) oder ''. */
+    private static function devOf(array $b)
+    {
+        $dev = self::str($b, 'dev');
+        return preg_match('/^[A-Za-z0-9_-]{22}$/', $dev) ? $dev : '';
+    }
+
+    /* ======================================================================
+       Geräte eines Kontos: Liste, Name (verschlüsselt), aus der Ferne abmelden
+       ====================================================================== */
+    public static function devices(array $me)
+    {
+        self::accountFor($me);
+        $ident = self::identity($me['id']);
+        $out = [];
+        foreach ((array)($ident['tok'] ?? []) as $hash) {
+            $t = self::readJson(self::dir('tokens') . '/' . $hash . '.json');
+            if (!$t) continue;
+            $out[] = [
+                'h'   => substr($hash, 0, 16),
+                'c'   => (int)($t['c'] ?? 0),
+                's'   => (int)($t['s'] ?? 0),
+                'n'   => (string)($t['n'] ?? ''),          // Gerätename, mit dem Kontoschlüssel verschlüsselt
+                'cur' => $hash === $me['_th'],
+            ];
+        }
+        usort($out, function ($a, $b) { return $b['s'] <=> $a['s']; });
+        return ['list' => $out, 'tv' => (int)($ident['tv'] ?? 0)];
+    }
+
+    /** Namen des eigenen Geräts setzen – nur verschlüsselt, der Server kann ihn nicht lesen. */
+    public static function deviceLabel(array $me, array $b)
+    {
+        self::accountFor($me);
+        $n = self::b64(self::str($b, 'n'), 512, 'Gerätename');
+        self::mutate(self::dir('tokens') . '/' . $me['_th'] . '.json', function (&$t) use ($n) {
+            if ($t) $t['n'] = $n;
+        });
+        return [];
+    }
+
+    /** Ein Gerät (oder alle anderen) abmelden; die Geräte-Kennung kommt auf die Sperrliste. */
+    public static function revokeDevices(array $me, array $b)
+    {
+        self::accountFor($me);
+        $prefix = self::str($b, 'h');
+        $others = !empty($b['others']);
+        if (!$others && !preg_match('/^[0-9a-f]{16}$/', $prefix)) throw new SecureComException('Unbekanntes Gerät.', 422);
+        $ident = self::identity($me['id']);
+        $gone = [];
+        $dropped = 0;
+        foreach ((array)($ident['tok'] ?? []) as $hash) {
+            if ($hash === $me['_th']) continue;
+            if (!$others && strpos($hash, $prefix) !== 0) continue;
+            $t = self::readJson(self::dir('tokens') . '/' . $hash . '.json');
+            if ($t && !empty($t['d'])) $gone[] = (string)$t['d'];
+            self::revokeToken($me['id'], $hash);
+            $dropped++;
+            if (!$others) break;
+        }
+        if ($gone) {
+            self::mutate(self::idFile($me['id']), function (&$i) use ($gone) {
+                if (!$i) return;
+                $rev = array_values(array_unique(array_merge((array)($i['rev'] ?? []), $gone)));
+                $i['rev'] = array_slice($rev, -self::MAX_DEVICES);
+                // Meldet es sich wieder an, gilt es als neues Gerät.
+                $i['kd']  = array_values(array_diff((array)($i['kd'] ?? []), $gone));
+            });
+        }
+        return ['n' => $dropped] + self::devices($me);
     }
 
     private static function dropToken($id, $hash)
@@ -1220,6 +1332,17 @@ class SecureCom
         self::mutate(self::idFile($id), function (&$i) use ($hash) {
             if ($i) $i['tok'] = array_values(array_diff((array)($i['tok'] ?? []), [$hash]));
         });
+    }
+
+    /**
+     * Wie dropToken, lässt aber einen Grabstein liegen: Das Gerät erfährt beim
+     * nächsten Abruf, dass es abgemeldet wurde. Das tägliche Aufräumen löscht
+     * ihn nach TOKEN_IDLE (bzw. sobald es das Konto nicht mehr gibt).
+     */
+    private static function revokeToken($id, $hash)
+    {
+        self::dropToken($id, $hash);
+        self::writeJson(self::dir('tokens') . '/' . $hash . '.json', ['id' => $id, 's' => time(), 'x' => 1]);
     }
 
     /** Alles einer Identität löschen: Sitzungen, Briefkasten, Räume, Konto. */
