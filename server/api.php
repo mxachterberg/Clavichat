@@ -105,6 +105,18 @@ try {
             sc_limit('pw:' . $me['id'], 10, 3600);
             json_out(['ok' => true] + SecureCom::changePassword($me, $body));
 
+        case 'devices':
+            sc_limit('dev:' . $me['id'], 120, 3600);
+            json_out(['ok' => true] + SecureCom::devices($me));
+
+        case 'device.label':
+            sc_limit('devl:' . $me['id'], 30, 3600);
+            json_out(['ok' => true] + SecureCom::deviceLabel($me, $body));
+
+        case 'device.revoke':
+            sc_limit('devr:' . $me['id'], 30, 3600);
+            json_out(['ok' => true] + SecureCom::revokeDevices($me, $body));
+
         case 'vault':
             sc_limit('vault:' . $me['id'], 240, 3600);
             json_out(['ok' => true] + SecureCom::saveVault($me, $body));

@@ -1076,6 +1076,16 @@ html[data-theme="light"] .sc-modal { background: rgba(40, 40, 40, .3); }
   text-transform: uppercase;
   color: var(--muted);
 }
+/* Geräte eines Kontos (Einstellungen) */
+.sc-device { margin-bottom: 8px; padding: 10px 12px; border: 1px solid var(--border-soft); }
+.sc-device > .sc-ic { flex: none; color: var(--muted); }
+.sc-device > .btn { flex: none; }
+.sc-device.is-current { border-color: color-mix(in srgb, var(--accent) 45%, var(--border-soft)); }
+.sc-device.is-current > .sc-ic { color: var(--accent); }
+.sc-device .sc-set-text strong { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; color: var(--text); }
+.sc-device-cur { padding: 1px 6px; border: 1px solid var(--accent); color: var(--accent); font-size: 9.5px; }
+.sc-devices .sc-card-actions { margin: 4px 0 10px; }
+.sc-devices > .sc-note:last-child { margin-top: 8px; }
 .sc-modal-body .sc-sec { margin: 22px 0 12px; }
 .sc-modal-body .sc-sec:first-child { margin-top: 0; }
 .sc-info { margin: 0 0 8px; padding-left: 18px; font-size: 13.5px; line-height: 1.65; color: var(--text-body); }
@@ -1276,6 +1286,7 @@ html[data-theme="light"] .sc-modal { background: rgba(40, 40, 40, .3); }
 }
 .sc-toast--error { border-left-color: var(--sc-danger); }
 .sc-toast--ok { border-left-color: var(--green); }
+.sc-toast--warn { border-color: color-mix(in srgb, var(--accent) 50%, var(--border)); border-left-color: var(--accent); }
 .sc-toast.is-out { opacity: 0; transform: translateY(6px); }
 
 /* ---- Laden (Aufbau wie bei Budgetmaxxer) -------------------------------- */

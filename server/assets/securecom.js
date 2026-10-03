@@ -141,7 +141,8 @@ const ICONS = {
   userPlus: '<circle cx="9" cy="8" r="3.5"/><path d="M2.5 20a6.5 6.5 0 0 1 13 0"/><path d="M19 8v6M16 11h6"/>',
   userMinus: '<circle cx="9" cy="8" r="3.5"/><path d="M2.5 20a6.5 6.5 0 0 1 13 0"/><path d="M16 11h6"/>',
   clock: '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>',
-  message: '<path d="M4 5h16v11H9l-5 4z"/>'
+  message: '<path d="M4 5h16v11H9l-5 4z"/>',
+  mobile: '<rect x="7" y="3" width="10" height="18" rx="1.5"/><path d="M11 17.5h2"/>'
 };
 
 function icon(name, size) {
@@ -497,7 +498,7 @@ async function api(a, body) {
   try { data = await res.json(); } catch (e) { /* keine JSON-Antwort */ }
   if (!res.ok || !data || data.ok === false) {
     const err = apiError((data && data.error) || ('Serverfehler (' + res.status + ')'), res.status, data);
-    if (res.status === 401 && S.entered && a !== 'login' && a !== 'logout') sessionLost();
+    if (res.status === 401 && S.entered && a !== 'login' && a !== 'logout') sessionLost(data);
     throw err;
   }
   return data;
@@ -961,10 +962,10 @@ function kindBadge(ident) {
    ========================================================================== */
 function gateCard() { return $('sc-gate-card'); }
 
-function showGate(message) {
+function showGate(message, tab) {
   $('sc').hidden = true;
   $('sc-gate').hidden = false;
-  renderGate('temp', message);
+  renderGate(tab || 'temp', message);
   bootDone();
 }
 
@@ -1275,6 +1276,8 @@ async function renewRecoveryCode() {
     const r = await api('password', { old_auth: oldAuth, auth: keys.auth, wrapped: wrapped, vault: vault });
     S.wrapKey = wrapKey;
     S.vv = r.vv;
+    S.deviceLabeled = false;
+    labelDevice();
     await rememberAccount(true, S.username, S.me.id, S.token, wrapped, keys.wrapRaw, await C.sealText(wrapKey, keys.auth, authAad(S.username)));
     showRecoveryCode(S.username, code, false);
   } catch (e) {
@@ -1314,8 +1317,9 @@ async function registerAccount(username, secret, identity, remember, code, sso) 
   const vault = await C.sealText(wrapKey, JSON.stringify(S.vault), vaultAad());
   const r = await api('register', {
     username: username, auth: keys.auth, id: id, pub: identity.armoredPublic, fp: identity.fingerprint,
-    card: card, wrapped: wrapped, vault: vault, code: code, sso: sso || undefined
+    card: card, wrapped: wrapped, vault: vault, code: code, sso: sso || undefined, dev: deviceId()
   });
+  rememberLoginCount(id, r.tv);
   const name = r.username || username;
   S.token = r.token;
   S.mode = 'account';
@@ -1331,11 +1335,91 @@ async function registerAccount(username, secret, identity, remember, code, sso) 
 /** Zusatzdaten beim Versiegeln des Anmeldeschlüssels (getrennt von Schlüssel und Tresor). */
 function authAad(username) { return 'sc-auth|' + String(username).toLowerCase(); }
 
+/* ---------- Geräte (nur Konten) -------------------------------------------
+   Jedes Gerät hat eine zufällige Kennung (bleibt in localStorage). Der Server
+   merkt sie sich zur Sitzung: So lässt sich ein Gerät aus der Ferne abmelden,
+   ohne dass es sich still wieder anmeldet. Den Gerätenamen sieht er nur
+   verschlüsselt. "tv" zählt Anmeldungen neuer Geräte – steigt er, sagen die
+   anderen Geräte Bescheid. */
+const DEVICE_KEY = 'sc-device';
+const LOGINS_KEY = 'sc-logins:';
+const GATE_NOTE_KEY = 'securecom.gate-note';
+const REVOKED_NOTE = 'Dieses Gerät wurde aus deinem Konto abgemeldet. Melde dich neu an, wenn du es weiter benutzen willst.';
+
+function deviceId() {
+  try {
+    let id = localStorage.getItem(DEVICE_KEY) || '';
+    if (!/^[A-Za-z0-9_-]{22}$/.test(id)) {
+      id = C.randomId();
+      localStorage.setItem(DEVICE_KEY, id);
+    }
+    return id;
+  } catch (e) {
+    return '';   // ohne localStorage: Sitzung ohne Geräte-Kennung
+  }
+}
+
+/** Zuletzt gesehener Anmeldezähler des Kontos (null = auf diesem Gerät noch nie). */
+function seenLogins(id) {
+  try {
+    const v = localStorage.getItem(LOGINS_KEY + id);
+    return v === null ? null : parseInt(v, 10) || 0;
+  } catch (e) { return null; }
+}
+
+function rememberLoginCount(id, tv) {
+  if (!id || typeof tv !== 'number') return;
+  try { localStorage.setItem(LOGINS_KEY + id, String(tv)); } catch (e) { /* egal */ }
+}
+
+/** Aus dem Abruf: Hat sich ein neues Gerät angemeldet? */
+function checkLogins(tv) {
+  if (S.mode !== 'account' || typeof tv !== 'number') return;
+  const seen = seenLogins(S.me.id);
+  if (seen === tv) return;
+  rememberLoginCount(S.me.id, tv);
+  if (seen === null || tv < seen) return;   // erstes Mal auf diesem Gerät: nur merken
+  toast('Neue Anmeldung bei deinem Konto auf einem anderen Gerät. Warst du das nicht? Melde es unter Einstellungen → Geräte ab und ändere dein Passwort.', 'warn', 20000);
+  notify('Neue Anmeldung', 'Ein neues Gerät hat sich bei deinem Konto angemeldet.', 'sc-login');
+}
+
+/** „Firefox · Windows“ bzw. „Windows-App“ – nur zum Wiedererkennen in der Liste. */
+function deviceName() {
+  if (DESKTOP) return 'Windows-App';
+  const ua = navigator.userAgent || '';
+  const os = /Windows/.test(ua) ? 'Windows'
+    : /Android/.test(ua) ? 'Android'
+    : /iPhone|iPod/.test(ua) ? 'iPhone'
+    : /iPad/.test(ua) || (/Macintosh/.test(ua) && navigator.maxTouchPoints > 1) ? 'iPad'
+    : /Macintosh|Mac OS X/.test(ua) ? 'macOS'
+    : /CrOS/.test(ua) ? 'ChromeOS'
+    : /Linux/.test(ua) ? 'Linux' : '';
+  const browser = /Edg(e|A|iOS)?\//.test(ua) ? 'Edge'
+    : /OPR\/|Opera/.test(ua) ? 'Opera'
+    : /Firefox\/|FxiOS/.test(ua) ? 'Firefox'
+    : /SamsungBrowser/.test(ua) ? 'Samsung Internet'
+    : /Chrome\/|CriOS/.test(ua) ? 'Chrome'
+    : /Safari\//.test(ua) ? 'Safari' : 'Browser';
+  return browser + (os ? ' · ' + os : '');
+}
+
+function deviceAad() { return 'sc-device|' + S.me.id; }
+
+/** Gerätenamen verschlüsselt zur Sitzung legen – einmal je Sitzung. */
+async function labelDevice() {
+  if (S.mode !== 'account' || !S.wrapKey || S.deviceLabeled) return;
+  S.deviceLabeled = true;
+  try {
+    await api('device.label', { n: await C.sealText(S.wrapKey, deviceName(), deviceAad()) });
+  } catch (e) { /* ältere Server kennen das nicht */ }
+}
+
 async function loginAccount(username, password, remember) {
   if (!username || !password) throw new Error('Bitte Name und Passwort oder Wiederherstellungscode angeben.');
   const keys = await C.accountKeys(username, password);
   S.token = null;
-  const r = await api('login', { username: username, auth: keys.auth });
+  const r = await api('login', { username: username, auth: keys.auth, dev: deviceId() });
+  rememberLoginCount(r.id, r.tv);   // die eigene Anmeldung ist keine „neue Anmeldung“
   const wrapKey = await C.importWrapKey(keys.wrapRaw, false);
   let identity;
   try {
@@ -1430,6 +1514,7 @@ async function restoreSession() {
   const loadOwn = async () => {
     const me = await api('me');
     S.me.vis = S.mode === 'temp' && me.vis !== false;
+    S.deviceLabeled = me.dl === true;
     await applyOwnCard(me.card);
     if (S.mode === 'account') {
       const v = await api('vault.get');
@@ -1444,11 +1529,13 @@ async function restoreSession() {
     // Sitzung abgelaufen – Konten mit Wiederherstellungscode melden sich still neu an.
     try {
       if (!saved || !saved.authSealed) throw e;
-      const r = await api('login', { username: saved.username, auth: await C.openText(S.wrapKey, saved.authSealed, authAad(saved.username)) });
+      const r = await api('login', { username: saved.username, auth: await C.openText(S.wrapKey, saved.authSealed, authAad(saved.username)), dev: deviceId(), silent: 1 });
+      rememberLoginCount(r.id, r.tv);
       S.token = r.token;
       await idbSet('session', Object.assign({}, saved, { token: r.token }));
       await loadOwn();
     } catch (again) {
+      if ([again, e].some((x) => x && x.data && x.data.revoked)) S.gateNote = REVOKED_NOTE;
       await clearStoredSession();
       S.token = null;
       S.me = null;
@@ -1464,14 +1551,16 @@ async function clearStoredSession() {
 }
 
 let lost = false;
-function sessionLost() {
+function sessionLost(data) {
   if (lost) return;
   lost = true;
   // Konten mit Wiederherstellungscode behalten das Gespeicherte: Beim
   // Neuladen meldet sich das Gerät still neu an (restoreSession). Klappt das
   // nicht – etwa weil der Code auf einem anderen Gerät erneuert wurde –,
-  // räumt restoreSession selbst auf.
-  (S.codeAccount ? Promise.resolve() : clearStoredSession()).then(() => {
+  // räumt restoreSession selbst auf. Aus der Ferne abgemeldet: nie still.
+  const revoked = !!(data && data.revoked);
+  if (revoked) ssSet(GATE_NOTE_KEY, REVOKED_NOTE);
+  (S.codeAccount && !revoked ? Promise.resolve() : clearStoredSession()).then(() => {
     teardownMedia();
     S.token = null;
     S.me = null;
@@ -1509,6 +1598,7 @@ async function enterApp() {
   refreshOnline();
   loadIce();
   startIceRefresh();
+  labelDevice();
   await loadRooms().catch(() => {});
   if (S.view.kind === 'room' && !S.rooms.has(S.view.rid)) S.view = { kind: 'home' };
   if (S.view.kind === 'dm') await ensureIds([S.view.peer]);
@@ -1579,10 +1669,13 @@ async function boot() {
   }
 
   progress(0.82, 'SCHLÜSSEL WERDEN GEPRÜFT');
-  if (await restoreSession()) {
+  const restored = await restoreSession();
+  const gateNote = ssGet(GATE_NOTE_KEY) || S.gateNote;
+  ssSet(GATE_NOTE_KEY, null);
+  if (restored) {
     await enterApp();
   } else {
-    showGate();
+    showGate(gateNote || undefined, gateNote ? 'login' : undefined);
   }
   bootDone();
 }
@@ -3956,6 +4049,7 @@ async function pollOnce() {
 
   if (S.voice) reconcileVoice();
   if (r.pv !== S.pv) { S.pv = r.pv; refreshOnline(); }
+  checkLogins(r.tv);
   if (first) { S.forceBottom = true; changed = true; }
   if (changed) scheduleRender();
   return more;
@@ -5982,6 +6076,73 @@ function updatePanel(s, later) {
 /* ==========================================================================
    Einstellungen, Profil, Schlüssel
    ========================================================================== */
+/* ---------- Geräte-Liste (Einstellungen) ---------------------------------- */
+function fmtWhen(sec) { return fmtDay(sec * 1000) + ', ' + fmtTime(sec * 1000); }
+
+/** Zweimal klicken statt Rückfrage: Ein Dialog würde die Einstellungen schließen. */
+function confirmButton(label, armedLabel, run) {
+  const b = el('button', { type: 'button', class: 'btn', text: label });
+  let timer = 0;
+  const reset = () => { timer = 0; b.textContent = label; b.classList.remove('sc-btn--danger'); };
+  b.addEventListener('click', async () => {
+    if (!timer) {
+      b.textContent = armedLabel;
+      b.classList.add('sc-btn--danger');
+      timer = setTimeout(reset, 4000);
+      return;
+    }
+    clearTimeout(timer);
+    b.disabled = true;
+    try { await run(); } catch (e) { toast(e.message, 'error'); }
+    b.disabled = false;
+    reset();
+  });
+  return b;
+}
+
+async function renderDevices(box, data) {
+  try {
+    if (!data) data = await api('devices');
+  } catch (e) {
+    box.textContent = '';
+    box.appendChild(el('p', { class: 'sc-note', text: e.status === 404
+      ? 'Dieser Server zeigt noch keine Geräte an – er läuft mit einer älteren Clavichat-Version.'
+      : 'Die Geräte ließen sich nicht laden: ' + e.message }));
+    return;
+  }
+  rememberLoginCount(S.me.id, data.tv);   // wer hinschaut, braucht keinen Hinweis mehr
+  // Dieses Gerät zuerst, die anderen nach letzter Aktivität (so liefert sie der Server).
+  const list = (data.list || []).slice().sort((a, b) => (b.cur ? 1 : 0) - (a.cur ? 1 : 0));
+  const rows = [];
+  for (const d of list) {
+    let name = d.cur ? deviceName() : 'Gerät ohne Namen';
+    if (d.n) {
+      try { name = cleanName(await C.openText(S.wrapKey, d.n, deviceAad())) || name; } catch (e) { /* mit altem Passwort benannt */ }
+    }
+    const mobile = /Android|iPhone|iPad/.test(name);
+    rows.push(el('div', { class: 'sc-set-row sc-device' + (d.cur ? ' is-current' : '') },
+      icon(mobile ? 'mobile' : 'screen', 18),
+      el('span', { class: 'sc-set-text' },
+        el('strong', {}, name, d.cur ? el('span', { class: 'sc-device-cur', text: 'DIESES GERÄT' }) : null),
+        el('span', { text: 'Angemeldet ' + fmtWhen(d.c) + (d.cur ? '' : ' · zuletzt aktiv: ' + fmtDay(d.s * 1000)) })),
+      d.cur ? null : confirmButton('Abmelden', 'Wirklich abmelden?', async () => {
+        const r = await api('device.revoke', { h: d.h });
+        toast(r.n ? 'Gerät abgemeldet.' : 'Das Gerät war schon abgemeldet.', 'ok');
+        renderDevices(box, r);
+      })));
+  }
+  const others = list.filter((d) => !d.cur).length;
+  box.textContent = '';
+  rows.forEach((row) => box.appendChild(row));
+  appendAll(box,
+    others > 1 ? el('div', { class: 'sc-card-actions' }, confirmButton('Alle anderen Geräte abmelden', 'Wirklich alle ' + others + ' abmelden?', async () => {
+      const r = await api('device.revoke', { others: 1 });
+      toast(r.n === 1 ? '1 Gerät abgemeldet.' : r.n + ' Geräte abgemeldet.', 'ok');
+      renderDevices(box, r);
+    })) : null,
+    el('p', { class: 'sc-note', text: 'Meldet sich ein neues Gerät an, sagen deine anderen Geräte Bescheid. Abgemeldete Geräte kommen nur mit Passwort oder Wiederherstellungscode wieder hinein – ist eins in fremden Händen, ändere deshalb zusätzlich dein Passwort bzw. erzeuge einen neuen Wiederherstellungscode.' }));
+}
+
 function showSettings() {
   let offUpdates = null;
   openModal({
@@ -6129,6 +6290,14 @@ function showSettings() {
         if (!UPD.state) UPDATES.get().then((s) => { UPD.state = s; draw(s); }).catch(() => {});
       }
 
+      // Geräte (nur Konten)
+      if (S.mode === 'account') {
+        body.appendChild(sectionHead('GERÄTE'));
+        const devBox = el('div', { class: 'sc-devices' }, el('p', { class: 'sc-note', text: 'Wird geladen …' }));
+        body.appendChild(devBox);
+        renderDevices(devBox);
+      }
+
       // Sitzung / Konto
       body.appendChild(sectionHead(S.mode === 'temp' ? 'SITZUNG' : 'KONTO'));
       const acts = el('div', { class: 'sc-card-actions' });
@@ -6228,6 +6397,8 @@ function changePassword() {
           const r = await api('password', { old_auth: oldKeys.auth, auth: keys.auth, wrapped: wrapped, vault: vault });
           S.wrapKey = wrapKey;
           S.vv = r.vv;
+          S.deviceLabeled = false;   // Gerätename war mit dem alten Schlüssel versiegelt
+          labelDevice();
           const remembered = !!(await idbGet('session'));
           await rememberAccount(remembered, S.username, S.me.id, S.token, wrapped, keys.wrapRaw);
           close();

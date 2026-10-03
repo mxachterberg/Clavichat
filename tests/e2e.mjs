@@ -180,6 +180,45 @@ ok(r.ok && r.vv === 2, 'Tresor gespeichert (Version 2)');
 r = await call('vault', { vault: C.b64(C.te.encode('y')), vv: 1 }, accToken);
 ok(!r.ok && r._status === 409 && r.vv === 2, 'Tresor: veraltete Version → Konflikt mit aktuellem Stand');
 
+console.log('\n== Server: Geräte');
+const devB = C.randomId();
+const label = C.b64(C.te.encode('Gerätename (im Browser verschlüsselt)'));
+r = await call('me', {}, accToken);
+ok(r.ok && r.dl === false, 'neue Sitzung hat noch keinen Gerätenamen');
+r = await call('device.label', { n: label }, accToken);
+ok(r.ok, 'Gerätename abgelegt (der Server sieht nur Chiffretext)');
+r = await call('me', {}, accToken);
+ok(r.dl === true, 'me meldet: Gerätename vorhanden');
+const tv0 = (await call('poll', { i: { s: 0, o: 0, g: 0 } }, accToken)).tv;
+ok(typeof tv0 === 'number' && tv0 >= 1, 'Abruf liefert den Anmeldezähler des Kontos');
+r = await call('login', { username: uname, auth: keys.auth, dev: devB });
+const tokB1 = r.token;
+ok(r.ok && r.tv === tv0 + 1, 'neues Gerät: Anmeldezähler steigt');
+r = await call('poll', { i: { s: 0, o: 0, g: 0 } }, accToken);
+ok(r.tv === tv0 + 1, 'die anderen Geräte sehen den neuen Zähler im Abruf');
+r = await call('login', { username: uname, auth: keys.auth, dev: devB });
+ok(r.ok && r.tv === tv0 + 1, 'erneut auf demselben Gerät angemeldet: Zähler bleibt');
+r = await call('devices', {}, accToken);
+const own = r.list && r.list.find(d => d.cur);
+// Sitzungen: Registrieren, Anmelden, zweimal Gerät B.
+ok(r.ok && r.list.length === 4 && r.list.filter(d => d.cur).length === 1, 'Geräteliste: vier Sitzungen, genau eine ist diese');
+ok(own && own.n === label, 'Geräteliste: Name kommt so zurück, wie er abgelegt wurde');
+ok(r.list.every(d => /^[0-9a-f]{16}$/.test(d.h) && !('d' in d)), 'Geräteliste: nur Kurzkennung, nie die Geräte-Kennung');
+r = await call('device.revoke', { h: own.h }, accToken);
+ok(r.ok && r.n === 0, 'die eigene Sitzung lässt sich so nicht abmelden');
+r = await call('device.revoke', { others: 1 }, accToken);
+ok(r.ok && r.n === 3 && r.list.length === 1, 'alle anderen Geräte abgemeldet');
+r = await call('poll', { i: { s: 0, o: 0, g: 0 } }, tokB1);
+ok(!r.ok && r._status === 401 && r.revoked === true, 'abgemeldetes Gerät erfährt es beim nächsten Abruf');
+r = await call('login', { username: uname, auth: keys.auth, dev: devB, silent: 1 });
+ok(!r.ok && r._status === 403 && r.revoked === true, 'stilles Wiederanmelden des abgemeldeten Geräts → 403');
+r = await call('login', { username: uname, auth: keys.auth, dev: devB });
+ok(r.ok && r.tv === tv0 + 2, 'mit Passwort kommt es wieder hinein – als neue Anmeldung gezählt');
+r = await call('login', { username: uname, auth: keys.auth, dev: devB, silent: 1 });
+ok(r.ok && r.tv === tv0 + 2, 'danach klappt auch das stille Anmelden wieder');
+r = await call('devices', {}, TA.token);
+ok(!r.ok, 'temporäre Sitzungen haben keine Geräteliste');
+
 console.log('\n== Server: Profilbilder');
 // Der Server prüft nur die Kennung am Anfang – ein JPEG-Gerüst genügt.
 const jpeg = new Uint8Array([0xFF, 0xD8, 0xFF, 0xE0, 0, 16, 0x4A, 0x46, 0x49, 0x46, 0, 1, 1, 0, 0, 1, 0, 1, 0, 0, 0xFF, 0xD9]);
