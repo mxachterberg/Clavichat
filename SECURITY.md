@@ -56,6 +56,12 @@ erfunden. Im Überblick – wo verschlüsselt wird und was der Server davon sieh
 - Ohne Kompression: Sie würde das Auffüllen (siehe unten) zunichtemachen.
 - Beim Server steht an keiner Nachricht ein Absender. Wer geschrieben hat,
   steht nur verschlüsselt und signiert im Inneren.
+- **Nachrichtenanfragen:** Wer zum ersten Mal schreibt (kein Kontakt, kein
+  Freund, kein gemeinsamer Raum), landet unter „Nachrichtenanfragen“: ohne
+  Ton, Links nur als Text, Einladungen und Dateien gesperrt. Anrufe von
+  Unbekannten klingeln bei Konten nicht (einstellbar; bei temporären
+  Sitzungen von Haus aus an) – auch kein „besetzt“, das verriete, dass man
+  da ist. Angenommen oder abgelehnt wird im verschlüsselten Tresor.
 
 ### Räume
 
@@ -74,6 +80,54 @@ erfunden. Im Überblick – wo verschlüsselt wird und was der Server davon sieh
   verbliebenen Mitglieder. Alte Einladungen werden ungültig.
 - Raumname, Text- und Sprachkanäle und das Raumbild sind mit dem Raumschlüssel
   verschlüsselt. Der Server kennt von Sprachkanälen nur zufällige Kennungen.
+- Zusätzlich wechselt der Besitzer den Schlüssel jede Woche – nicht, solange
+  Einladungslinks offen sind (sie würden sonst ungültig). Siehe Forward
+  Secrecy.
+
+### Forward Secrecy
+
+- **Direktnachrichten:** Jede Woche hängt ein Gerät einen neuen
+  X25519-Verschlüsselungs-Unterschlüssel an den eigenen PGP-Schlüssel;
+  Absender nehmen immer den jüngsten (vor dem Senden frischt Clavichat den
+  Schlüssel des Gegenübers auf, wenn er älter als sechs Stunden ist). Der
+  Hauptschlüssel und damit der Fingerabdruck bleiben gleich.
+- Alte Unterschlüssel werden gelöscht, sobald ihr Nachfolger länger da ist
+  als die höchste Aufbewahrung plus zwei Tage – alles, was an sie ging, ist
+  dann beim Server abgelaufen. Wer danach an den privaten Schlüssel kommt,
+  kann zuvor mitgeschnittene Nachrichten damit nicht mehr öffnen.
+- Konten: Der aktuelle Schlüssel liegt im verschlüsselten Tresor, damit alle
+  Geräte ihn haben. Es wechselt immer nur ein Gerät (Sperre beim Server für
+  zwei Minuten); die anderen übernehmen den neuen Stand – spätestens, wenn
+  sie eine Nachricht an den neuen Unterschlüssel nicht öffnen können. Die
+  gespeicherte Anmeldung auf dem Gerät wird gleich mit erneuert. Den beim
+  Server eingepackten Schlüssel ersetzt Clavichat nur mit Passwort oder Code
+  (beim Anmelden; Konten mit Code jederzeit) – eine gestohlene Sitzung allein
+  kann ihn nicht überschreiben. Einen neuen öffentlichen Schlüssel nimmt der
+  Server nur mit demselben Fingerabdruck an; ob er wirklich dazu passt,
+  prüfen die anderen Geräte selbst.
+- **Räume:** Jedes Mitglied löscht alte Schlüsselgenerationen, sobald ihre
+  Nachfolgerin länger da ist als die Aufbewahrung des Raums plus zwei Tage.
+  Gelöscht bleibt gelöscht, auch auf den anderen Geräten (Tresor).
+- **Anrufe** haben ohnehin eigene Schlüssel je Gespräch (DTLS-SRTP).
+
+### Dateien und Bilder
+
+- Jede Datei bekommt im Browser einen eigenen Zufallsschlüssel (AES-256-GCM)
+  und wird in Stücken zu 512 KiB verschlüsselt. Der IV ist die Stücknummer
+  (jeder Schlüssel verschlüsselt jede Nummer nur einmal), die zusätzlichen
+  Daten binden Datei, Nummer und Anzahl der Stücke: Stücke lassen sich weder
+  vertauschen noch weglassen noch aus einer anderen Datei einschmuggeln.
+- Schlüssel, Name, Typ und bei Bildern eine kleine Vorschau stehen nur in der
+  Ende-zu-Ende verschlüsselten Nachricht. Der Server bekommt Chiffretext und
+  liefert ihn nur an Angemeldete aus.
+- Bilder (JPEG, PNG, WebP) zeichnet der Browser vor dem Senden neu – EXIF und
+  andere Metadaten wie der Aufnahmeort fallen weg. GIFs gehen unverändert raus.
+- Eine Datei läuft mit ihrer Nachricht ab, verschwindet beim Löschen der
+  Nachricht und mit der Identität, die sie hochgeladen hat. Höchstens 25 MB je
+  Datei, 100 MB je Identität (einstellbar).
+- Vor Programmen und Skripten (.exe, .bat, .ps1, .js …) warnt Clavichat beim
+  Herunterladen. In Nachrichtenanfragen lassen sich Dateien erst nach dem
+  Annehmen öffnen.
 
 ### Anrufe und Bildschirm
 
@@ -137,9 +191,23 @@ erfunden. Im Überblick – wo verschlüsselt wird und was der Server davon sieh
     (Kontakte, Raumschlüssel, Sperrliste, Einstellungen, Lesestand) einpackt.
 - Das Passwort selbst verlässt den Browser nie. Der Server kann den privaten
   Schlüssel nicht auspacken.
-- Mindestens 10 Zeichen. Wer die Daten des Servers stiehlt, kann offline
-  Passwörter raten; jeder Versuch kostet 600.000 PBKDF2-Runden. Ein langes
-  Passwort ist deshalb der beste Schutz.
+- Mindestens 10 Zeichen und eine geschätzte Stärke von „okay“ (rund 40 Bit):
+  Die Schätzung erkennt häufige Passwörter und Wörter, Tastaturfolgen,
+  Wiederholungen, Jahreszahlen und Leetspeak und nimmt zu schwache Passwörter
+  nicht an. Wer die Daten des Servers stiehlt, kann offline Passwörter raten;
+  jeder Versuch kostet 600.000 PBKDF2-Runden. Ein langes Passwort ist deshalb
+  der beste Schutz.
+
+### Geräte
+
+- Jedes Gerät hat eine zufällige Kennung; der Server merkt sie sich zur
+  Sitzung. In den Einstellungen stehen alle angemeldeten Geräte – ihre Namen
+  (etwa „Firefox · Windows“) liegen beim Server nur verschlüsselt.
+- Ein Gerät (oder alle anderen) lässt sich aus der Ferne abmelden. Es
+  erfährt beim nächsten Abruf davon und kommt still – mit gespeichertem
+  Wiederherstellungscode – nicht wieder hinein, nur mit Passwort oder Code.
+- Meldet sich ein Gerät an, das das Konto noch nicht kennt, sagen die anderen
+  Geräte Bescheid („Neue Anmeldung bei deinem Konto“).
 
 ### Konto mit dem Postfach (nur achterberg.dev)
 
@@ -190,6 +258,21 @@ erfunden. Im Überblick – wo verschlüsselt wird und was der Server davon sieh
   Zusatzdaten). Läuft die Sitzung ab, meldet sich das Gerät damit still neu
   an. Neue Angriffsfläche entsteht so nicht: Wer an das Schlüsselobjekt
   kommt, packt damit ohnehin den privaten Schlüssel aus.
+- **App-Sperre (PIN):** Aus der PIN entsteht mit PBKDF2-SHA-256 (600.000
+  Runden, eigenes Salz je Gerät) ein AES-256-GCM-Schlüssel. Er versiegelt die
+  gespeicherte Anmeldung (Sitzungs-Token, eingepackter Schlüssel, versiegelter
+  Anmeldeschlüssel) – ohne PIN ist sie auf der Festplatte wertlos. Clavichat
+  sperrt beim Start, nach Leerlauf, beim Sperren von Windows bzw. vor dem
+  Ruhezustand und auf Knopfdruck; ab dem dritten Fehlversuch mit wachsender
+  Pause, nach zehn wird die gespeicherte Anmeldung gelöscht. Gesperrt nennen
+  Benachrichtigungen niemanden. Zu einfache PINs (1234, 0000, 1212 …) nimmt
+  Clavichat nicht an.
+- **Windows-App:** Die gespeicherte Anmeldung ist zusätzlich – auch ohne PIN –
+  an das Windows-Konto gebunden (Electron `safeStorage`, also DPAPI). Eine
+  Kopie des Profils lässt sich auf einem anderen Rechner oder unter einem
+  anderen Windows-Konto nicht öffnen. Auf Wunsch sieht Windows das Fenster für
+  Bildschirmfotos, Aufnahmen und Bildschirmübertragungen schwarz
+  (`SetWindowDisplayAffinity`).
 
 ### Eigener Server (Windows, Docker)
 
@@ -248,6 +331,13 @@ erfunden. Im Überblick – wo verschlüsselt wird und was der Server davon sieh
   Fach gehört, kennt er nicht.
 - Bei Konten mit dem Postfach von achterberg.dev den SHA-256-Hash des
   Postfachs. Wer die Adresse kennt, kann sie damit dem Konto zuordnen.
+- Bei Dateien: Größe, Zeitpunkt, Ablauf und wer sie hochgeladen hat; wer
+  sie abruft, im Moment der Anfrage (gespeichert wird das nicht).
+- Bei Konten: wann welche Sitzung entstand und ungefähr zuletzt genutzt wurde
+  (auf einen Tag genau) – die Gerätenamen nur verschlüsselt.
+- Die Entstehungszeit der Unterschlüssel steht im öffentlichen Schlüssel.
+  Daran lässt sich grob ablesen, wann ein Gerät der Identität aktiv war (auf
+  eine Woche genau).
 - Bei Anrufen ohne Relay sehen sich die Gesprächspartner gegenseitig die
   IP-Adresse, der STUN-Server sieht die eigene. Sie steht schon im
   Verbindungsangebot, das beim Klingeln ankommt – auch wenn niemand abnimmt.
@@ -265,13 +355,23 @@ erfunden. Im Überblick – wo verschlüsselt wird und was der Server davon sieh
   Schlüssel abgreifen. Die Windows-App bringt ihren Code selbst mit (Protokoll
   `app://securecom`, Content-Security-Policy nur für eigene Dateien). Der
   Server kann ihn nicht austauschen.
-- **Keine Forward Secrecy für Nachrichten:** Nachrichten sind mit den
-  langfristigen Schlüsseln verschlüsselt. Wer später an einen privaten Schlüssel
-  und gespeicherte Chiffretexte kommt, kann alte Nachrichten lesen. Anrufe sind
-  davon nicht betroffen.
+- **Forward Secrecy nur wochenweise:** Kein Double Ratchet wie bei Signal.
+  Wer an einen privaten Schlüssel kommt, kann Nachrichten lesen, deren
+  Unterschlüssel noch nicht gelöscht ist – also etwa die letzten fünf Wochen
+  (Wechsel jede Woche, Löschen nach Aufbewahrung plus zwei Tage). Wechsel und
+  Löschen passieren nur, wenn ein Gerät der Identität online ist. Bei Konten
+  mit Passwort bleibt der beim Server eingepackte Schlüssel mit den alten
+  Unterschlüsseln liegen, bis das nächste Mal jemand das Passwort eingibt.
+  Selbst angelegte Sicherungen („Privaten Schlüssel sichern“) enthalten die
+  Unterschlüssel vom Zeitpunkt der Sicherung.
 - **Raumschlüssel:** Wer einen Raumschlüssel kennt, kann alle Nachrichten
   dieser Generation lesen. Nach dem Entfernen eines Mitglieds sind erst die
-  folgenden Nachrichten vor ihm sicher.
+  folgenden Nachrichten vor ihm sicher. Solange Einladungslinks offen sind,
+  wechselt der Schlüssel nicht von selbst.
+- **App-Sperre:** Sie verdeckt die Oberfläche; während Clavichat läuft,
+  liegen die Schlüssel im Speicher. Der Zähler für Fehlversuche liegt auf dem
+  Gerät – gegen jemanden, der die Dateien kopiert, schützt die Stärke der PIN
+  (und in der Windows-App DPAPI), nicht der Zähler.
 - **Fingerabdrücke:** Die Sicherheit hängt daran, dass wichtige Kontakte über
   einen zweiten Weg geprüft werden. Ohne Prüfung schützt nur Trust on first use.
 - **Gerät:** Gegen Schadsoftware oder Browser-Erweiterungen mit Zugriff auf die

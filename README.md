@@ -41,6 +41,20 @@ unverändert weiterlaufen.
   löst einen neuen Raumschlüssel aus. Wie lange Nachrichten bleiben, legt
   jede Unterhaltung fest (1 Stunde bis 30 Tage, Standard 7 Tage) – danach
   löscht sie der Server.
+- **Dateien und Bilder** bis 25 MB, Ende-zu-Ende verschlüsselt mit eigenem
+  Schlüssel je Datei; Bilder ohne Metadaten (etwa den Aufnahmeort), mit
+  Vorschau. Per Büroklammer, Hereinziehen oder Einfügen.
+- **Nachrichtenanfragen:** Wer zum ersten Mal schreibt, landet erst dort –
+  ohne Ton, Links nur als Text, Dateien und Einladungen gesperrt, Anrufe von
+  Unbekannten klingeln bei Konten nicht.
+- **Forward Secrecy:** Der Schlüssel für Nachrichten an dich wechselt jede
+  Woche, alte werden gelöscht; in Räumen wechselt der Besitzer den
+  Raumschlüssel wöchentlich.
+- **Geräte und Sperre:** angemeldete Geräte sehen und aus der Ferne abmelden,
+  Hinweis bei neuer Anmeldung; App-Sperre mit PIN (nach Leerlauf, beim
+  Sperren von Windows, Strg+L), die gespeicherte Anmeldung nur mit PIN
+  verschlüsselt – in der Windows-App zusätzlich an das Windows-Konto
+  gebunden. Schutz vor Bildschirmfotos (Windows-App).
 - **Sprechen und zeigen:** Sprach- und Videoanrufe in wählbarer Tonqualität
   (bis 128 kbit/s in Stereo; in Räumen auf Wunsch für alle festgelegt),
   mehrere Sprachkanäle je Raum (je bis 8 Personen), Bildschirm teilen in
@@ -93,6 +107,9 @@ In der App zeigt „So funktioniert’s“ dieselben Grafiken zum Ausprobieren
 | Konto mit achterberg.dev | Postfach per HMAC-SHA-256-Ticket bestätigt (fünf Minuten, nur einmal); statt Passwort ein Wiederherstellungscode mit 160 Zufallsbits → HKDF-SHA-256 |
 | Freunde, Status | gemeinsames Geheimnis aus der PGP-verschlüsselten Anfrage → HKDF → zwei zufällige Fächer beim Server und ein AES-256-GCM-Schlüssel; der Server sieht weder Status noch Freundschaften |
 | Aufbewahrung | Ablaufdatum je Nachricht beim Server (Standard 7 Tage); verkürzt eine Unterhaltung, löscht jede Seite ihre älteren Einträge; Abgelaufenes wird stündlich gelöscht |
+| Forward Secrecy | wöchentlich neuer X25519-Unterschlüssel, alte nach Aufbewahrung + 2 Tagen gelöscht; Raumschlüssel wöchentlich neu, alte Generationen gelöscht |
+| Dateien | eigener AES-256-GCM-Schlüssel je Datei, 512-KiB-Stücke (Reihenfolge und Anzahl authentifiziert); Schlüssel nur in der verschlüsselten Nachricht; Bilder ohne Metadaten |
+| Auf dem Gerät | App-Sperre: PIN → PBKDF2 (600.000 Runden) → AES-256-GCM versiegelt die gespeicherte Anmeldung; Windows-App zusätzlich DPAPI |
 | Updates (Windows-App) | Update-Liste mit Ed25519 signiert, Datei mit SHA-256 geprüft; der Signaturschlüssel liegt nur beim Herausgeber |
 | Länge | jeder Klartext wird vor dem Verschlüsseln auf feste Größen aufgefüllt |
 
