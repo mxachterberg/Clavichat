@@ -1073,6 +1073,57 @@ html[data-theme="light"] .sc-modal { background: rgba(40, 40, 40, .3); }
 .sc-modal-body .sc-sec:first-child { margin-top: 0; }
 .sc-info { margin: 0 0 8px; padding-left: 18px; font-size: 13.5px; line-height: 1.65; color: var(--text-body); }
 .sc-info li { margin-bottom: 6px; }
+
+/* Erklär-Grafiken („So funktioniert Clavichat“): Kästen mit orangen
+   Ecken-Kreuzen wie .tickbox, Beschriftung in Monospace. Schmale Fenster
+   wischen seitlich, damit die Schrift lesbar bleibt. */
+.sc-dg-intro { margin-bottom: 20px; }
+.sc-dg { margin: 0 0 8px; }
+.sc-dg-scroll { overflow-x: auto; padding: 6px 0; scrollbar-width: thin; scrollbar-color: var(--border) transparent; }
+.sc-dg svg { display: block; width: 100%; min-width: 500px; height: auto; overflow: visible; }
+.sc-dg-box { fill: var(--bg); stroke: var(--border); stroke-width: 1; }
+.sc-dg-tick { fill: none; stroke: var(--accent); stroke-width: 1; }
+.sc-dg-title { font-family: var(--mono); font-size: 11px; letter-spacing: .14em; fill: var(--text); }
+.sc-dg-sub { font-family: var(--sans); font-size: 11.5px; fill: var(--muted); }
+.sc-dg-label { font-family: var(--mono); font-size: 9.5px; letter-spacing: .1em; fill: var(--muted); }
+.sc-dg-label.is-accent { fill: var(--accent); }
+.sc-dg-label.is-safe { fill: var(--green); }
+.sc-dg-line { fill: none; stroke: var(--muted); stroke-width: 1; stroke-dasharray: 3 4; }
+.sc-dg-wire { fill: none; stroke: var(--text-body); stroke-width: 1; }
+.sc-dg-flow { fill: none; stroke: var(--accent); stroke-width: 1.6; stroke-dasharray: 6 5; transition: opacity .3s ease; }
+.sc-dg-flow.is-safe { stroke: var(--green); }
+.sc-dg-flow.is-faint { stroke: var(--muted); stroke-width: 1; stroke-dasharray: 2 5; opacity: .6; }
+.sc-dg-flow.is-gone { opacity: 0; }
+.sc-dg-seal { fill: none; stroke: var(--accent); stroke-width: 2; }
+.sc-dg-lock path { fill: none; stroke: var(--accent); stroke-width: 1.4; }
+.sc-dg-lock rect { fill: var(--panel); stroke: var(--accent); stroke-width: 1.4; }
+@media (prefers-reduced-motion: no-preference) {
+  .sc-dg-flow:not(.is-faint):not(.is-gone) { animation: sc-dg-flow 1.1s linear infinite; }
+}
+@keyframes sc-dg-flow { to { stroke-dashoffset: -22; } }
+.sc-dg-facts { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); margin: 10px 0 12px; border: 1px solid var(--border); }
+.sc-dg-fact { padding: 10px 12px; }
+.sc-dg-fact + .sc-dg-fact { border-left: 1px solid var(--border); }
+.sc-dg-fact-label,
+.sc-dg-col-label {
+  display: block;
+  margin-bottom: 5px;
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: .14em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.sc-dg-fact-value { font-size: 13px; line-height: 1.5; color: var(--text); }
+.sc-dg-fact-value.is-accent { color: var(--accent); }
+.sc-dg-fact-value.is-safe { color: var(--green); }
+.sc-dg-tabs { margin-bottom: 8px; }
+.sc-dg-cols { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; margin: 8px 0 6px; }
+.sc-dg-col p { margin: 0; font-size: 12.5px; line-height: 1.6; color: var(--text-body); }
+@media (max-width: 560px) {
+  .sc-dg-cols, .sc-dg-facts { grid-template-columns: 1fr; }
+  .sc-dg-fact + .sc-dg-fact { border-left: 0; border-top: 1px solid var(--border); }
+}
 .sc-invite-out { display: flex; flex-direction: column; gap: 8px; margin: 12px 0; }
 .sc-invite-out input { font-family: var(--mono); font-size: 11.5px; }
 .sc-invite-out .btn { align-self: flex-start; padding: 8px 13px; }

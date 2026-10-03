@@ -4,6 +4,17 @@ Was sich von Version zu Version ändert. Beim Veröffentlichen wird der
 Abschnitt einer Version zum Text des GitHub-Releases
 (`.github/workflows/windows.yml`).
 
+## Unveröffentlicht
+
+- **So funktioniert’s:** Das Erklärfenster (Info-Symbol oben, Knopf auf der
+  Startseite) zeigt jetzt zwei Grafiken im Stil der Seite. „So läuft ein
+  Anruf“ – mit Schalter, was mit und ohne „IP verbergen“ im Angebot steht
+  und was das Gegenüber sieht. „Wo verschlüsselt wird“ – je für
+  Direktnachricht, Raum, Anruf, Status und Tresor: was auf dem Gerät
+  passiert, was der Server sieht und wo entschlüsselt wird.
+- README und SECURITY.md haben dieselben Grafiken (hell und dunkel, erzeugt
+  mit `node docs/diagramme.mjs`).
+
 ## 1.6.0 – 03.10.2026
 
 Mehr Schutz für die eigene IP-Adresse bei Anrufen und Aufräumen bei Räumen
