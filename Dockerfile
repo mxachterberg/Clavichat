@@ -10,7 +10,7 @@
 #  mit Zertifikat (Caddy, Traefik, nginx …). Daten liegen im Volume /data.
 #  Einstellungen kommen aus Umgebungsvariablen (docker/config.php).
 # ----------------------------------------------------------------------------
-FROM php:8.3-apache
+FROM php:8.5-apache
 
 # Produktions-Einstellungen von PHP; Datenordner außerhalb des Webroots,
 # nur für den Webserver-Nutzer beschreibbar.
