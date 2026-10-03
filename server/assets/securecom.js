@@ -1868,7 +1868,7 @@ function renderMainHead() {
       el('span', { class: 'sc-head-title' }, icon('radio', 15), 'Clavichat'),
       el('span', { class: 'sc-head-sub', text: 'Ende-zu-Ende verschlüsselt' })),
       el('span', { class: 'sc-head-spacer' }),
-      iconBtn('info', 'Wie Clavichat schützt', showSecurityInfo));
+      iconBtn('info', 'So funktioniert Clavichat', showSecurityInfo));
   }
 }
 
@@ -2054,7 +2054,7 @@ function homeScreen() {
     el('div', { class: 'sc-card-actions' },
       el('button', { type: 'button', class: 'btn btn--primary', onclick: connectByKey }, icon('userPlus', 14), 'Freund hinzufügen'),
       el('button', { type: 'button', class: 'btn', onclick: roomDialog }, icon('plus', 14), 'Raum erstellen'),
-      el('button', { type: 'button', class: 'btn', onclick: showSecurityInfo }, icon('shield', 14), 'Was sieht der Server?')));
+      el('button', { type: 'button', class: 'btn', onclick: showSecurityInfo }, icon('shield', 14), 'So funktioniert’s')));
   box.append(keyCard, how);
   return box;
 }
@@ -6046,9 +6046,202 @@ function deleteAccount() {
   });
 }
 
+/* ---------- Erklär-Grafiken („So funktioniert Clavichat“) --------------------
+   Im Stil der Seite: dünne Rahmen, orange Kreuze an den Ecken, Beschriftung in
+   Monospace. Die Farben kommen aus dem Stylesheet (hell und dunkel). */
+const SVG_NS = 'http://www.w3.org/2000/svg';
+
+function svgEl(tag, attrs) {
+  const node = document.createElementNS(SVG_NS, tag);
+  for (const k of Object.keys(attrs || {})) {
+    const v = attrs[k];
+    if (v !== null && v !== undefined && v !== false) node.setAttribute(k, v);
+  }
+  for (let i = 2; i < arguments.length; i++) {
+    const c = arguments[i];
+    if (c !== null && c !== undefined && c !== false) node.append(c);
+  }
+  return node;
+}
+
+function dgText(x, y, cls, text) {
+  return svgEl('text', { x: x, y: y, class: cls, 'text-anchor': 'middle', 'dominant-baseline': 'central' }, text || '');
+}
+
+/** Kasten wie auf der Seite; gibt Titel und Untertitel zurück, damit sie sich ändern lassen. */
+function dgBox(parent, x, y, w, h, title, sub) {
+  const t = dgText(x + w / 2, y + h / 2 - 9, 'sc-dg-title', title);
+  const s = dgText(x + w / 2, y + h / 2 + 11, 'sc-dg-sub', sub);
+  parent.append(
+    svgEl('rect', { x: x, y: y, width: w, height: h, class: 'sc-dg-box' }),
+    svgEl('path', { d: 'M' + (x - 4.5) + ' ' + y + 'h9M' + x + ' ' + (y - 4.5) + 'v9', class: 'sc-dg-tick' }),
+    svgEl('path', { d: 'M' + (x + w - 4.5) + ' ' + (y + h) + 'h9M' + (x + w) + ' ' + (y + h - 4.5) + 'v9', class: 'sc-dg-tick' }),
+    t, s);
+  return { title: t, sub: s };
+}
+
+/** Schloss: zu (verschlüsselt) oder offen (entschlüsselt). */
+function dgLock(x, y, open) {
+  return svgEl('g', { class: 'sc-dg-lock' },
+    svgEl('path', { d: open
+      ? 'M' + (x - 3.5) + ' ' + (y - 3) + 'v-6a3.5 3.5 0 0 1 7 0v1'
+      : 'M' + (x - 3.5) + ' ' + (y - 3) + 'v-3.5a3.5 3.5 0 0 1 7 0v3.5' }),
+    svgEl('rect', { x: x - 6, y: y - 3, width: 12, height: 9 }));
+}
+
+function serverHost() {
+  try { return new URL(API_URL, location.href).host; } catch (e) { return location.host; }
+}
+
+function relayHost() {
+  for (const s of turnServers()) {
+    for (const u of [].concat(s.urls)) {
+      const m = /^turns?:([^:?]+)/i.exec(String(u));
+      if (m) return m[1];
+    }
+  }
+  return '';
+}
+
+/** So läuft ein Anruf – mit und ohne „IP verbergen“. Nur zum Zeigen, die Einstellung bleibt. */
+function callDiagram() {
+  const relayOk = !!(S.cfg && S.cfg.relay);
+  const host = serverHost();
+  const root = svgEl('svg', { viewBox: '0 0 616 306', role: 'img' });
+  const direct = svgEl('path', { d: 'M162 156H454' });
+  const relL = svgEl('path', { d: 'M83 190V268H229' });
+  const relR = svgEl('path', { d: 'M387 268H533V190' });
+  const d1 = dgText(308, 140, 'sc-dg-label');
+  const d2 = dgText(308, 173, 'sc-dg-label');
+  const rl = dgText(156, 255, 'sc-dg-label');
+  const rr = dgText(460, 255, 'sc-dg-label');
+  root.append(
+    svgEl('path', { d: 'M83 122V44H229', class: 'sc-dg-line' }),
+    svgEl('path', { d: 'M387 44H533V122', class: 'sc-dg-line' }),
+    direct, relL, relR,
+    dgText(156, 30, 'sc-dg-label', 'ANGEBOT · ANTWORT'),
+    dgText(460, 30, 'sc-dg-label', 'PGP-VERSCHLÜSSELT'),
+    d1, d2, rl, rr);
+  dgBox(root, 8, 126, 150, 60, 'DU', 'dein Gerät');
+  dgBox(root, 233, 14, 150, 60, host.length <= 18 ? host : 'SERVER', 'nur Vermittlung');
+  dgBox(root, 458, 126, 150, 60, 'GEGENÜBER', 'sein Gerät');
+  dgBox(root, 233, 238, 150, 60, 'RELAY (TURN)', relayOk ? (relayHost() || 'eingerichtet') : 'nicht eingerichtet');
+
+  const offer = el('span', { class: 'sc-dg-fact-value' });
+  const seen = el('span', { class: 'sc-dg-fact-value' });
+  const box = el('input', { type: 'checkbox', disabled: !relayOk });
+  const draw = (on) => {
+    direct.setAttribute('class', 'sc-dg-flow' + (on ? ' is-faint' : ''));
+    relL.setAttribute('class', 'sc-dg-flow ' + (on ? 'is-safe' : 'is-faint'));
+    relR.setAttribute('class', 'sc-dg-flow is-safe' + (on ? '' : ' is-gone'));
+    d1.textContent = on ? 'KEIN DIREKTER WEG' : 'TON · BILD · BILDSCHIRM';
+    d2.textContent = on ? 'DEINE IP BLEIBT VERBORGEN' : 'DIREKT – ABSENDER: DEINE IP';
+    d2.setAttribute('class', 'sc-dg-label ' + (on ? 'is-safe' : 'is-accent'));
+    rl.textContent = on ? 'RELAY' : 'STUN-ABFRAGE';
+    rr.textContent = on ? 'RELAY' : '';
+    offer.textContent = on ? 'nur Adressen des Relays' : 'deine Heimnetz-Adresse und deine öffentliche IP' + (relayOk ? ', dazu das Relay' : '');
+    seen.textContent = on ? 'nur das Relay' + (relayHost() ? ' (' + relayHost() + ')' : '') : 'deine IP-Adresse';
+    seen.className = 'sc-dg-fact-value ' + (on ? 'is-safe' : 'is-accent');
+    root.setAttribute('aria-label', 'Anruf: Das Verbindungsangebot läuft PGP-verschlüsselt über ' + host + '. ' + (on
+      ? 'Ton und Bild laufen über das Relay; das Gegenüber sieht nur das Relay.'
+      : 'Ton und Bild laufen direkt; das Gegenüber sieht deine IP-Adresse.'));
+  };
+  box.checked = hidingIp();
+  box.addEventListener('change', () => draw(box.checked));
+  draw(box.checked);
+  return el('div', { class: 'sc-dg' },
+    el('div', { class: 'sc-dg-scroll' }, root),
+    el('div', { class: 'sc-dg-facts' },
+      el('div', { class: 'sc-dg-fact' }, el('span', { class: 'sc-dg-fact-label', text: 'Im Angebot – schon beim Klingeln' }), offer),
+      el('div', { class: 'sc-dg-fact' }, el('span', { class: 'sc-dg-fact-label', text: 'Das Gegenüber sieht' }), seen)),
+    el('label', { class: 'sc-check' + (relayOk ? '' : ' is-disabled') }, box, el('span', { text: relayOk
+      ? 'Mit „IP verbergen“ zeigen. Bei dir ist es gerade ' + (hidingIp() ? 'an' : 'aus') + ' – einstellen unter Einstellungen → ANRUFE.'
+      : '„IP verbergen“ braucht einen Relay-Server (TURN), der auf diesem Server nicht eingerichtet ist.' })));
+}
+
+/* Wo und wie verschlüsselt wird – je Art: auf deinem Gerät, beim Server, beim Empfänger. */
+const SEAL = [
+  { id: 'dm', tab: 'Direkt', right: 'GEGENÜBER', rightSub: 'sein privater Schlüssel', where: 'BEIM GEGENÜBER',
+    algo: 'OPENPGP · AES-256 · X25519 · ED25519',
+    me: 'Für jede Nachricht ein neuer AES-256-Schlüssel. OpenPGP packt ihn für den Empfänger und für dich ein (X25519) und signiert die Nachricht (Ed25519). Vorher wird sie auf eine feste Größe aufgefüllt.',
+    server: 'Legt nur den Chiffretext in den Briefkasten des Empfängers – ohne Absender, mit Ablaufdatum. Unterwegs schützt zusätzlich TLS.',
+    peer: 'Packt den Schlüssel mit seinem privaten Schlüssel aus, entschlüsselt und prüft deine Signatur.' },
+  { id: 'room', tab: 'Raum', right: 'MITGLIEDER', rightSub: 'kennen den Raumschlüssel', where: 'BEI DEN MITGLIEDERN',
+    algo: 'AES-256-GCM · RAUMSCHLÜSSEL · PGP-SIGNATUR',
+    me: 'Verschlüsselt mit dem Raumschlüssel (AES-256-GCM) und signiert mit deinem PGP-Schlüssel. Den Raumschlüssel kennen nur Mitglieder – im Einladungslink steht er hinter „#“ und geht nie an den Server.',
+    server: 'Speichert den Chiffretext im Raumverlauf. Auch Raumname, Kanäle und Raumbild sind verschlüsselt; er kennt nur eine zufällige Kennung.',
+    peer: 'Jedes Mitglied entschlüsselt mit dem Raumschlüssel und prüft die Signatur. Wer den Raum verlässt, bekommt den nächsten Schlüssel nicht mehr.' },
+  { id: 'call', tab: 'Anruf', right: 'GEGENÜBER', rightSub: 'sein privater Schlüssel', where: 'BEIM GEGENÜBER',
+    algo: 'OPENPGP · NUR DAS VERBINDUNGSANGEBOT', media: 'TON · BILD: DTLS-SRTP – NICHT ÜBER DEN SERVER',
+    me: 'Das Verbindungsangebot wird wie eine Direktnachricht verschlüsselt und signiert. Ton, Bild und Bildschirm verschlüsselt WebRTC mit DTLS-SRTP – die Schlüssel dafür handeln nur die beiden Geräte aus.',
+    server: 'Reicht nur das verschlüsselte Angebot weiter. Ton und Bild laufen nicht über ihn, sondern direkt oder über das Relay, das nur verschlüsselte Pakete sieht.',
+    peer: 'Entschlüsselt das Angebot und prüft die Signatur. Der Sicherheitscode aus beiden DTLS-Fingerabdrücken zeigt, dass niemand dazwischensitzt.' },
+  { id: 'status', tab: 'Status', right: 'FREUNDE', rightSub: 'kennen euer Geheimnis', where: 'BEI DEINEN FREUNDEN',
+    algo: 'AES-256-GCM · SCHLÜSSEL PER HKDF',
+    me: 'Aus eurem gemeinsamen Geheimnis – es kam PGP-verschlüsselt mit der Freundschaftsanfrage – entstehen per HKDF zwei zufällige Fächer und ein Schlüssel. Dein Status geht AES-256-GCM-verschlüsselt in dein Fach.',
+    server: 'Sieht nur ein zufälliges Fach mit Chiffretext; nach 150 Sekunden ist es weg. Wem es gehört und wer mit wem befreundet ist, weiß er nicht.',
+    peer: 'Dein Freund kennt das Geheimnis, liest dein Fach und entschlüsselt deinen Status.' },
+  { id: 'vault', tab: 'Tresor', right: 'DEINE GERÄTE', rightSub: 'nach der Anmeldung', where: 'AUF DEINEN GERÄTEN',
+    algo: 'AES-256-GCM · PBKDF2 → HKDF',
+    me: 'Kontakte, Raumschlüssel und Einstellungen liegen im Tresor. Ihn und deinen privaten Schlüssel verschlüsselt ein Schlüssel aus deinem Passwort (PBKDF2 mit 600.000 Runden, dann HKDF) oder Wiederherstellungscode – AES-256-GCM.',
+    server: 'Bewahrt beides nur verschlüsselt auf. Vom Passwort kennt er nur den bcrypt-Hash eines daraus abgeleiteten Anmeldeschlüssels.',
+    peer: 'Nach der Anmeldung entschlüsseln deine anderen Geräte den Tresor. Das Passwort verlässt nie ein Gerät. Temporäre Sitzungen haben keinen Tresor beim Server.' }
+];
+
+function sealDiagram() {
+  const host = serverHost();
+  const root = svgEl('svg', { viewBox: '0 0 616 166', role: 'img' });
+  const algo = dgText(308, 122, 'sc-dg-label is-accent');
+  const media = svgEl('path', { d: 'M83 144H533', class: 'sc-dg-flow is-safe' });
+  const mediaText = dgText(308, 158, 'sc-dg-label is-safe');
+  root.append(
+    svgEl('path', { d: 'M158 44H233M383 44H458', class: 'sc-dg-wire' }),
+    dgText(195.5, 32, 'sc-dg-label', 'TLS'),
+    dgText(420.5, 32, 'sc-dg-label', 'TLS'),
+    svgEl('path', { d: 'M83 74V104M308 74V104M533 74V104', class: 'sc-dg-line' }),
+    svgEl('path', { d: 'M83 104H533', class: 'sc-dg-seal' }),
+    dgLock(83, 104, false), dgLock(533, 104, true),
+    algo, media, mediaText);
+  dgBox(root, 8, 14, 150, 60, 'DEIN GERÄT', 'privater Schlüssel');
+  dgBox(root, 233, 14, 150, 60, host.length <= 18 ? host : 'SERVER', 'sieht nur Chiffretext');
+  const right = dgBox(root, 458, 14, 150, 60, '', '');
+
+  const cols = el('div', { class: 'sc-dg-cols' });
+  const col = (label) => {
+    const l = el('span', { class: 'sc-dg-col-label', text: label });
+    const p = el('p');
+    cols.appendChild(el('div', { class: 'sc-dg-col' }, l, p));
+    return { label: l, text: p };
+  };
+  const me = col('AUF DEINEM GERÄT');
+  const server = col('BEIM SERVER');
+  const peer = col('');
+  const tabs = el('div', { class: 'sc-tabs sc-dg-tabs', role: 'tablist' });
+  const show = (kind) => {
+    const k = SEAL.find((s) => s.id === kind) || SEAL[0];
+    for (const b of tabs.children) b.setAttribute('aria-selected', b.dataset.kind === k.id ? 'true' : 'false');
+    right.title.textContent = k.right;
+    right.sub.textContent = k.rightSub;
+    root.setAttribute('viewBox', '0 0 616 ' + (k.media ? 166 : 134));   // Ton/Bild-Zeile nur beim Anruf
+    algo.textContent = k.algo;
+    media.setAttribute('class', 'sc-dg-flow is-safe' + (k.media ? '' : ' is-gone'));
+    mediaText.textContent = k.media || '';
+    me.text.textContent = k.me;
+    server.text.textContent = k.server;
+    peer.label.textContent = k.where;
+    peer.text.textContent = k.peer;
+    root.setAttribute('aria-label', k.tab + ': ' + k.me + ' ' + k.server + ' ' + k.peer);
+  };
+  for (const k of SEAL) {
+    tabs.appendChild(el('button', { type: 'button', class: 'sc-tab', role: 'tab', dataset: { kind: k.id }, text: k.tab, onclick: () => show(k.id) }));
+  }
+  show('dm');
+  return el('div', { class: 'sc-dg' }, tabs, el('div', { class: 'sc-dg-scroll' }, root), cols);
+}
+
 function showSecurityInfo() {
   openModal({
-    title: 'WIE CLAVICHAT SCHÜTZT',
+    title: 'SO FUNKTIONIERT CLAVICHAT',
     wide: true,
     build: (body) => {
       const block = (title, lines) => {
@@ -6057,6 +6250,10 @@ function showSecurityInfo() {
         for (const l of lines) ul.appendChild(el('li', { text: l }));
         body.appendChild(ul);
       };
+      body.append(
+        el('p', { class: 'sc-p sc-dg-intro', text: 'Ende-zu-Ende verschlüsselt heißt: Ver- und entschlüsselt wird nur auf den Geräten. Der Server vermittelt und speichert – aber nur Chiffretext.' }),
+        sectionHead('SO LÄUFT EIN ANRUF'), callDiagram(),
+        sectionHead('WO VERSCHLÜSSELT WIRD'), sealDiagram());
       block('VERSCHLÜSSELUNG', [
         'Deine Identität ist ein OpenPGP-Schlüsselpaar (Curve25519: Ed25519 signiert, X25519 verschlüsselt). Es entsteht ' + (DESKTOP ? 'in der App' : 'in deinem Browser') + '.',
         'Direktnachrichten: Für jede Nachricht ein neuer, zufälliger AES-256-Schlüssel, der mit den öffentlichen Schlüsseln von Empfänger und Absender eingepackt wird. Dazu deine Signatur.',

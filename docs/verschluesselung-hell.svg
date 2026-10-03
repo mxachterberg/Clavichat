@@ -1,0 +1,110 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="980" height="722" viewBox="0 0 980 722" role="img">
+<title>Wo Clavichat verschlüsselt</title>
+<desc>Für Direktnachrichten, Räume, Anrufe, Status und Tresor: was auf deinem Gerät verschlüsselt wird, was der Server davon sieht und wo entschlüsselt wird.</desc>
+<style>
+.bg{fill:#f6f6f4}
+.grid{fill:none;stroke:rgba(0,0,0,.045);stroke-width:1}
+.box{fill:#fbfbfa;stroke:#dedcd7;stroke-width:1}
+.tick{fill:none;stroke:#d1580c;stroke-width:1}
+.t{font:500 12px 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;letter-spacing:.14em;fill:#17171a}
+.s{font:400 12.5px Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif;fill:#83838c}
+.l{font:400 10.5px 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;letter-spacing:.1em;fill:#83838c}
+.la{fill:#d1580c}
+.lg{fill:#2f9e52}
+.head{font:400 12px 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;letter-spacing:.16em;fill:#83838c}
+.sq{fill:#d1580c}
+.rule{stroke:#dedcd7;stroke-width:1}
+.sep{stroke:#e7e5e0;stroke-width:1}
+.row{font:500 11px 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;letter-spacing:.12em;fill:#17171a}
+.cell{font:400 13px Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif;fill:#55555c}
+.note{font:400 12.5px Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif;fill:#83838c}
+.sig{fill:none;stroke:#83838c;stroke-width:1;stroke-dasharray:3 4}
+.dir{fill:none;stroke:#d1580c;stroke-width:1.6;stroke-dasharray:6 5}
+.rel{fill:none;stroke:#2f9e52;stroke-width:1.6;stroke-dasharray:6 5}
+.seal{fill:none;stroke:#d1580c;stroke-width:2}
+.lock path{fill:none;stroke:#d1580c;stroke-width:1.4}
+.lock rect{fill:#fbfbfa;stroke:#d1580c;stroke-width:1.4}
+.lock.g path,.lock.g rect{stroke:#2f9e52}
+</style>
+<defs><pattern id="grid" width="40" height="40" patternUnits="userSpaceOnUse"><path class="grid" d="M40 0H0V40"/></pattern></defs>
+<rect class="bg" width="980" height="722"/>
+<rect width="980" height="722" fill="url(#grid)"/>
+<rect class="sq" x="40" y="32" width="8" height="8"/>
+<text x="62" y="36" class="head" text-anchor="start" dominant-baseline="central">WO VERSCHLÜSSELT WIRD</text>
+<path class="rule" d="M269.2 36H940"/>
+<text x="220" y="78" class="l" text-anchor="start" dominant-baseline="central">AUF DEINEM GERÄT</text>
+<text x="480" y="78" class="l" text-anchor="start" dominant-baseline="central">BEIM SERVER</text>
+<text x="740" y="78" class="l" text-anchor="start" dominant-baseline="central">BEIM EMPFÄNGER</text>
+<path class="rule" d="M40 92H940"/>
+<text x="40" y="124" class="row" text-anchor="start" dominant-baseline="central">DIREKTNACHRICHT</text>
+<text x="220" y="124" class="cell" text-anchor="start" dominant-baseline="central">OpenPGP: AES-256 je Nachricht,</text>
+<text x="220" y="143" class="cell" text-anchor="start" dominant-baseline="central">für dich + Empfänger, signiert</text>
+<text x="480" y="124" class="cell" text-anchor="start" dominant-baseline="central">nur Chiffretext, ohne Absender,</text>
+<text x="480" y="143" class="cell" text-anchor="start" dominant-baseline="central">mit Ablaufdatum</text>
+<text x="740" y="124" class="cell" text-anchor="start" dominant-baseline="central">packt mit privatem Schlüssel</text>
+<text x="740" y="143" class="cell" text-anchor="start" dominant-baseline="central">aus, prüft die Signatur</text>
+<path class="seal" d="M330 170H850"/>
+<g class="lock"><path d="M326.5 167v-3.5a3.5 3.5 0 0 1 7 0v3.5"/><rect x="324" y="167" width="12" height="9"/></g>
+<g class="lock"><path d="M846.5 167v-6a3.5 3.5 0 0 1 7 0v1"/><rect x="844" y="167" width="12" height="9"/></g>
+<path class="sep" d="M40 187H940"/>
+<text x="40" y="212" class="row" text-anchor="start" dominant-baseline="central">RAUMNACHRICHT</text>
+<text x="220" y="212" class="cell" text-anchor="start" dominant-baseline="central">AES-256-GCM mit dem</text>
+<text x="220" y="231" class="cell" text-anchor="start" dominant-baseline="central">Raumschlüssel, PGP-signiert</text>
+<text x="480" y="212" class="cell" text-anchor="start" dominant-baseline="central">Chiffretext im Raumverlauf;</text>
+<text x="480" y="231" class="cell" text-anchor="start" dominant-baseline="central">Name und Kanäle verschlüsselt</text>
+<text x="740" y="212" class="cell" text-anchor="start" dominant-baseline="central">Mitglieder: Raumschlüssel</text>
+<text x="740" y="231" class="cell" text-anchor="start" dominant-baseline="central">aus dem Link (hinter #)</text>
+<path class="seal" d="M330 258H850"/>
+<g class="lock"><path d="M326.5 255v-3.5a3.5 3.5 0 0 1 7 0v3.5"/><rect x="324" y="255" width="12" height="9"/></g>
+<g class="lock"><path d="M846.5 255v-6a3.5 3.5 0 0 1 7 0v1"/><rect x="844" y="255" width="12" height="9"/></g>
+<path class="sep" d="M40 275H940"/>
+<text x="40" y="300" class="row" text-anchor="start" dominant-baseline="central">ANRUF: ANGEBOT</text>
+<text x="220" y="300" class="cell" text-anchor="start" dominant-baseline="central">wie eine Direktnachricht:</text>
+<text x="220" y="319" class="cell" text-anchor="start" dominant-baseline="central">PGP-verschlüsselt, signiert</text>
+<text x="480" y="300" class="cell" text-anchor="start" dominant-baseline="central">reicht es nur weiter,</text>
+<text x="480" y="319" class="cell" text-anchor="start" dominant-baseline="central">verfällt nach 2 Minuten</text>
+<text x="740" y="300" class="cell" text-anchor="start" dominant-baseline="central">entschlüsselt, prüft Signatur</text>
+<text x="740" y="319" class="cell" text-anchor="start" dominant-baseline="central">und Sicherheitscode</text>
+<path class="seal" d="M330 346H850"/>
+<g class="lock"><path d="M326.5 343v-3.5a3.5 3.5 0 0 1 7 0v3.5"/><rect x="324" y="343" width="12" height="9"/></g>
+<g class="lock"><path d="M846.5 343v-6a3.5 3.5 0 0 1 7 0v1"/><rect x="844" y="343" width="12" height="9"/></g>
+<path class="sep" d="M40 363H940"/>
+<text x="40" y="388" class="row" text-anchor="start" dominant-baseline="central">TON · BILD</text>
+<text x="220" y="388" class="cell" text-anchor="start" dominant-baseline="central">WebRTC: DTLS-SRTP, Schlüssel</text>
+<text x="220" y="407" class="cell" text-anchor="start" dominant-baseline="central">nur in den beiden Geräten</text>
+<text x="480" y="388" class="cell" text-anchor="start" dominant-baseline="central">läuft nicht über den Server –</text>
+<text x="480" y="407" class="cell" text-anchor="start" dominant-baseline="central">direkt oder über das Relay</text>
+<text x="740" y="388" class="cell" text-anchor="start" dominant-baseline="central">entschlüsselt; Sicherheitscode</text>
+<text x="740" y="407" class="cell" text-anchor="start" dominant-baseline="central">aus den DTLS-Fingerabdrücken</text>
+<path class="rel" d="M330 434H850"/>
+<g class="lock g"><path d="M326.5 431v-3.5a3.5 3.5 0 0 1 7 0v3.5"/><rect x="324" y="431" width="12" height="9"/></g>
+<g class="lock g"><path d="M846.5 431v-6a3.5 3.5 0 0 1 7 0v1"/><rect x="844" y="431" width="12" height="9"/></g>
+<path class="sep" d="M40 451H940"/>
+<text x="40" y="476" class="row" text-anchor="start" dominant-baseline="central">STATUS (FREUNDE)</text>
+<text x="220" y="476" class="cell" text-anchor="start" dominant-baseline="central">AES-256-GCM, Schlüssel und</text>
+<text x="220" y="495" class="cell" text-anchor="start" dominant-baseline="central">Fächer per HKDF aus Geheimnis</text>
+<text x="480" y="476" class="cell" text-anchor="start" dominant-baseline="central">zufälliges Fach, Chiffretext,</text>
+<text x="480" y="495" class="cell" text-anchor="start" dominant-baseline="central">nach 150 Sekunden weg</text>
+<text x="740" y="476" class="cell" text-anchor="start" dominant-baseline="central">Freunde kennen das Geheimnis</text>
+<text x="740" y="495" class="cell" text-anchor="start" dominant-baseline="central">und entschlüsseln</text>
+<path class="seal" d="M330 522H850"/>
+<g class="lock"><path d="M326.5 519v-3.5a3.5 3.5 0 0 1 7 0v3.5"/><rect x="324" y="519" width="12" height="9"/></g>
+<g class="lock"><path d="M846.5 519v-6a3.5 3.5 0 0 1 7 0v1"/><rect x="844" y="519" width="12" height="9"/></g>
+<path class="sep" d="M40 539H940"/>
+<text x="40" y="564" class="row" text-anchor="start" dominant-baseline="central">TRESOR (KONTO)</text>
+<text x="220" y="564" class="cell" text-anchor="start" dominant-baseline="central">AES-256-GCM, Schlüssel aus</text>
+<text x="220" y="583" class="cell" text-anchor="start" dominant-baseline="central">Passwort: PBKDF2 → HKDF</text>
+<text x="480" y="564" class="cell" text-anchor="start" dominant-baseline="central">nur eingepackt; vom Passwort</text>
+<text x="480" y="583" class="cell" text-anchor="start" dominant-baseline="central">nur ein bcrypt-Hash</text>
+<text x="740" y="564" class="cell" text-anchor="start" dominant-baseline="central">deine anderen Geräte,</text>
+<text x="740" y="583" class="cell" text-anchor="start" dominant-baseline="central">nach der Anmeldung</text>
+<path class="seal" d="M330 610H850"/>
+<g class="lock"><path d="M326.5 607v-3.5a3.5 3.5 0 0 1 7 0v3.5"/><rect x="324" y="607" width="12" height="9"/></g>
+<g class="lock"><path d="M846.5 607v-6a3.5 3.5 0 0 1 7 0v1"/><rect x="844" y="607" width="12" height="9"/></g>
+<path class="rule" d="M40 638H940"/>
+<g class="lock"><path d="M42.5 655v-3.5a3.5 3.5 0 0 1 7 0v3.5"/><rect x="40" y="655" width="12" height="9"/></g>
+<text x="62" y="658" class="note" text-anchor="start" dominant-baseline="central">verschlüsselt auf dem Gerät</text>
+<g class="lock"><path d="M272.5 655v-6a3.5 3.5 0 0 1 7 0v1"/><rect x="270" y="655" width="12" height="9"/></g>
+<text x="292" y="658" class="note" text-anchor="start" dominant-baseline="central">entschlüsselt beim Empfänger</text>
+<text x="40" y="686" class="note" text-anchor="start" dominant-baseline="central">Unterwegs schützt zusätzlich TLS (HTTPS). Der private Schlüssel verlässt nie das Gerät.</text>
+</svg>

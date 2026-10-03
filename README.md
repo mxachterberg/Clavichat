@@ -55,6 +55,31 @@ unverändert weiterlaufen.
   Sitzungen ohne Alias bekommen einen Zufallsnamen; nach einem Anruf steht
   die Dauer im Verlauf.
 
+## So funktioniert Clavichat
+
+Ver- und entschlüsselt wird nur auf den Geräten; der Server vermittelt und
+speichert, sieht aber nur Chiffretext. Ein Anruf nimmt zwei Wege: Das
+Verbindungsangebot läuft PGP-verschlüsselt über den Server, Ton und Bild
+direkt zwischen den Geräten – oder mit „IP verbergen“ über ein Relay, dann
+sieht das Gegenüber die eigene IP-Adresse nie.
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/anruf-dunkel.svg">
+  <img alt="So läuft ein Anruf: Das Angebot geht PGP-verschlüsselt über den Server; Ton und Bild laufen direkt (dann sieht das Gegenüber die IP) oder mit „IP verbergen“ über das Relay." src="docs/anruf-hell.svg" width="100%">
+</picture>
+
+Wo und womit verschlüsselt wird – auf dem eigenen Gerät, beim Server und
+beim Empfänger:
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/verschluesselung-dunkel.svg">
+  <img alt="Wo verschlüsselt wird: Direktnachrichten mit OpenPGP, Räume mit AES-256-GCM, Anrufe mit DTLS-SRTP, Status und Tresor mit AES-256-GCM – der Server sieht jeweils nur Chiffretext." src="docs/verschluesselung-hell.svg" width="100%">
+</picture>
+
+In der App zeigt „So funktioniert’s“ dieselben Grafiken zum Ausprobieren
+(mit Schalter für „IP verbergen“). Die Bilder hier entstehen mit
+`node docs/diagramme.mjs`.
+
 ## So schützt Clavichat
 
 | Was | Wie |

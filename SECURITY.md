@@ -19,7 +19,12 @@ nur TLS und darin wieder Chiffretext.
 
 Alle Verfahren stammen aus [OpenPGP.js](https://github.com/openpgpjs/openpgpjs)
 6.3.2 und der WebCrypto-Schnittstelle des Browsers. Nichts davon ist selbst
-erfunden.
+erfunden. Im Überblick – wo verschlüsselt wird und was der Server davon sieht:
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/verschluesselung-dunkel.svg">
+  <img alt="Wo verschlüsselt wird: Direktnachrichten mit OpenPGP, Räume mit AES-256-GCM, Anrufe mit DTLS-SRTP, Status und Tresor mit AES-256-GCM – der Server sieht jeweils nur Chiffretext." src="docs/verschluesselung-hell.svg" width="100%">
+</picture>
 
 ### Identität
 
