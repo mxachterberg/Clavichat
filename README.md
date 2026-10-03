@@ -195,7 +195,8 @@ und arm64, also auch für den Raspberry Pi): `ghcr.io/mxachterberg/clavichat`.
 Einstellungen über Umgebungsvariablen, alle optional (Liste in
 `docker/config.php`): `SECURECOM_PUBLIC_URL`, `SECURECOM_ACCESS_CODE`,
 `SECURECOM_RETENTION_DAYS`, `SECURECOM_TEMP_HOURS`,
-`SECURECOM_TEMP_ROOM_DAYS`, `SECURECOM_STUN`,
+`SECURECOM_TEMP_ROOM_DAYS`, `SECURECOM_FILE_MAX_MB`, `SECURECOM_FILE_QUOTA_MB`,
+`SECURECOM_FILES_TOTAL_MB`, `SECURECOM_STUN`,
 `SECURECOM_TURN_URLS` mit `_USERNAME` und `_CREDENTIAL`,
 `SECURECOM_CF_TURN_KEY_ID` mit `_API_TOKEN`, `SECURECOM_TRUSTED_PROXIES`.
 Die Daten liegen im Volume `/data` – das ist alles, was gesichert werden muss.

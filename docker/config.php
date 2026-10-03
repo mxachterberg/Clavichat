@@ -49,6 +49,9 @@ return [
     'securecom_temp_hours'     => (int)$env('SECURECOM_TEMP_HOURS', 24),
     'securecom_temp_room_days' => (int)$env('SECURECOM_TEMP_ROOM_DAYS', 7),
     'securecom_max_identities' => (int)$env('SECURECOM_MAX_IDENTITIES', 2000),
+    'securecom_file_max_mb'    => (int)$env('SECURECOM_FILE_MAX_MB', 25),
+    'securecom_file_quota_mb'  => (int)$env('SECURECOM_FILE_QUOTA_MB', 100),
+    'securecom_files_total_mb' => (int)$env('SECURECOM_FILES_TOTAL_MB', 1024),
     'securecom_stun'           => $list($env('SECURECOM_STUN', 'stun:stun.cloudflare.com:3478')),
     'securecom_turn'           => $turn,
     'securecom_cf_turn'        => $env('SECURECOM_CF_TURN_KEY_ID')

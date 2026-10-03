@@ -37,6 +37,12 @@ return [
     // Obergrenze aller Identitäten (Konten + temporäre Sitzungen).
     'securecom_max_identities' => 2000,
 
+    // Dateien und Bilder (MB): größte Datei, Speicher je Identität, alle
+    // zusammen. Sie laufen mit ihren Nachrichten ab.
+    'securecom_file_max_mb'    => 25,
+    'securecom_file_quota_mb'  => 100,
+    'securecom_files_total_mb' => 1024,
+
     // STUN: damit Geräte ihre öffentliche Adresse herausfinden.
     'securecom_stun' => ['stun:stun.cloudflare.com:3478'],
 

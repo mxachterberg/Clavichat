@@ -88,6 +88,7 @@ class SecureCom
     const MAX_VOICE     = 8;         // Direktverbindungen: jeder mit jedem
     const MAX_TOKENS    = 10;        // angemeldete Geräte je Konto
     const MAX_DEVICES   = 50;        // gemerkte Geräte-Kennungen (bekannt bzw. abgemeldet)
+    const FILE_CHUNK    = 524288;    // Dateistück im Klartext; verschlüsselt 16 Byte mehr
     const PAGE          = 250;       // Einträge je Abruf
     const PAGE_BYTES    = 1500000;
 
@@ -127,6 +128,22 @@ class SecureCom
         return max(10, (int)cfg('securecom_max_identities', 2000));
     }
 
+    /** Dateien (MB): größte Datei, Speicher je Identität, alle zusammen. */
+    public static function fileMaxBytes()
+    {
+        return max(1, min(100, (int)cfg('securecom_file_max_mb', 25))) * 1048576;
+    }
+
+    public static function fileQuotaBytes()
+    {
+        return max(1, min(10240, (int)cfg('securecom_file_quota_mb', 100))) * 1048576;
+    }
+
+    public static function filesTotalBytes()
+    {
+        return max(10, min(102400, (int)cfg('securecom_files_total_mb', 1024))) * 1048576;
+    }
+
     /** Öffentliche Angaben für den Browser: Verbindungsserver und Grenzen. */
     /**
      * Öffentliche Angaben (vor der Anmeldung): nur STUN. Zugangsdaten eines
@@ -146,6 +163,8 @@ class SecureCom
             // Anmelden mit dem Postfach: Adresse, unter der das Dashboard von
             // achterberg.dev Tickets ausstellt (siehe ssoTicket). Sonst leer.
             'sso'            => defined('CLAVICHAT_SSO') ? (string)CLAVICHAT_SSO : '',
+            'file_max'       => self::fileMaxBytes(),        // Dateien: größte, Stückgröße
+            'file_chunk'     => self::FILE_CHUNK,
             'limits'         => [
                 'voice'   => self::MAX_VOICE,
                 'members' => self::MAX_MEMBERS,
@@ -1345,10 +1364,147 @@ class SecureCom
         self::writeJson(self::dir('tokens') . '/' . $hash . '.json', ['id' => $id, 's' => time(), 'x' => 1]);
     }
 
-    /** Alles einer Identität löschen: Sitzungen, Briefkasten, Räume, Konto. */
+    /* ======================================================================
+       Dateien: im Browser mit einem eigenen Schlüssel je Datei verschlüsselt
+       (AES-256-GCM) und in Stücken hochgeladen. Der Server sieht nur
+       Chiffretext, Größe und Ablauf – Name, Typ und Schlüssel stehen nur in
+       der Ende-zu-Ende verschlüsselten Nachricht. Ablage:
+       files/<id>.json (o Besitzer, c erstellt, x Ablauf, s Größe, t Stücke,
+       b verschlüsselte Bytes, next nächstes Stück, done) und files/<id>/<n>.bin.
+       ====================================================================== */
+    private static function fileMeta($id) { return self::dir('files') . '/' . $id . '.json'; }
+    private static function fileDir($id)  { return self::dir('files') . '/' . $id; }
+
+    public static function filePut(array $me, array $b)
+    {
+        $id    = self::idOf(self::str($b, 'id'));
+        $n     = isset($b['n']) && is_numeric($b['n']) ? (int)$b['n'] : -1;
+        $total = isset($b['of']) && is_numeric($b['of']) ? (int)$b['of'] : 0;
+        $size  = isset($b['size']) && is_numeric($b['size']) ? (int)$b['size'] : -1;
+        $max   = self::fileMaxBytes();
+        if ($size < 0 || $size > $max) {
+            throw new SecureComException('Die Datei ist zu groß – höchstens ' . round($max / 1048576) . ' MB.', 413);
+        }
+        $chunks = max(1, (int)ceil($size / self::FILE_CHUNK));
+        if ($total !== $chunks || $n < 0 || $n >= $total) throw new SecureComException('Ungültiges Dateistück.', 422);
+        $data   = base64_decode(self::b64(self::str($b, 'd'), (int)ceil((self::FILE_CHUNK + 16) / 3) * 4, 'Dateistück'), true);
+        $expect = ($n < $total - 1 ? self::FILE_CHUNK : $size - self::FILE_CHUNK * ($total - 1)) + 16;
+        if ($data === false || strlen($data) !== $expect) throw new SecureComException('Ungültiges Dateistück.', 422);
+
+        $metaFile = self::fileMeta($id);
+        $meta = self::readJson($metaFile);
+        if (!$meta && $n === 0) {
+            // Neue Datei: Platz prüfen (verschlüsselte Bytes) – je Identität und insgesamt.
+            $bytes = $size + 16 * $total;
+            [$mine, $all] = self::fileUsage($me['id']);
+            if ($mine + $bytes > self::fileQuotaBytes()) {
+                throw new SecureComException('Dein Speicher für Dateien ist voll. Ältere Dateien verschwinden mit ihren Nachrichten.', 507);
+            }
+            if ($all + $bytes > self::filesTotalBytes()) throw new SecureComException('Der Server hat gerade keinen Platz für Dateien.', 507);
+            $ttl = isset($b['ttl']) && is_numeric($b['ttl']) ? (int)$b['ttl'] : self::DEFAULT_TTL;
+            $ttl = max(60, min(self::retentionDays() * 86400, $ttl));
+            $now = time();
+            self::writeJson($metaFile, ['o' => $me['id'], 'c' => $now, 'x' => $now + $ttl, 's' => $size, 't' => $total, 'b' => $bytes, 'next' => 0]);
+            if (!is_dir(self::fileDir($id))) @mkdir(self::fileDir($id), 0770, true);
+        } elseif (!$meta || ($meta['o'] ?? '') !== $me['id']) {
+            throw new SecureComException('Unbekannte Datei.', 404);
+        }
+
+        $dir = self::fileDir($id);
+        $res = self::mutate($metaFile, function (&$m) use ($me, $n, $total, $size, $data, $dir) {
+            if (!$m || ($m['o'] ?? '') !== $me['id'] || (int)$m['t'] !== $total || (int)$m['s'] !== $size) return 'unknown';
+            $next = (int)$m['next'];
+            // Der Reihe nach; das zuletzt gesendete Stück darf noch einmal kommen
+            // (Antwort ging verloren) – es ist dasselbe, die Verschlüsselung ist fest.
+            if ($n !== $next && $n !== $next - 1) return 'order';
+            if (@file_put_contents($dir . '/' . $n . '.bin', $data, LOCK_EX) !== strlen($data)) return 'write';
+            if ($n === $next) $m['next'] = $next + 1;
+            if ($m['next'] >= $total) $m['done'] = 1;
+            return 'ok';
+        });
+        if ($res === 'order') throw new SecureComException('Dateistücke bitte der Reihe nach senden.', 409);
+        if ($res === 'write') throw new RuntimeException('Dateistück nicht gespeichert');
+        if ($res !== 'ok') throw new SecureComException('Unbekannte Datei.', 404);
+        return ['n' => $n, 'done' => $n === $total - 1];
+    }
+
+    public static function fileGet(array $me, array $b)
+    {
+        $id = self::idOf(self::str($b, 'id'));
+        $n  = isset($b['n']) && is_numeric($b['n']) ? (int)$b['n'] : -1;
+        $m  = self::readJson(self::fileMeta($id));
+        if (!$m || empty($m['done']) || (int)$m['x'] < time()) throw new SecureComException('Die Datei ist nicht mehr da.', 404);
+        if ($n < 0 || $n >= (int)$m['t']) throw new SecureComException('Ungültiges Dateistück.', 422);
+        $data = @file_get_contents(self::fileDir($id) . '/' . $n . '.bin');
+        if (!is_string($data)) throw new SecureComException('Die Datei ist nicht mehr da.', 404);
+        return ['d' => base64_encode($data), 'of' => (int)$m['t']];
+    }
+
+    /** Eigene Datei löschen (etwa mit ihrer Nachricht). */
+    public static function fileDel(array $me, array $b)
+    {
+        $id = self::idOf(self::str($b, 'id'));
+        $m  = self::readJson(self::fileMeta($id));
+        if ($m && ($m['o'] ?? '') === $me['id']) self::dropFile($id);
+        return [];
+    }
+
+    private static function dropFile($id)
+    {
+        $dir = self::fileDir($id);
+        foreach (glob($dir . '/*.bin') ?: [] as $f) @unlink($f);
+        @rmdir($dir);
+        @unlink(self::fileMeta($id));
+    }
+
+    /** [eigene, alle] verschlüsselten Bytes noch gültiger Dateien. */
+    private static function fileUsage($owner)
+    {
+        $mine = 0;
+        $all  = 0;
+        $now  = time();
+        foreach (glob(self::dir('files') . '/*.json') ?: [] as $f) {
+            $m = self::readJson($f);
+            if (!$m || (int)($m['x'] ?? 0) < $now) continue;
+            $all += (int)($m['b'] ?? 0);
+            if (($m['o'] ?? '') === $owner) $mine += (int)($m['b'] ?? 0);
+        }
+        return [$mine, $all];
+    }
+
+    /**
+     * Stündlich: abgelaufene Dateien, nie fertig hochgeladene (nach einem
+     * Tag), Dateien ohne Besitzer und Stückordner ohne Beschreibung löschen.
+     * $owner: nur die Dateien dieser Identität (beim Löschen der Identität).
+     */
+    private static function expireFiles($now, $owner = null)
+    {
+        foreach (glob(self::dir('files') . '/*.json') ?: [] as $f) {
+            $id = basename($f, '.json');
+            if (!preg_match('/^[A-Za-z0-9_-]{22}$/', $id)) continue;
+            $m = self::readJson($f);
+            if ($owner !== null) {
+                if ($m && ($m['o'] ?? '') === $owner) self::dropFile($id);
+                continue;
+            }
+            if (!$m || (int)($m['x'] ?? 0) < $now || (empty($m['done']) && $now - (int)($m['c'] ?? 0) > 86400)
+                || !is_file(self::idFile((string)($m['o'] ?? '')))) {
+                self::dropFile($id);
+            }
+        }
+        if ($owner !== null) return;
+        foreach (glob(self::dir('files') . '/*', GLOB_ONLYDIR) ?: [] as $d) {
+            if (is_file($d . '.json')) continue;
+            foreach (glob($d . '/*.bin') ?: [] as $f) @unlink($f);
+            @rmdir($d);
+        }
+    }
+
+    /** Alles einer Identität löschen: Sitzungen, Briefkasten, Räume, Dateien, Konto. */
     private static function purgeIdentity($id)
     {
         $ident = self::identity($id);
+        self::expireFiles(time(), $id);
         foreach (self::roomsOf($id) as $rid) {
             try { self::removeMember($rid, $id, 'leave'); } catch (Throwable $ex) { /* Raum schon weg */ }
         }
@@ -1787,6 +1943,7 @@ class SecureCom
             if ($now - (int)($state['h'] ?? 0) > 3600) {
                 self::expireTempRooms($now);
                 self::dropOrphans($now);
+                self::expireFiles($now);
                 $logs = array_merge(glob(self::dir('inbox') . '/*.n') ?: [], glob(self::dir('feeds') . '/*.n') ?: []);
                 foreach ($logs as $nf) self::rewriteLog(substr($nf, 0, -2));
                 $state['h'] = $now;

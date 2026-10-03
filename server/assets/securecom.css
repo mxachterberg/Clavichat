@@ -592,6 +592,67 @@
 .sc-invite-name { font-weight: 600; color: var(--text); }
 .sc-invite .btn { padding: 8px 14px; }
 
+/* Dateien und Bilder in Nachrichten */
+.sc-file {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  max-width: 440px;
+  margin-top: 4px;
+  padding: 10px 12px;
+  background: var(--panel);
+}
+.sc-file-icon {
+  display: flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 38px;
+  height: 38px;
+  border: 1px solid var(--border);
+  color: var(--accent);
+}
+.sc-file-text { display: flex; flex: 1; flex-direction: column; gap: 3px; min-width: 0; }
+.sc-file-name { overflow: hidden; font-size: 13.5px; color: var(--text); text-overflow: ellipsis; white-space: nowrap; }
+.sc-file-size { font-family: var(--mono); font-size: 10.5px; letter-spacing: .04em; color: var(--muted); }
+.sc-file .btn { flex: none; padding: 8px 12px; }
+.sc-file.is-risky .sc-file-icon { border-color: color-mix(in srgb, var(--sc-danger) 50%, var(--border)); color: var(--sc-danger); }
+.sc-file.is-locked .sc-file-icon { color: var(--muted); }
+.sc-file-image {
+  display: block;
+  width: min(320px, 100%);
+  max-height: 360px;
+  margin-top: 4px;
+  padding: 0;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  background: var(--panel);
+  cursor: zoom-in;
+}
+.sc-file-image:hover { border-color: var(--accent); }
+.sc-file-image img { display: block; width: 100%; height: 100%; object-fit: cover; }
+
+/* Großansicht eines Bildes */
+.sc-viewer {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 200px;
+  border: 1px solid var(--border-soft);
+  background: var(--bg);
+}
+.sc-viewer-img { display: block; max-width: 100%; max-height: 70vh; object-fit: contain; }
+.sc-viewer-img.is-preview { filter: blur(3px); opacity: .85; }
+.sc-viewer-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; margin-top: 12px; }
+.sc-viewer-name { flex: 1; min-width: 0; overflow: hidden; font-size: 13px; color: var(--text-body); text-overflow: ellipsis; white-space: nowrap; }
+.sc-viewer-status { font-family: var(--mono); font-size: 11px; color: var(--muted); }
+
+/* Senden: Rückfrage beim Einfügen/Hereinziehen */
+.sc-file-list { display: grid; gap: 6px; margin: 0 0 12px; padding: 0; list-style: none; }
+.sc-file-list li { display: flex; justify-content: space-between; gap: 12px; padding: 8px 10px; border: 1px solid var(--border-soft); }
+.sc-file-preview { display: block; max-width: 100%; max-height: 260px; margin: 0 auto 12px; border: 1px solid var(--border-soft); }
+.is-drop > .sc-thread { outline: 2px dashed var(--accent); outline-offset: -10px; }
+
 .sc-empty {
   display: flex;
   flex-direction: column;
@@ -702,6 +763,46 @@
 }
 .sc-send:hover { background: var(--accent-soft); }
 .sc-send:disabled { opacity: .4; cursor: not-allowed; }
+.sc-compose.has-attach { grid-template-columns: auto minmax(0, 1fr) auto; }
+.sc-attach {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 46px;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  transition: color .15s ease, border-color .15s ease;
+}
+.sc-attach:hover { border-color: var(--accent); color: var(--text); }
+.sc-attach:disabled { opacity: .4; cursor: not-allowed; }
+.sc-attach[hidden] { display: none; }
+
+/* Laufende Uploads über dem Eingabefeld */
+.sc-uploads { display: grid; flex: none; gap: 6px; padding: 0 18px 8px; }
+.sc-upload {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 8px 6px 10px;
+  border: 1px solid var(--border-soft);
+  background: var(--panel);
+  font-size: 12.5px;
+  color: var(--text-body);
+}
+.sc-upload > .sc-ic { flex: none; color: var(--green); }
+.sc-upload-name { flex: 1; min-width: 0; overflow: hidden; color: var(--text); text-overflow: ellipsis; white-space: nowrap; }
+.sc-upload-size, .sc-upload-pct { flex: none; font-family: var(--mono); font-size: 10.5px; color: var(--muted); }
+.sc-upload-pct { min-width: 64px; text-align: right; }
+.sc-upload-bar { flex: none; width: 120px; height: 3px; background: var(--border-soft); }
+.sc-upload-fill { display: block; width: 0; height: 100%; background: var(--accent); transition: width .2s ease; }
+.sc-upload.is-failed { border-color: var(--sc-danger); }
+.sc-upload.is-failed .sc-upload-fill { background: var(--sc-danger); }
+@media (max-width: 560px) {
+  .sc-upload-bar { width: 56px; }
+  .sc-upload-size { display: none; }
+}
 .sc-compose-note {
   display: flex;
   grid-column: 1 / -1;
