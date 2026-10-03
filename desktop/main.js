@@ -19,7 +19,7 @@
    ========================================================================== */
 'use strict';
 
-const { app, BrowserWindow, Menu, desktopCapturer, ipcMain, net, powerMonitor, protocol, session, shell } = require('electron');
+const { app, BrowserWindow, Menu, desktopCapturer, ipcMain, net, powerMonitor, protocol, safeStorage, session, shell } = require('electron');
 const crypto = require('node:crypto');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -443,6 +443,25 @@ ipcMain.handle('securecom:idle', (event) => {
   return powerMonitor.getSystemIdleTime();
 });
 
+// Gespeicherte Anmeldung an das Windows-Konto binden (safeStorage = DPAPI):
+// Eine Kopie des Profils lässt sich auf einem anderen Rechner oder unter
+// einem anderen Windows-Konto nicht öffnen. null = geht hier nicht.
+ipcMain.handle('securecom:secure', (event, op, text) => {
+  if (!win || event.sender !== win.webContents) return null;
+  if (typeof text !== 'string' || text.length > 200000) return null;
+  try {
+    if (!safeStorage.isEncryptionAvailable()) return null;
+    if (op === 'seal') return safeStorage.encryptString(text).toString('base64');
+    if (op === 'open') return safeStorage.decryptString(Buffer.from(text, 'base64'));
+  } catch (e) { /* gehört zu einem anderen Windows-Konto oder ist beschädigt */ }
+  return null;
+});
+
+/** App-Sperre: Windows wird gesperrt oder geht schlafen. */
+function lockWindow() {
+  if (win && !win.isDestroyed()) win.webContents.send('securecom:lock');
+}
+
 /* ==========================================================================
    Start
    ========================================================================== */
@@ -472,6 +491,8 @@ if (!app.requestSingleInstanceLock()) {
     loadChrome();
     createWindow();
     updater.init({ getWindow: () => win, smoke: SMOKE });
+    powerMonitor.on('lock-screen', lockWindow);
+    powerMonitor.on('suspend', lockWindow);
   });
 
   app.on('window-all-closed', () => app.quit());
@@ -550,6 +571,20 @@ async function smoke() {
   await wait(300);
   const shieldOff = win.isContentProtected();
   check('Bildschirmschutz umschaltbar', shieldFound && shieldOn && !shieldOff, String(shieldOn) + ' → ' + String(shieldOff));
+
+  // Gespeicherte Anmeldung: an das Windows-Konto gebunden (DPAPI).
+  check('Anmeldung an das Windows-Konto gebunden', (await run("window.securecomDesktop.secure.seal('clavichat').then((s) => s && window.securecomDesktop.secure.open(s))")) === 'clavichat');
+
+  // App-Sperre: PIN festlegen, Sperren von Windows nachstellen, entsperren, wieder entfernen.
+  const inSettings = (steps) => "(async () => { const sleep = (ms) => new Promise((r) => setTimeout(r, ms)); const btn = (t) => [...document.querySelectorAll('#sc-modal-panel button')].find((x) => x.textContent === t); [...document.querySelectorAll('#sc-user button')].find((x) => x.title === 'Einstellungen').click(); await sleep(300); " + steps + " })()";
+  const pinSet = await run(inSettings("btn('PIN festlegen').click(); await sleep(300); const ins = document.querySelectorAll('#sc-modal-panel input[type=password]'); ins[0].value = ins[1].value = '4711'; btn('Festlegen').click(); for (let i = 0; i < 40 && !document.getElementById('sc-modal').hidden; i++) await sleep(250); return !!localStorage.getItem('sc-lock');"));
+  lockWindow();
+  const lockedUp = await until("!!document.getElementById('sc-lockscreen')", 3000);
+  await shot(win.webContents, 'smoke-2d-gesperrt');
+  const unlocked = lockedUp && await run("(async () => { const i = document.querySelector('#sc-lockscreen input'); i.value = '4711'; document.querySelector('#sc-lockscreen form').requestSubmit(); for (let n = 0; n < 40 && document.getElementById('sc-lockscreen'); n++) await new Promise((r) => setTimeout(r, 250)); return !document.getElementById('sc-lockscreen'); })()");
+  check('App-Sperre beim Sperren von Windows', pinSet && lockedUp && unlocked, [pinSet, lockedUp, unlocked].join(' → '));
+  const unset = await run(inSettings("btn('Sperre entfernen').click(); await sleep(300); document.querySelector('#sc-modal-panel input[type=password]').value = '4711'; btn('Sperre entfernen').click(); for (let i = 0; i < 40 && !document.getElementById('sc-modal').hidden; i++) await sleep(250); return !localStorage.getItem('sc-lock');"));
+  check('App-Sperre wieder entfernt', unset);
 
   const sources = await desktopCapturer.getSources({ types: ['screen', 'window'], thumbnailSize: { width: 320, height: 180 } });
   check('Bildschirmquellen gefunden', sources.length > 0, sources.length + ' Quellen');

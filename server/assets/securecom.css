@@ -1450,6 +1450,67 @@ html[data-theme="light"] .sc-modal { background: rgba(40, 40, 40, .3); }
 .sc-gate-note--warn { color: var(--accent); }
 .sc-field-note { display: block; margin-top: 6px; font-size: 11.5px; line-height: 1.5; color: var(--muted); }
 
+/* App-Sperre: deckt alles ab (auch Dialoge und Meldungen), Hintergrund wie die Seite */
+.sc-lockscreen {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px 16px;
+  overflow-y: auto;
+  background: inherit;
+  background-color: var(--bg);
+}
+.sc-lockscreen-card { width: 100%; max-width: 380px; padding: 26px 28px 22px; background: var(--panel); }
+.sc-lockscreen-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 64px;
+  height: 64px;
+  margin: 8px auto 14px;
+  border: 1px solid var(--border);
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+.sc-lockscreen-who { margin: 0 0 16px; font-size: 13.5px; line-height: 1.5; text-align: center; color: var(--text-body); }
+.sc-lockscreen-form { display: grid; gap: 10px; }
+.sc-lockscreen-form input { font-family: var(--mono); font-size: 20px; letter-spacing: .3em; text-align: center; }
+.sc-lockscreen-form input::placeholder { font-size: 13px; letter-spacing: .2em; }
+.sc-lockscreen-msg { margin: 12px 0 0; font-size: 12.5px; line-height: 1.5; text-align: center; color: var(--sc-danger); }
+.sc-lockscreen-msg:empty { display: none; }
+.sc-lockscreen-call {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  margin: 12px 0 0;
+  padding: 8px 10px;
+  border: 1px solid var(--accent);
+  background: var(--accent-soft);
+  font-size: 12.5px;
+  color: var(--text);
+}
+.sc-lockscreen-call[hidden] { display: none; }
+.sc-lockscreen-forgot {
+  display: block;
+  margin: 18px auto 0;
+  padding: 2px 4px;
+  border: 0;
+  background: none;
+  font: inherit;
+  font-size: 12px;
+  color: var(--muted);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  cursor: pointer;
+}
+.sc-lockscreen-forgot:hover { color: var(--text); }
+.sc-lockscreen-card .sc-p { margin: 0 0 16px; }
+.sc-is-locked #sc-toasts { display: none; }
+
 /* Passwortstärke: vier Striche, Wort, Tipp */
 .sc-pw { display: block; margin-top: 8px; }
 .sc-pw-row { display: flex; align-items: center; gap: 10px; min-height: 14px; }

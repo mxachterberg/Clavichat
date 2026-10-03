@@ -12,6 +12,17 @@ contextBridge.exposeInMainWorld('securecomDesktop', {
   idleSeconds: () => ipcRenderer.invoke('securecom:idle'),
   /** Fenster vor Bildschirmfotos und Aufnahmen anderer Programme schützen. */
   protect: (on) => ipcRenderer.send('securecom:protect', !!on),
+  /** Gespeicherte Anmeldung an das Windows-Konto binden (DPAPI). null = geht hier nicht. */
+  secure: {
+    seal: (text) => ipcRenderer.invoke('securecom:secure', 'seal', String(text)),
+    open: (text) => ipcRenderer.invoke('securecom:secure', 'open', String(text))
+  },
+  /** Windows wird gesperrt oder geht schlafen → App-Sperre. Gibt eine Funktion zum Abbestellen zurück. */
+  onLock: (fn) => {
+    const handler = () => fn();
+    ipcRenderer.on('securecom:lock', handler);
+    return () => ipcRenderer.removeListener('securecom:lock', handler);
+  },
   /** Updates (updater.js): Stand, Suchen, Automatik, Installieren. */
   updates: {
     get: () => ipcRenderer.invoke('securecom:update', 'get'),

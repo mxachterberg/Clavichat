@@ -1265,7 +1265,7 @@ async function renewRecoveryCode() {
   const ok = await confirmBox('Neuer Wiederherstellungscode', 'Der bisherige Code wird ungültig, andere Geräte werden abgemeldet und brauchen dann den neuen Code.', 'Neuen Code erzeugen');
   if (!ok) return;
   try {
-    const saved = await idbGet('session');
+    const saved = await loadSession();
     if (!saved || !saved.authSealed) throw new Error('Dieses Gerät kennt den bisherigen Code nicht.');
     const oldAuth = await C.openText(S.wrapKey, saved.authSealed, authAad(S.username));
     const code = C.newRecoveryCode();
@@ -1414,6 +1414,319 @@ async function labelDevice() {
   } catch (e) { /* ältere Server kennen das nicht */ }
 }
 
+/* ==========================================================================
+   App-Sperre (PIN) – je Gerät, gehört zur laufenden Anmeldung
+   ==========================================================================
+   Sperrt beim Start, nach Leerlauf, beim Sperren von Windows (App) und auf
+   Knopfdruck. Die gespeicherte Anmeldung (Token, eingepackter Schlüssel,
+   versiegelter Anmeldeschlüssel) liegt dann nur mit der PIN verschlüsselt in
+   IndexedDB. In der Windows-App ist sie zusätzlich – auch ohne PIN – an das
+   Windows-Konto gebunden (DPAPI über Electron safeStorage).
+   Die Sperre verdeckt die Oberfläche; im Speicher bleiben die Schlüssel,
+   Nachrichten und Anrufe kommen weiter an. Abmelden entfernt sie. */
+const LOCK_KEY = 'sc-lock';
+const LOCK_FAILS_KEY = 'sc-lock-fails';
+const LOCK_MAX_FAILS = 10;
+const LOCK_WAIT = [0, 0, 0, 5, 10, 30, 60, 120, 300, 600];   // Pause in Sekunden nach n Fehlversuchen
+const LOCK_IDLE = [
+  { id: '60', name: 'Nach 1 Minute' },
+  { id: '300', name: 'Nach 5 Minuten' },
+  { id: '900', name: 'Nach 15 Minuten' },
+  { id: '1800', name: 'Nach 30 Minuten' },
+  { id: '3600', name: 'Nach 1 Stunde' },
+  { id: '0', name: 'Nicht nach Leerlauf' }
+];
+const LOCK_FORGOT_NOTE = 'Die App-Sperre wurde zurückgesetzt und dieses Gerät abgemeldet. Melde dich neu an.';
+const LOCK_FAILED_NOTE = 'Zu viele falsche PINs: Die gespeicherte Anmeldung auf diesem Gerät wurde gelöscht. Melde dich neu an.';
+const SESSION_SECRETS = ['token', 'wrapped', 'authSealed'];
+const L = { cfg: null, key: null, locked: false, box: null, hidden: [], resolve: null, pending: null, timer: 0, waitTimer: 0 };
+
+function lockCfg() {
+  try {
+    const c = JSON.parse(localStorage.getItem(LOCK_KEY) || 'null');
+    return c && c.v === 1 && c.salt && c.chk ? c : null;
+  } catch (e) { return null; }
+}
+
+function saveLockCfg(cfg) {
+  try {
+    if (cfg) localStorage.setItem(LOCK_KEY, JSON.stringify(cfg));
+    else localStorage.removeItem(LOCK_KEY);
+  } catch (e) { /* ohne localStorage keine Sperre */ }
+}
+
+function lockFails() {
+  try { return JSON.parse(localStorage.getItem(LOCK_FAILS_KEY) || 'null') || { n: 0, t: 0 }; } catch (e) { return { n: 0, t: 0 }; }
+}
+
+function setLockFails(f) {
+  try {
+    if (f && f.n) localStorage.setItem(LOCK_FAILS_KEY, JSON.stringify(f));
+    else localStorage.removeItem(LOCK_FAILS_KEY);
+  } catch (e) { /* egal */ }
+}
+
+/** Millisekunden, die nach Fehlversuchen noch zu warten sind. */
+function lockWaitLeft() {
+  const f = lockFails();
+  const wait = LOCK_WAIT[Math.min(f.n, LOCK_WAIT.length - 1)] * 1000;
+  return Math.max(0, f.t + wait - Date.now());
+}
+
+function lockAad(what) { return 'sc-lock|' + what; }
+
+/** PIN prüfen: Schlüssel oder null. */
+async function tryPin(cfg, pin) {
+  if (!cfg || !pin) return null;
+  try {
+    const key = await C.derivePinKey(pin, C.unb64(cfg.salt), cfg.it);
+    await C.openText(key, cfg.chk, lockAad('check'));
+    return key;
+  } catch (e) { return null; }
+}
+
+async function makeLockCfg(pin, idle) {
+  const salt = C.randomBytes(16);
+  const key = await C.derivePinKey(pin, salt, C.KDF_ITERATIONS);
+  const cfg = { v: 1, salt: C.b64(salt), it: C.KDF_ITERATIONS, chk: await C.sealText(key, 'clavichat', lockAad('check')), idle: idle };
+  if (/^\d+$/.test(pin)) cfg.num = 1;
+  return { key: key, cfg: cfg };
+}
+
+/** Sperre aus: beim Abmelden oder nach dem Zurücksetzen. */
+function removeLock() {
+  saveLockCfg(null);
+  setLockFails(null);
+  L.cfg = null;
+  L.key = null;
+}
+
+/* ---------- Gespeicherte Anmeldung versiegeln ------------------------------ */
+async function desktopSeal(text) {
+  if (!DESKTOP || !DESKTOP.secure) return null;
+  try {
+    const r = await DESKTOP.secure.seal(text);
+    return typeof r === 'string' && r ? r : null;
+  } catch (e) { return null; }
+}
+
+async function desktopOpen(text) {
+  if (!DESKTOP || !DESKTOP.secure) return null;
+  try {
+    const r = await DESKTOP.secure.open(text);
+    return typeof r === 'string' ? r : null;
+  } catch (e) { return null; }
+}
+
+/** Ablegen: Geheimes mit PIN und (App) DPAPI versiegelt, sonst wie bisher. */
+async function storeSession(rec) {
+  if (!rec) return idbSet('session', null);
+  const secret = {};
+  const out = {};
+  for (const k of Object.keys(rec)) {
+    if (k.charAt(0) === '_') continue;
+    if (SESSION_SECRETS.includes(k)) secret[k] = rec[k];
+    else out[k] = rec[k];
+  }
+  let d = JSON.stringify(secret);
+  const box = { v: 1 };
+  if (L.key) {
+    d = await C.sealText(L.key, d, lockAad('session|' + rec.id));
+    box.pin = 1;
+  }
+  const sealed = await desktopSeal(d);
+  if (sealed) { d = sealed; box.dp = 1; }
+  if (!box.pin && !box.dp) return idbSet('session', Object.assign(out, secret));
+  box.d = d;
+  out.box = box;
+  return idbSet('session', out);
+}
+
+/** Öffnen: null, wenn nichts gespeichert ist; wirft, wenn es sich nicht öffnen lässt. */
+async function loadSession() {
+  const rec = await idbGet('session');
+  if (!rec) return null;
+  if (!rec.box) return Object.assign({}, rec, { _plain: true });
+  let d = rec.box.d;
+  if (rec.box.dp) {
+    d = await desktopOpen(d);
+    if (d === null) throw new Error('Die gespeicherte Anmeldung gehört zu einem anderen Windows-Konto.');
+  }
+  if (rec.box.pin) {
+    if (!L.key) throw new Error('Clavichat ist gesperrt.');
+    d = await C.openText(L.key, d, lockAad('session|' + rec.id));
+  }
+  const out = Object.assign({}, rec, JSON.parse(d));
+  delete out.box;
+  return out;
+}
+
+/** Läuft auf diesem Gerät eine Anmeldung (ohne sie zu öffnen)? */
+async function hasStoredSession() {
+  return !!ssGet(SS_KEY) || !!(await idbGet('session'));
+}
+
+/* ---------- Sperrbildschirm --------------------------------------------- */
+/** Sperren. atStart: beim Start, bevor die gespeicherte Anmeldung offen ist. */
+function showLock(atStart) {
+  if (L.locked) return L.pending || Promise.resolve(true);
+  L.locked = true;
+  document.documentElement.classList.add('sc-is-locked');
+  for (const n of document.body.children) {
+    if (!n.inert) { n.inert = true; L.hidden.push(n); }
+  }
+  closeContextMenu();
+  const card = el('div', { class: 'sc-lockscreen-card tickbox' });
+  const box = el('div', { id: 'sc-lockscreen', class: 'sc-lockscreen', role: 'dialog', 'aria-modal': 'true', 'aria-label': 'Clavichat ist gesperrt' }, card);
+  document.body.appendChild(box);
+  L.box = box;
+  drawLockForm(card, atStart);
+  L.pending = new Promise((resolve) => { L.resolve = resolve; });
+  return L.pending;
+}
+
+function lockHead(text) {
+  return el('p', { class: 'section-head' }, el('span', { class: 'sq' }), el('span', { class: 'label', text: text }), el('span', { class: 'rule' }));
+}
+
+function drawLockForm(card, atStart) {
+  clearTimeout(L.waitTimer);
+  const input = el('input', { type: 'password', autocomplete: 'off', maxlength: '32', 'aria-label': 'PIN', placeholder: 'PIN', inputmode: L.cfg && L.cfg.num ? 'numeric' : null });
+  const go = el('button', { type: 'submit', class: 'btn btn--primary btn--block', text: 'Entsperren' });
+  const msg = el('p', { class: 'sc-lockscreen-msg', role: 'alert' });
+  const call = el('p', { class: 'sc-lockscreen-call', hidden: true }, icon('phone', 14), 'Eingehender Anruf – entsperre, um ihn anzunehmen.');
+  const form = el('form', { class: 'sc-lockscreen-form' }, input, go);
+  const forgot = el('button', { type: 'button', class: 'sc-lockscreen-forgot', text: 'PIN vergessen?', onclick: () => drawLockForgot(card, atStart) });
+  card.replaceChildren(lockHead('CLAVICHAT GESPERRT'),
+    el('div', { class: 'sc-lockscreen-icon' }, icon('lock', 30)),
+    el('p', { class: 'sc-lockscreen-who', text: S.me && S.me.name ? 'Angemeldet als ' + S.me.name : 'PIN eingeben, um Clavichat zu öffnen.' }),
+    form, msg, call, forgot);
+
+  const waitTick = () => {
+    clearTimeout(L.waitTimer);
+    const left = lockWaitLeft();
+    input.disabled = go.disabled = left > 0;
+    if (left > 0) {
+      msg.textContent = 'Zu viele falsche Versuche – warte noch ' + Math.ceil(left / 1000) + ' s.';
+      L.waitTimer = setTimeout(waitTick, 1000);
+    } else if (/warte noch/.test(msg.textContent)) {
+      msg.textContent = '';
+      input.focus();
+    }
+  };
+  form.addEventListener('submit', async (ev) => {
+    ev.preventDefault();
+    if (lockWaitLeft() > 0 || go.disabled || !input.value) return;
+    go.disabled = true;
+    go.textContent = 'Wird geprüft …';
+    const key = await tryPin(L.cfg, input.value);
+    go.textContent = 'Entsperren';
+    go.disabled = false;
+    if (!key) {
+      const n = lockFails().n + 1;
+      setLockFails({ n: n, t: Date.now() });
+      input.value = '';
+      if (n >= LOCK_MAX_FAILS) { resetLock(LOCK_FAILED_NOTE); return; }
+      const left = LOCK_MAX_FAILS - n;
+      msg.textContent = 'Falsche PIN.' + (left <= 5 ? ' Noch ' + left + (left === 1 ? ' Versuch' : ' Versuche') + ', dann wird die gespeicherte Anmeldung gelöscht.' : '');
+      waitTick();
+      if (!input.disabled) input.focus();
+      return;
+    }
+    setLockFails(null);
+    L.key = key;
+    unlockNow();
+  });
+  renderLockCall();
+  waitTick();
+  setTimeout(() => { if (!input.disabled) input.focus(); }, 30);
+}
+
+function drawLockForgot(card, atStart) {
+  clearTimeout(L.waitTimer);
+  const go = el('button', { type: 'button', class: 'btn sc-btn--danger', text: 'Abmelden & zurücksetzen' });
+  go.addEventListener('click', () => { go.disabled = true; resetLock(LOCK_FORGOT_NOTE); });
+  card.replaceChildren(lockHead('PIN VERGESSEN'),
+    el('p', { class: 'sc-p', text: 'Ohne PIN lässt sich die gespeicherte Anmeldung nicht öffnen. Zurücksetzen meldet dieses Gerät ab – danach meldest du dich mit Passwort oder Wiederherstellungscode neu an. Eine temporäre Sitzung endet dabei.' }),
+    el('div', { class: 'sc-card-actions' },
+      el('button', { type: 'button', class: 'btn', text: 'Zurück', onclick: () => drawLockForm(card, atStart) }),
+      go));
+}
+
+function restoreInert() {
+  for (const n of L.hidden) n.inert = false;
+  L.hidden = [];
+}
+
+function unlockNow() {
+  if (!L.locked) return;
+  L.locked = false;
+  clearTimeout(L.waitTimer);
+  document.documentElement.classList.remove('sc-is-locked');
+  restoreInert();
+  if (L.box) L.box.remove();
+  L.box = null;
+  P.lastInput = Date.now();   // nicht gleich wieder sperren
+  const done = L.resolve;
+  L.resolve = null;
+  L.pending = null;
+  if (done) done(true);
+  if (S.entered) { renderAll(); markRead(); }
+}
+
+/** Eingehender Anruf, während gesperrt ist: Hinweis auf dem Sperrbildschirm. */
+function renderLockCall() {
+  if (!L.box) return;
+  const line = L.box.querySelector('.sc-lockscreen-call');
+  if (line) line.hidden = !(S.call && S.call.state === 'incoming');
+}
+
+/** PIN vergessen oder zu viele Fehlversuche: abmelden, Sperre weg, neu laden. */
+async function resetLock(note) {
+  try {
+    const ss = ssGet(SS_KEY);
+    if (S.token) {
+      // Läuft schon: Sitzung beim Server beenden.
+      if (S.mode === 'temp') await api('end');
+      else await api('logout');
+    } else if (ss && ss.mode === 'temp' && ss.token) {
+      S.token = ss.token;
+      await api('end');
+    }
+  } catch (e) { /* Server nicht erreichbar – lokal trotzdem zurücksetzen */ }
+  teardownMedia();
+  await clearStoredSession();
+  ssSet(GATE_NOTE_KEY, note);
+  location.reload();
+}
+
+function lockNow() {
+  if (!L.cfg || L.locked || !S.entered) return;
+  showLock(false);
+}
+
+/** Leerlauf prüfen (alle 10 Sekunden). Nicht mitten in einem Gespräch. */
+async function lockTick() {
+  if (!L.cfg || !L.cfg.idle || L.locked || !S.entered || S.call || S.voice) return;
+  if (await idleSeconds() >= L.cfg.idle) lockNow();
+}
+
+function startLockTimer() {
+  if (L.timer) return;
+  L.timer = setInterval(lockTick, 10000);
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) lockTick(); });
+  if (DESKTOP && typeof DESKTOP.onLock === 'function') DESKTOP.onLock(lockNow);
+  // PIN in einem anderen Tab geändert oder entfernt: hier neu entsperren.
+  window.addEventListener('storage', (ev) => {
+    if (ev.key !== LOCK_KEY) return;
+    const cfg = lockCfg();
+    if (!cfg) { L.cfg = null; L.key = null; renderUser(); return; }
+    L.cfg = cfg;
+    L.key = null;
+    if (!L.locked) showLock(false);
+  });
+}
+
 async function loginAccount(username, password, remember) {
   if (!username || !password) throw new Error('Bitte Name und Passwort oder Wiederherstellungscode angeben.');
   const keys = await C.accountKeys(username, password);
@@ -1459,7 +1772,7 @@ async function rememberAccount(remember, username, id, token, wrapped, wrapRaw, 
     const key = await C.importWrapKey(wrapRaw, false);
     const rec = { mode: 'account', username: username, id: id, token: token, wrapped: wrapped, wrapKey: key };
     if (authSealed) rec.authSealed = authSealed;
-    await idbSet('session', rec);
+    await storeSession(rec);   // mit PIN bzw. (App) an das Windows-Konto gebunden
     ssSet(SS_KEY, null);
   } else {
     await idbSet('session', null);
@@ -1494,7 +1807,7 @@ async function restoreSession() {
       S.vault = mergeVault(emptyVault(), ss.vault || {});
       setMe(identity, ss.id, 'temp', '', true);
     } else {
-      saved = ss && ss.mode === 'account' ? ss : await idbGet('session');
+      saved = ss && ss.mode === 'account' ? ss : await loadSession();
       if (!saved || saved.mode !== 'account') return false;
       const wrapKey = saved.wrapKey || await C.importWrapKey(C.unb64(saved.wrap), false);
       const identity = await C.readPrivateIdentity(await C.openText(wrapKey, saved.wrapped, keyAad(saved.username)));
@@ -1532,7 +1845,8 @@ async function restoreSession() {
       const r = await api('login', { username: saved.username, auth: await C.openText(S.wrapKey, saved.authSealed, authAad(saved.username)), dev: deviceId(), silent: 1 });
       rememberLoginCount(r.id, r.tv);
       S.token = r.token;
-      await idbSet('session', Object.assign({}, saved, { token: r.token }));
+      saved = Object.assign({}, saved, { token: r.token });
+      await storeSession(saved);
       await loadOwn();
     } catch (again) {
       if ([again, e].some((x) => x && x.data && x.data.revoked)) S.gateNote = REVOKED_NOTE;
@@ -1542,10 +1856,14 @@ async function restoreSession() {
       return false;
     }
   }
+  // Noch offen gespeichert (ältere Version): jetzt versiegeln – mit PIN bzw. an das Windows-Konto gebunden.
+  if (saved && saved._plain && (L.key || (DESKTOP && DESKTOP.secure))) storeSession(saved).catch(() => {});
   return true;
 }
 
+/** Gespeicherte Anmeldung weg – und mit ihr die App-Sperre, die zu ihr gehört. */
 async function clearStoredSession() {
+  removeLock();
   ssSet(SS_KEY, null);
   await idbSet('session', null);
 }
@@ -1599,6 +1917,7 @@ async function enterApp() {
   loadIce();
   startIceRefresh();
   labelDevice();
+  startLockTimer();
   await loadRooms().catch(() => {});
   if (S.view.kind === 'room' && !S.rooms.has(S.view.rid)) S.view = { kind: 'home' };
   if (S.view.kind === 'dm') await ensureIds([S.view.peer]);
@@ -1669,6 +1988,14 @@ async function boot() {
   }
 
   progress(0.82, 'SCHLÜSSEL WERDEN GEPRÜFT');
+  // App-Sperre: zuerst die PIN – sie öffnet die gespeicherte Anmeldung. Ohne
+  // Anmeldung auf diesem Gerät ist die Sperre übrig geblieben und fällt weg.
+  L.cfg = lockCfg();
+  if (L.cfg && !(await hasStoredSession())) removeLock();
+  if (L.cfg) {
+    bootDone();
+    await showLock(true);
+  }
   const restored = await restoreSession();
   const gateNote = ssGet(GATE_NOTE_KEY) || S.gateNote;
   ssSet(GATE_NOTE_KEY, null);
@@ -1758,6 +2085,7 @@ function renderTitle() {
   for (const r of S.rooms.values()) for (const u of r.unread.values()) n += u;
   const ringing = S.call && S.call.state === 'incoming';
   document.title = (ringing ? '📞 ' : '') + (n ? '(' + n + ') ' : '') + 'Clavichat';
+  renderLockCall();
 }
 
 /* ---------- Leiste links --------------------------------------------------- */
@@ -2082,7 +2410,7 @@ function renderUser() {
   const box = $('sc-user');
   const me = S.ids.get(S.me.id);
   const st = myStatus();
-  const sig = [S.me.name, avatarUrl(me) || '', S.me.vis, S.mode, S.me.fp, S.offline, M.micOn, M.deaf, st, chosenStatus()].join('|');
+  const sig = [S.me.name, avatarUrl(me) || '', S.me.vis, S.mode, S.me.fp, S.offline, M.micOn, M.deaf, st, chosenStatus(), L.cfg ? 1 : 0].join('|');
   if (box.dataset.sig === sig && box.firstChild) return;
   box.dataset.sig = sig;
   box.textContent = '';
@@ -2095,6 +2423,7 @@ function renderUser() {
         el('span', { class: 'sc-row-sub', text: (S.mode === 'temp' ? 'TEMP · ' : '') + label + (S.offline ? ' · keine Verbindung' : '') }))),
     iconBtn(M.micOn ? 'mic' : 'micOff', M.micOn ? 'Stummschalten' : 'Mikrofon an', toggleMic, { class: 'sc-ibtn' + (M.micOn ? '' : ' is-off') }),
     iconBtn(M.deaf ? 'headOff' : 'head', M.deaf ? 'Ton an' : 'Nichts hören', toggleDeaf, { class: 'sc-ibtn' + (M.deaf ? ' is-off' : '') }),
+    L.cfg ? iconBtn('lock', 'Sperren (Strg+L)', lockNow) : null,
     iconBtn('settings', 'Einstellungen', showSettings));
 }
 
@@ -2547,6 +2876,11 @@ function notifyAllowed() {
 
 function notify(title, body, tag) {
   if (!notifyAllowed() || (!document.hidden && document.hasFocus())) return;
+  // Gesperrt: nicht verraten, wer schreibt oder anruft.
+  if (L.locked) {
+    title = 'Clavichat';
+    body = tag === 'call' ? 'Eingehender Anruf – entsperren, um ihn anzunehmen.' : 'Neue Aktivität – entsperren, um sie zu sehen.';
+  }
   try {
     const n = new Notification(title, { body: body, tag: tag || 'securecom', silent: true });
     n.onclick = () => {
@@ -3107,8 +3441,8 @@ function presenceSoon() {
   P.soon = setTimeout(() => presenceTick(true), 300);
 }
 
-/** Abwesend? In der Windows-App zählt der ganze Rechner, im Browser dieses Fenster. */
-async function checkIdle() {
+/** Sekunden ohne Eingabe: In der Windows-App zählt der ganze Rechner, im Browser dieses Fenster. */
+async function idleSeconds() {
   let idle = (Date.now() - P.lastInput) / 1000;
   if (DESKTOP && typeof DESKTOP.idleSeconds === 'function') {
     try {
@@ -3116,7 +3450,12 @@ async function checkIdle() {
       if (typeof sys === 'number' && sys >= 0) idle = sys;
     } catch (e) { /* dann zählen die Eingaben im Fenster */ }
   }
-  const away = idle >= AWAY_AFTER;
+  return idle;
+}
+
+/** Abwesend? (für den Status bei Freunden) */
+async function checkIdle() {
+  const away = await idleSeconds() >= AWAY_AFTER;
   if (away === P.idle) return;
   P.idle = away;
   renderUser();
@@ -6267,6 +6606,29 @@ function showSettings() {
           'Bildschirmfotos und Aufnahmen verhindern: Andere Programme, Screenshots und Bildschirmübertragungen sehen dieses Fenster schwarz. Gilt für dieses Gerät.' })));
       }
 
+      // App-Sperre (je Gerät)
+      body.appendChild(sectionHead('APP-SPERRE'));
+      if (!L.cfg) {
+        body.append(
+          el('p', { class: 'sc-note', text: 'Sperrt Clavichat mit einer PIN – beim Start, nach Leerlauf' + (DESKTOP ? ', beim Sperren von Windows' : '') +
+            ' und auf Knopfdruck. Die gespeicherte Anmeldung liegt dann nur mit der PIN verschlüsselt auf diesem Gerät.' }),
+          el('div', { class: 'sc-card-actions' },
+            el('button', { type: 'button', class: 'btn', onclick: () => { close(); pinDialog('set'); } }, icon('lock', 14), 'PIN festlegen')));
+      } else {
+        const idlePick = choice(LOCK_IDLE, String(L.cfg.idle || 0), (id) => { L.cfg.idle = parseInt(id, 10) || 0; saveLockCfg(L.cfg); });
+        body.append(
+          pickField('Automatisch sperren', idlePick, 'Gilt für dieses Gerät. Während eines Gesprächs sperrt Clavichat nicht von selbst' +
+            (DESKTOP ? ', beim Sperren von Windows dagegen immer.' : '.')),
+          el('div', { class: 'sc-card-actions' },
+            el('button', { type: 'button', class: 'btn', onclick: () => { close(); lockNow(); } }, icon('lock', 14), 'Jetzt sperren'),
+            el('button', { type: 'button', class: 'btn', text: 'PIN ändern', onclick: () => { close(); pinDialog('change'); } }),
+            el('button', { type: 'button', class: 'btn sc-btn--danger', text: 'Sperre entfernen', onclick: () => { close(); pinDialog('remove'); } })),
+          el('p', { class: 'sc-note', text: 'Sperren geht auch mit Strg+L oder dem Schloss unten links. PIN vergessen? Auf dem Sperrbildschirm zurücksetzen – danach meldest du dich neu an.' }));
+      }
+      if (DESKTOP && DESKTOP.secure) {
+        body.append(el('p', { class: 'sc-note', text: 'In der Windows-App ist die gespeicherte Anmeldung außerdem an dein Windows-Konto gebunden: Auf einem anderen Rechner oder unter einem anderen Windows-Konto lässt sie sich nicht öffnen.' }));
+      }
+
       // Updates (nur Windows-App)
       if (UPDATES) {
         body.appendChild(sectionHead('UPDATES'));
@@ -6313,6 +6675,60 @@ function showSettings() {
       }
       body.append(acts,
         el('button', { type: 'button', class: 'btn btn--block', onclick: () => { close(); showSecurityInfo(); } }, icon('shield', 14), 'Wie Clavichat dich schützt'));
+    }
+  });
+}
+
+/** PIN festlegen ('set'), ändern ('change') oder die Sperre entfernen ('remove'). */
+function pinDialog(mode) {
+  const labels = { set: 'Festlegen', change: 'Ändern', remove: 'Sperre entfernen' };
+  openModal({
+    title: mode === 'set' ? 'PIN FESTLEGEN' : mode === 'change' ? 'PIN ÄNDERN' : 'APP-SPERRE ENTFERNEN',
+    build: (body, close) => {
+      const pinInput = () => el('input', { type: 'password', autocomplete: 'off', maxlength: '32', inputmode: L.cfg && L.cfg.num && mode !== 'set' ? 'numeric' : null });
+      const old = mode !== 'set' ? pinInput() : null;
+      const p1 = mode !== 'remove' ? pinInput() : null;
+      const p2 = mode !== 'remove' ? pinInput() : null;
+      const go = el('button', { type: 'button', class: 'btn btn--primary btn--block' + (mode === 'remove' ? ' sc-btn--danger' : ''), text: labels[mode] });
+      go.addEventListener('click', async () => {
+        if (p1) {
+          if (C.weakPin(p1.value)) { toast('Die PIN ist zu einfach: mindestens 4 Zeichen, keine Reihen oder Wiederholungen wie 1234, 0000 oder 1212.', 'error', 8000); return; }
+          if (p1.value !== p2.value) { toast('Die PINs stimmen nicht überein.', 'error'); return; }
+        }
+        go.disabled = true;
+        go.textContent = 'Wird gehärtet …';
+        try {
+          if (old && !(await tryPin(L.cfg, old.value))) throw new Error('Die bisherige PIN stimmt nicht.');
+          // Gespeicherte Anmeldung mit dem bisherigen Schlüssel öffnen, mit dem neuen schließen.
+          const rec = await loadSession().catch(() => null);
+          if (mode === 'remove') {
+            removeLock();
+          } else {
+            const made = await makeLockCfg(p1.value, L.cfg ? L.cfg.idle : 300);
+            L.key = made.key;
+            L.cfg = made.cfg;
+            saveLockCfg(made.cfg);
+            setLockFails(null);
+          }
+          if (rec) await storeSession(rec);
+          close();
+          renderUser();
+          toast(mode === 'set' ? 'PIN festgelegt. Sperren mit Strg+L oder dem Schloss unten links.' : mode === 'change' ? 'PIN geändert.' : 'Die App-Sperre ist aus.', 'ok', 7000);
+        } catch (e) {
+          go.disabled = false;
+          go.textContent = labels[mode];
+          toast(e.message, 'error');
+        }
+      });
+      for (const input of [old, p1, p2]) if (input) input.addEventListener('keydown', (ev) => { if (ev.key === 'Enter') go.click(); });
+      appendAll(body,
+        el('p', { class: 'sc-p', text: mode === 'remove'
+          ? 'Clavichat öffnet sich auf diesem Gerät dann wieder ohne PIN.'
+          : 'Die PIN gilt nur für dieses Gerät und verlässt es nie. Mit ihr ist die gespeicherte Anmeldung verschlüsselt – nach 10 falschen Versuchen wird sie gelöscht.' }),
+        old ? field(mode === 'remove' ? 'PIN' : 'Bisherige PIN', old) : null,
+        p1 ? field(mode === 'change' ? 'Neue PIN' : 'PIN', p1, 'Mindestens 4 Zeichen, besser 6 oder mehr. Buchstaben gehen auch.') : null,
+        p2 ? field('PIN wiederholen', p2) : null,
+        go);
     }
   });
 }
@@ -6710,6 +7126,13 @@ function bind() {
   });
 
   document.addEventListener('keydown', (ev) => {
+    if (L.locked) return;
+    // Strg+L: App sperren (nur mit PIN).
+    if (L.cfg && S.entered && (ev.ctrlKey || ev.metaKey) && !ev.altKey && !ev.shiftKey && (ev.key === 'l' || ev.key === 'L')) {
+      ev.preventDefault();
+      lockNow();
+      return;
+    }
     if (ev.key === 'Escape' && ctxMenu) { ev.preventDefault(); closeContextMenu(); return; }
     if (ev.key === 'Escape' && modalClose) { ev.preventDefault(); closeModal(); }
   });
