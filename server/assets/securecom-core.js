@@ -265,6 +265,39 @@ export function importWrapKey(raw, extractable) {
   return subtle.importKey('raw', raw, { name: 'AES-GCM' }, !!extractable, ['encrypt', 'decrypt']);
 }
 
+/* ---------- App-Sperre: PIN → Schlüssel ------------------------------------
+   PBKDF2-SHA-256 wie bei Konten, aber mit zufälligem Salt je Gerät. Der
+   Schlüssel (AES-256-GCM, nicht auslesbar) versiegelt die gespeicherte
+   Anmeldung – ohne PIN sind Token und eingepackter Schlüssel auf der
+   Festplatte wertlos. */
+export async function derivePinKey(pin, salt, iterations) {
+  const base = await subtle.importKey('raw', te.encode(String(pin).normalize('NFKC')), 'PBKDF2', false, ['deriveKey']);
+  return subtle.deriveKey({ name: 'PBKDF2', hash: 'SHA-256', salt: salt, iterations: iterations || KDF_ITERATIONS },
+    base, { name: 'AES-GCM', length: 256 }, false, ['encrypt', 'decrypt']);
+}
+
+/** Die häufigsten PINs, die keinem Muster unten folgen (Tastenspalten, Wiederholungen). */
+const COMMON_PINS = new Set(['1212', '1122', '1313', '1010', '2020', '2000', '1004', '6969', '2580', '0852', '1478', '3690',
+  '5683', '7777', '121212', '112233', '123123', '159753', '147258', '258456', '789456', '101010', '696969', '131313', '102030']);
+
+/** Zu einfache PINs: alles gleich (0000), auf- oder absteigend (1234, 9876), sehr häufig, zu kurz. */
+export function weakPin(pin) {
+  const p = String(pin || '');
+  if (p.length < 4) return true;
+  if (/^(.)\1+$/.test(p) || COMMON_PINS.has(p)) return true;
+  if (/^\d+$/.test(p)) {
+    let up = true;
+    let down = true;
+    for (let i = 1; i < p.length; i++) {
+      const d = p.charCodeAt(i) - p.charCodeAt(i - 1);
+      if (d !== 1 && d !== -9) up = false;
+      if (d !== -1 && d !== 9) down = false;
+    }
+    if (up || down) return true;
+  }
+  return false;
+}
+
 /** AES-256-GCM: Ergebnis = Base64(IV ‖ Chiffretext). */
 export async function aesSeal(key, bytes, aad) {
   const iv = randomBytes(12);
