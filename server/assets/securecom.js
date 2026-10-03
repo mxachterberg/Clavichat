@@ -566,7 +566,7 @@ function idbSet(key, value) {
    Tresor: Kontakte, Raumschlüssel, Gelesen-Stand, Einstellungen
    ========================================================================== */
 function emptyVault() {
-  return { v: 1, contacts: {}, rooms: {}, blocked: {}, reads: {}, cleared: {}, friends: {}, ttl: {}, reqs: {}, settings: { hideIp: false, sound: true, mic: '', status: 'on' } };
+  return { v: 1, contacts: {}, rooms: {}, blocked: {}, reads: {}, cleared: {}, friends: {}, ttl: {}, reqs: {}, ik: null, settings: { hideIp: false, sound: true, mic: '', status: 'on' } };
 }
 
 function mergeVault(a, b) {
@@ -582,7 +582,17 @@ function mergeVault(a, b) {
       const t = out.rooms[rid] || (out.rooms[rid] = { k: {}, rot: 0 });
       Object.assign(t.k, (r && r.k) || {});
       t.rot = Math.max(t.rot || 0, (r && r.rot) || 0);
+      // Forward Secrecy: wann eine Schlüsselgeneration dazukam (die früheste
+      // Angabe gilt) und bis zu welcher alte Schlüssel gelöscht sind.
+      if (r && r.et && typeof r.et === 'object') {
+        t.et = t.et || {};
+        for (const [e, ts] of Object.entries(r.et)) t.et[e] = t.et[e] ? Math.min(t.et[e], Number(ts) || 0) : Number(ts) || 0;
+      }
+      if (r && r.gone) t.gone = Math.max(t.gone || 0, Number(r.gone) || 0);
     }
+    // Eigener Schlüssel mit gewechselten Unterschlüsseln: der jüngste Stand gilt.
+    if (src.ik && typeof src.ik === 'object' && typeof src.ik.k === 'string' &&
+        (!out.ik || (Number(src.ik.t) || 0) >= (Number(out.ik.t) || 0))) out.ik = src.ik;
     Object.assign(out.blocked, src.blocked || {});
     for (const [k, t] of Object.entries(src.reads || {})) out.reads[k] = Math.max(out.reads[k] || 0, t || 0);
     for (const [k, t] of Object.entries(src.cleared || {})) out.cleared[k] = Math.max(out.cleared[k] || 0, t || 0);
@@ -594,6 +604,12 @@ function mergeVault(a, b) {
         if (!prev || (Number(f.t) || 0) >= (Number(prev.t) || 0)) out[key][id] = f;
       }
     }
+  }
+  // Gelöschte Raumschlüssel bleiben gelöscht, auch wenn ein anderes Gerät sie noch hatte.
+  for (const r of Object.values(out.rooms)) {
+    if (!r.gone) continue;
+    for (const e of Object.keys(r.k)) if (Number(e) <= r.gone) delete r.k[e];
+    if (r.et) for (const e of Object.keys(r.et)) if (Number(e) <= r.gone) delete r.et[e];
   }
   return out;
 }
@@ -624,6 +640,7 @@ async function pushVault(retry) {
       S.vv = e.data.vv;
       if (e.data.vault) {
         try { S.vault = mergeVault(JSON.parse(await C.openText(S.wrapKey, e.data.vault, vaultAad())), S.vault); } catch (e2) { /* unlesbar */ }
+        adoptVaultKey().catch(() => {});   // ein anderes Gerät hat den Schlüssel gewechselt?
       }
       return pushVault(true);
     }
@@ -642,6 +659,7 @@ async function resolveIdentity(raw) {
   const cur = S.ids.get(raw.id);
   if (cur && cur.cv === raw.cv && cur.armored === raw.pub) {
     if ('on' in raw) cur.on = raw.on;
+    cur.at = Date.now();   // Schlüsselstand frisch (für freshIds)
     return cur;
   }
   let key;
@@ -662,6 +680,7 @@ async function resolveIdentity(raw) {
     // Profilbild: nur Konten; die signierte Karte nennt seinen SHA-256-Wert.
     av: raw.k === 'account' && /^[0-9a-f]{64}$/.test(card.av || '') ? card.av : null,
     on: 'on' in raw ? raw.on : (cur ? cur.on : null),
+    at: Date.now(),
     changed: false
   };
   const c = S.vault && S.vault.contacts[ident.id];
@@ -1297,6 +1316,7 @@ async function startTemp(alias, code) {
   S.mode = 'temp';
   S.vault = emptyVault();
   setMe(identity, id, 'temp', alias, true);
+  S.me.published = identity.armoredPublic;
   ssSet(SS_KEY, { mode: 'temp', id: id, token: r.token, priv: C.armorPrivate(identity.privateKey), vault: S.vault });
   await enterApp();
   toast('Temporäre Sitzung läuft. Dein Schlüssel lebt nur ' + KEY_HOME + '.', 'ok');
@@ -1327,6 +1347,7 @@ async function registerAccount(username, secret, identity, remember, code, sso) 
   S.mode = 'account';
   S.vv = r.vv || 1;
   setMe(identity, id, 'account', name, true);
+  S.me.published = identity.armoredPublic;
   const authSealed = sso ? await C.sealText(wrapKey, keys.auth, authAad(name)) : null;
   await rememberAccount(sso ? true : remember, name, id, r.token, wrapped, keys.wrapRaw, authSealed);
   await enterApp();
@@ -1523,6 +1544,9 @@ async function desktopOpen(text) {
 /** Ablegen: Geheimes mit PIN und (App) DPAPI versiegelt, sonst wie bisher. */
 async function storeSession(rec) {
   if (!rec) return idbSet('session', null);
+  // Sperre eingerichtet, aber ihr Schlüssel fehlt (PIN in einem anderen Tab
+  // geändert): lieber nichts schreiben als ohne PIN.
+  if (!L.key && lockCfg()) return undefined;
   const secret = {};
   const out = {};
   for (const k of Object.keys(rec)) {
@@ -1729,6 +1753,224 @@ function startLockTimer() {
   });
 }
 
+/* ==========================================================================
+   Forward Secrecy
+   ==========================================================================
+   Direktnachrichten: Jede Woche hängt ein Gerät einen neuen Verschlüsselungs-
+   Unterschlüssel an den eigenen PGP-Schlüssel (Absender nehmen den jüngsten)
+   und löscht alte, sobald ihr Nachfolger länger da ist als die höchste
+   Aufbewahrung plus zwei Tage – alles, was an sie ging, ist dann beim Server
+   abgelaufen. Konten legen den aktuellen Schlüssel in den Tresor (`ik`),
+   damit alle Geräte ihn haben; es wechselt immer nur eins (key.lease). Der
+   beim Server eingepackte Schlüssel wird ersetzt, sobald Passwort oder Code
+   zur Hand sind (Anmelden; Konten mit Code jederzeit).
+   Räume: Der Besitzer wechselt den Raumschlüssel jede Woche (nicht, solange
+   Einladungslinks offen sind); jedes Mitglied löscht alte Generationen nach
+   der Aufbewahrung des Raums. */
+const KEY_ROTATE = 7 * 86400000;     // neuer Unterschlüssel bzw. Raumschlüssel
+const KEY_GRACE = 2 * 86400000;      // Puffer für Absender mit älterem Stand
+const KEY_CHECK = 6 * 3600000;       // so oft nachsehen
+const IDENT_FRESH = 6 * 3600000;     // Schlüssel anderer vor dem Senden höchstens so alt
+const FS = { timer: 0, busy: false, lastRefresh: 0 };
+
+/** Was an alte Unterschlüssel ging, ist nach dieser Zeit sicher abgelaufen. */
+function keyKeep() {
+  return maxTtl() * 1000 + KEY_GRACE;
+}
+
+function samePub(a, b) {
+  const norm = (s) => String(s || '').replace(/\r\n/g, '\n').trim();
+  return norm(a) === norm(b);
+}
+
+/** Eigenen Schlüssel übernehmen (nach einem Wechsel hier oder auf einem anderen Gerät). */
+function applyOwnKey(ident) {
+  S.me.priv = ident.privateKey;
+  S.me.pub = ident.publicKey;
+  S.me.armored = ident.armoredPublic;
+  const me = S.ids.get(S.me.id);
+  if (me) { me.key = ident.publicKey; me.armored = ident.armoredPublic; }
+  S.keyringCache = null;
+}
+
+/** Der Schlüssel aus dem Tresor, wenn er zu dieser Identität gehört – sonst null. */
+async function vaultKey(fp) {
+  const ik = S.vault && S.vault.ik;
+  if (!ik || typeof ik.k !== 'string') return null;
+  try {
+    const ident = await C.readPrivateIdentity(ik.k);
+    return ident.fingerprint === fp ? ident : null;
+  } catch (e) {
+    return null;
+  }
+}
+
+/** Steht im Tresor ein neuerer Stand (ein anderes Gerät hat gewechselt)? Dann übernehmen. */
+async function adoptVaultKey() {
+  if (S.mode !== 'account' || !S.me) return false;
+  const ident = await vaultKey(S.me.fp);
+  if (!ident || samePub(ident.armoredPublic, S.me.armored)) return false;
+  if (C.newestEncryptionSubkey(ident.privateKey) < C.newestEncryptionSubkey(S.me.priv)) return false;
+  applyOwnKey(ident);
+  await storeWrapped().catch(() => {});
+  return true;
+}
+
+/** Tresor neu holen und einen neueren eigenen Schlüssel übernehmen (höchstens alle 30 s). */
+async function refreshOwnKey(force) {
+  if (S.mode !== 'account' || !S.wrapKey) return false;
+  if (!force && Date.now() - FS.lastRefresh < 30000) return false;
+  FS.lastRefresh = Date.now();
+  try {
+    const v = await api('vault.get');
+    if (v.vault) {
+      S.vault = mergeVault(JSON.parse(await C.openText(S.wrapKey, v.vault, vaultAad())), S.vault);
+      S.vv = v.vv;
+    }
+  } catch (e) {
+    return false;
+  }
+  return adoptVaultKey();
+}
+
+/** Für mich verschlüsselt (PGP): öffnen – fehlt ein frischer Unterschlüssel, ihn holen und nochmal. */
+async function openForMe(data, ring) {
+  try {
+    return await C.openSealed(data, S.me.priv, ring);
+  } catch (err) {
+    if (!(await refreshOwnKey())) throw err;
+    return C.openSealed(data, S.me.priv, ring);
+  }
+}
+
+/** Die gespeicherte Anmeldung dieses Geräts mit dem aktuellen Schlüssel (alte Unterschlüssel weg). */
+async function storeWrapped() {
+  if (S.mode !== 'account' || !S.wrapKey) return null;
+  const wrapped = await C.sealText(S.wrapKey, C.armorPrivate(S.me.priv), keyAad(S.username));
+  const ss = ssGet(SS_KEY);
+  if (ss && ss.mode === 'account') {
+    ss.wrapped = wrapped;
+    ssSet(SS_KEY, ss);
+  } else {
+    const rec = await loadSession().catch(() => null);
+    if (rec && rec.mode === 'account') { rec.wrapped = wrapped; await storeSession(rec); }
+  }
+  return wrapped;
+}
+
+/** Auch beim Server den eingepackten Schlüssel ersetzen – braucht Passwort oder Code (hier: Konten mit Code). */
+async function rewrapOnServer(wrapped) {
+  try {
+    const rec = await loadSession();
+    if (!rec || !rec.authSealed) return;
+    const auth = await C.openText(S.wrapKey, rec.authSealed, authAad(S.username));
+    await api('key.wrap', { auth: auth, wrapped: wrapped });
+  } catch (e) { /* beim nächsten Mal */ }
+}
+
+/** Schlüssel anderer auffrischen, wenn der Stand älter als IDENT_FRESH ist (neue Unterschlüssel). */
+async function freshIds(ids) {
+  const old = [...new Set(ids)].filter((id) => {
+    const i = S.ids.get(id);
+    return typeof id === 'string' && id !== S.me.id && (!i || Date.now() - (i.at || 0) > IDENT_FRESH);
+  });
+  for (let i = 0; i < old.length; i += 100) {
+    try {
+      const r = await api('ids', { ids: old.slice(i, i + 100) });
+      for (const raw of r.list) await resolveIdentity(raw);
+    } catch (e) { /* der bisherige Stand tut es auch */ }
+  }
+}
+
+/** Nach dem Start und alle 6 Stunden. */
+function startKeyCare() {
+  if (FS.timer) return;
+  FS.timer = setInterval(maintainKeys, KEY_CHECK);
+  setTimeout(maintainKeys, 8000);
+}
+
+async function maintainKeys() {
+  if (!S.me || !S.token || FS.busy) return;
+  FS.busy = true;
+  try {
+    await maintainOwnKey();
+  } catch (e) { /* ältere Server kennen das nicht – oder nächstes Mal */ }
+  try {
+    await maintainRoomKeys();
+  } catch (e) { /* nächstes Mal */ }
+  FS.busy = false;
+}
+
+async function maintainOwnKey() {
+  const now = serverNow();
+  const due = () => {
+    const list = C.encryptionSubkeys(S.me.priv);
+    return {
+      rotate: now - C.newestEncryptionSubkey(S.me.priv) > KEY_ROTATE,
+      prune: list.some((s, i) => i < list.length - 1 && now - list[i + 1].created > keyKeep()),
+      // Beim Server liegt noch ein älterer öffentlicher Schlüssel (Veröffentlichen ging schief).
+      publish: typeof S.me.published === 'string' && !samePub(S.me.published, S.me.armored)
+    };
+  };
+  let need = due();
+  if (!need.rotate && !need.prune && !need.publish) return;
+  if (S.mode === 'account') {
+    await refreshOwnKey(true);   // vielleicht war ein anderes Gerät schneller
+    need = due();
+    if (!need.rotate && !need.prune && !need.publish) return;
+  }
+  const lease = await api('key.lease');
+  if (lease.lease !== true) return;   // ein anderes Gerät ist gerade dran
+  let key = S.me.priv;
+  if (need.rotate) key = await C.addEncryptionSubkey(key);
+  key = (await C.pruneEncryptionSubkeys(key, keyKeep(), now)).key;
+  const ident = await C.identityFromPrivate(key);
+  // Erst die private Seite sichern (Tresor bzw. Tab), dann veröffentlichen –
+  // sonst gingen Nachrichten an einen Unterschlüssel, den kein Gerät hat.
+  if (S.mode === 'account') {
+    S.vault.ik = { k: C.armorPrivate(ident.privateKey), t: serverNow() };
+    await saveVault(true);
+  } else {
+    const ss = ssGet(SS_KEY);
+    if (ss) { ss.priv = C.armorPrivate(ident.privateKey); ssSet(SS_KEY, ss); }
+  }
+  await api('key.pub', { pub: ident.armoredPublic, fp: ident.fingerprint });
+  applyOwnKey(ident);
+  S.me.published = ident.armoredPublic;
+  if (S.mode === 'account') {
+    const wrapped = await storeWrapped();
+    if (wrapped) await rewrapOnServer(wrapped);
+  }
+}
+
+async function maintainRoomKeys() {
+  const now = serverNow();
+  let changed = false;
+  for (const room of S.rooms.values()) {
+    const r = S.vault.rooms[room.id];
+    if (!r || !r.k) continue;
+    r.et = r.et || {};
+    if (!r.et[room.epoch] && r.k[room.epoch]) { r.et[room.epoch] = now; changed = true; }   // ältere Räume: ab jetzt zählen
+    // Alte Generationen löschen, sobald ihr Nachfolger länger da ist als die Aufbewahrung des Raums.
+    const keep = roomTtl(room) * 1000 + KEY_GRACE;
+    for (const e of Object.keys(r.k).map(Number).sort((a, b) => a - b)) {
+      if (e >= room.epoch) break;
+      const next = r.et[e + 1];
+      if (!next || now - next <= keep) break;
+      delete r.k[e];
+      delete r.et[e];
+      S.roomKeys.delete(room.id + ':' + e);
+      r.gone = Math.max(r.gone || 0, e);
+      changed = true;
+    }
+    // Besitzer: jede Woche ein neuer Raumschlüssel – nicht, solange Einladungslinks offen sind.
+    if (room.owner === S.me.id && room.iv === 0 && r.et[room.epoch] && now - r.et[room.epoch] > KEY_ROTATE) {
+      rotateRoom(room.id, false, true);
+    }
+  }
+  if (changed) await saveVault(true);
+}
+
 async function loginAccount(username, password, remember) {
   if (!username || !password) throw new Error('Bitte Name und Passwort oder Wiederherstellungscode angeben.');
   const keys = await C.accountKeys(username, password);
@@ -1751,11 +1993,23 @@ async function loginAccount(username, password, remember) {
   if (r.vault) {
     try { S.vault = mergeVault(emptyVault(), JSON.parse(await C.openText(wrapKey, r.vault, vaultAad()))); } catch (e) { /* leer */ }
   }
+  // Forward Secrecy: Hat ein Gerät den Unterschlüssel gewechselt, steht der
+  // aktuelle Schlüssel im Tresor. Mit dem Passwort zur Hand gleich auch den
+  // beim Server eingepackten ersetzen – ohne die gelöschten Unterschlüssel.
+  let wrapped = r.wrapped;
+  const current = await vaultKey(identity.fingerprint);
+  if (current && !samePub(current.armoredPublic, identity.armoredPublic) &&
+      C.newestEncryptionSubkey(current.privateKey) >= C.newestEncryptionSubkey(identity.privateKey)) {
+    identity = current;
+    wrapped = await C.sealText(wrapKey, C.armorPrivate(identity.privateKey), keyAad(r.username));
+    api('key.wrap', { auth: keys.auth, wrapped: wrapped }).catch(() => {});
+  }
   setMe(identity, r.id, 'account', r.username, r.vis !== false);
+  S.me.published = r.pub;
   await applyOwnCard(r.card);
   // Mit Wiederherstellungscode angemeldet: Das Gerät soll nie wieder danach fragen.
   const authSealed = remember && C.isRecoveryCode(password) ? await C.sealText(wrapKey, keys.auth, authAad(r.username)) : null;
-  await rememberAccount(remember, r.username, r.id, r.token, r.wrapped, keys.wrapRaw, authSealed);
+  await rememberAccount(remember, r.username, r.id, r.token, wrapped, keys.wrapRaw, authSealed);
   await enterApp();
 }
 
@@ -1829,12 +2083,14 @@ async function restoreSession() {
   const loadOwn = async () => {
     const me = await api('me');
     S.me.vis = S.mode === 'temp' && me.vis !== false;
+    S.me.published = me.pub;
     S.deviceLabeled = me.dl === true;
     await applyOwnCard(me.card);
     if (S.mode === 'account') {
       const v = await api('vault.get');
       S.vv = v.vv;
       if (v.vault) S.vault = mergeVault(emptyVault(), JSON.parse(await C.openText(S.wrapKey, v.vault, vaultAad())));
+      await adoptVaultKey();   // Forward Secrecy: Unterschlüssel eines anderen Geräts übernehmen
     }
   };
   try {
@@ -1858,8 +2114,12 @@ async function restoreSession() {
       return false;
     }
   }
-  // Noch offen gespeichert (ältere Version): jetzt versiegeln – mit PIN bzw. an das Windows-Konto gebunden.
-  if (saved && saved._plain && (L.key || (DESKTOP && DESKTOP.secure))) storeSession(saved).catch(() => {});
+  // Noch offen gespeichert (ältere Version): jetzt versiegeln – mit PIN bzw.
+  // an das Windows-Konto gebunden. Frisch gelesen: adoptVaultKey kann den
+  // eingepackten Schlüssel inzwischen erneuert haben.
+  if (saved && saved._plain && (L.key || (DESKTOP && DESKTOP.secure))) {
+    loadSession().then((rec) => (rec ? storeSession(rec) : null)).catch(() => {});
+  }
   return true;
 }
 
@@ -1920,6 +2180,7 @@ async function enterApp() {
   startIceRefresh();
   labelDevice();
   startLockTimer();
+  startKeyCare();   // Forward Secrecy: Unter- und Raumschlüssel wechseln, alte löschen
   await loadRooms().catch(() => {});
   if (S.view.kind === 'room' && !S.rooms.has(S.view.rid)) S.view = { kind: 'home' };
   if (S.view.kind === 'dm') await ensureIds([S.view.peer]);
@@ -3446,7 +3707,8 @@ async function sendDm(peerId, body, file) {
   S.forceBottom = true;
   scheduleRender();
   try {
-    const d = await C.sealFor(msg, [ident.key, S.me.pub], S.me.priv);
+    await freshIds([peerId]);   // Forward Secrecy: den jüngsten Unterschlüssel des Gegenübers nehmen
+    const d = await C.sealFor(msg, [(S.ids.get(peerId) || ident).key, S.me.pub], S.me.priv);
     await api('send', { to: peerId, k: 'dm', d: d, self: true, ttl: convTtl(peerId) });
     local.state = null;
   } catch (e) {
@@ -3458,8 +3720,9 @@ async function sendDm(peerId, body, file) {
 
 /** ttl: wie lange beim Server – Standard die Aufbewahrung der Unterhaltung. */
 async function sendDmEvent(peerId, obj, ttl) {
+  if (!S.ids.get(peerId)) throw new Error('Unbekannte Person.');
+  await freshIds([peerId]);
   const ident = S.ids.get(peerId);
-  if (!ident) throw new Error('Unbekannte Person.');
   const msg = Object.assign({ v: 1, id: C.randomId(), from: S.me.id, to: peerId, ts: Date.now() }, obj);
   const d = await C.sealFor(msg, [ident.key, S.me.pub], S.me.priv);
   await api('send', { to: peerId, k: 'dm', d: d, self: true, ttl: ttl || convTtl(peerId) });
@@ -3487,7 +3750,7 @@ async function sendSignal(toId, obj) {
 async function handleInboxEntry(e) {
   let res;
   try {
-    res = await C.openSealed(e.d, S.me.priv, keyring());
+    res = await openForMe(e.d, keyring());
     if (!res.signer && res.obj && typeof res.obj.from === 'string') {
       const [ident] = await ensureIds([res.obj.from]);
       if (ident) res = await C.openSealed(e.d, S.me.priv, [ident.key]);
@@ -4023,7 +4286,10 @@ async function roomKey(rid, epoch) {
 
 function storeRoomKey(rid, epoch, raw) {
   const r = S.vault.rooms[rid] || (S.vault.rooms[rid] = { k: {}, rot: 0 });
+  if (r.gone && epoch <= r.gone) return;   // schon gelöscht (Forward Secrecy)
   r.k[epoch] = raw;
+  r.et = r.et || {};
+  if (!r.et[epoch]) r.et[epoch] = serverNow();   // seit wann es diese Generation gibt
 }
 
 // Der erste Sprachkanal hat die leere Kennung – so kennen ihn auch ältere Fassungen.
@@ -4079,6 +4345,7 @@ async function loadRooms() {
     room.ttl = Number(raw.ttl) || 0;   // Aufbewahrung (Sekunden), legt der Besitzer fest
     room.tmp = !!raw.tmp;              // aus einer temporären Sitzung: verfällt ohne Aktivität
     room.exp = Number(raw.exp) || 0;   // dann weg (Unix-Zeit), wenn bis dahin nichts passiert
+    room.iv = typeof raw.iv === 'number' ? raw.iv : null;   // offene Einladungen (ältere Server: unbekannt)
     setVoiceState(room, raw.vcs, raw.vc);
     room.rev = raw.rev;
     room.pendingKey = !roomKeyRaw(room.id, room.epoch);
@@ -4522,13 +4789,16 @@ async function kickMember(room, ident) {
  * an alle verbliebenen Mitglieder. Wer den Raum verlassen hat, kann ab
  * jetzt nichts mehr lesen.
  */
-async function rotateRoom(rid, manual) {
+/** quiet: der wöchentliche Wechsel – Fehler (etwa ein zweites Gerät war schneller) nicht melden. */
+async function rotateRoom(rid, manual, quiet) {
   if (S.rotating.has(rid)) return;
   S.rotating.add(rid);
   try {
     await loadRooms();
     const room = S.rooms.get(rid);
     if (!room || room.owner !== S.me.id) return;
+    // Wöchentlicher Wechsel: frisch prüfen – eine gerade erstellte Einladung bliebe sonst nicht gültig.
+    if (quiet && room.iv !== 0) return;
     const members = await ensureIds(room.members.map((m) => m.id));
     if (members.length !== room.members.length) throw new Error('Nicht alle Mitglieder ließen sich laden.');
     const raw = C.newRoomKey();
@@ -4536,14 +4806,18 @@ async function rotateRoom(rid, manual) {
     const key = await C.importRoomKey(raw);
     const env = await C.sealFor({ v: 1, t: 'roomkey', room: rid, epoch: epoch, key: raw, from: S.me.id, ts: Date.now() }, members.map((m) => m.key), S.me.priv);
     const meta = await C.sealRoom(Object.assign({ v: 1, t: 'meta', room: rid, from: S.me.id, ts: Date.now() }, metaOf(room)), key, epoch, rid, S.me.priv);
+    // Erst beim Server wechseln, dann speichern: Wechselt ein zweites Gerät
+    // gleichzeitig, scheitert eins (409) – und hat dann keinen falschen
+    // Schlüssel im Tresor. Geht das Speichern schief, steht der Schlüssel
+    // noch im Paket für alle Mitglieder (auch für uns).
+    await api('room.rotate', { id: rid, e: epoch, env: env, meta: meta });
     storeRoomKey(rid, epoch, raw);
     S.vault.rooms[rid].rot = serverNow();
     await saveVault(true);
-    await api('room.rotate', { id: rid, e: epoch, env: env, meta: meta });
     await loadRooms();
     if (manual) toast('Neuer Raumschlüssel (Generation ' + epoch + '). Alte Einladungslinks gelten nicht mehr.', 'ok');
   } catch (e) {
-    toast('Schlüsselwechsel: ' + e.message, 'error');
+    if (!quiet) toast('Schlüsselwechsel: ' + e.message, 'error');
   } finally {
     S.rotating.delete(rid);
   }
@@ -4671,7 +4945,7 @@ function roomSys(room, e) {
 async function roomKeyEnvelope(room, e) {
   if (roomKeyRaw(room.id, e.e)) return;
   let res;
-  try { res = await C.openSealed(e.d, S.me.priv, keyring()); } catch (err) { return; }
+  try { res = await openForMe(e.d, keyring()); } catch (err) { return; }
   const obj = res.obj;
   const signer = [...S.ids.values()].find((i) => i.fp === res.signer);
   // Nur der Besitzer verteilt Schlüssel.
@@ -6903,6 +7177,8 @@ function showSettings() {
       body.appendChild(sectionHead('SCHLÜSSEL'));
       body.append(
         el('p', { class: 'sc-fp', text: C.formatFingerprint(S.me.fp) }),
+        el('p', { class: 'sc-note', text: 'Forward Secrecy: Der Schlüssel für Nachrichten an dich wechselt jede Woche (der jetzige ist vom ' +
+          new Date(C.newestEncryptionSubkey(S.me.priv)).toLocaleDateString('de-DE') + '), alte werden nach ' + Math.round(keyKeep() / 86400000) + ' Tagen gelöscht – dann sind auch mitgeschnittene ältere Nachrichten nicht mehr zu entschlüsseln. Räume: Der Besitzer wechselt den Raumschlüssel wöchentlich.' }),
         el('div', { class: 'sc-card-actions' },
           el('button', { type: 'button', class: 'btn', onclick: () => copyText(S.me.armored, 'Öffentlicher Schlüssel') }, icon('copy', 14), 'Öffentlichen Schlüssel kopieren'),
           el('button', { type: 'button', class: 'btn', onclick: () => downloadText('securecom-' + (S.me.name || 'schluessel') + '-public.asc', S.me.armored) }, icon('download', 14), 'Herunterladen'),

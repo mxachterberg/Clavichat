@@ -182,6 +182,53 @@ export async function exportProtectedKey(privateKey, passphrase) {
   return locked.armor(ARMOR);
 }
 
+/* ---------- Forward Secrecy: wechselnde Verschlüsselungs-Unterschlüssel ----
+   Regelmäßig kommt ein neuer X25519-Unterschlüssel dazu; Absender nehmen
+   immer den jüngsten. Alte Unterschlüssel werden gelöscht, sobald alles, was
+   an sie ging, beim Server abgelaufen ist. Wer später an den privaten
+   Schlüssel kommt, kann damit ältere Nachrichten nicht mehr lesen. Der
+   Hauptschlüssel (Signatur, Fingerabdruck) bleibt derselbe. */
+function encrypts(subkey) {
+  const sig = subkey.bindingSignatures[subkey.bindingSignatures.length - 1];
+  const flags = sig && sig.keyFlags ? sig.keyFlags[0] : 0;
+  return (flags & (openpgp.enums.keyFlags.encryptCommunication | openpgp.enums.keyFlags.encryptStorage)) !== 0;
+}
+
+/** Verschlüsselungs-Unterschlüssel, älteste zuerst: [{ id, created (ms) }]. */
+export function encryptionSubkeys(key) {
+  return key.subkeys.filter(encrypts)
+    .map((s) => ({ id: s.getKeyID().toHex(), created: s.getCreationTime().getTime() }))
+    .sort((a, b) => a.created - b.created);
+}
+
+/** Neuen Verschlüsselungs-Unterschlüssel (X25519) anhängen. */
+export function addEncryptionSubkey(privateKey) {
+  return privateKey.addSubkey({ type: 'ecc', curve: 'curve25519Legacy', config: Object.assign({}, PGP) });
+}
+
+/**
+ * Alte Verschlüsselungs-Unterschlüssel entfernen: Einer fällt weg, sobald
+ * sein Nachfolger seit keepMs da ist – was an ihn ging, ist dann abgelaufen.
+ * Der jüngste bleibt immer. Gibt { key, dropped } zurück.
+ */
+export async function pruneEncryptionSubkeys(privateKey, keepMs, now) {
+  const list = encryptionSubkeys(privateKey);
+  const drop = new Set();
+  for (let i = 0; i < list.length - 1; i++) {
+    if (now - list[i + 1].created > keepMs) drop.add(list[i].id);
+  }
+  if (!drop.size) return { key: privateKey, dropped: 0 };
+  const copy = await openpgp.readPrivateKey({ armoredKey: privateKey.armor(ARMOR) });
+  copy.subkeys = copy.subkeys.filter((s) => !drop.has(s.getKeyID().toHex()));
+  return { key: await openpgp.readPrivateKey({ armoredKey: copy.armor(ARMOR) }), dropped: drop.size };
+}
+
+/** Zeitpunkt (ms), zu dem der jüngste Verschlüsselungs-Unterschlüssel entstand. */
+export function newestEncryptionSubkey(key) {
+  const list = encryptionSubkeys(key);
+  return list.length ? list[list.length - 1].created : 0;
+}
+
 /* ---------- Passwort → Schlüssel (Konten) -------------------------------- */
 /**
  * Aus Name + Passwort zwei unabhängige Werte:
