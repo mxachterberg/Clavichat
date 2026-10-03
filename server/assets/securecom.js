@@ -5655,7 +5655,7 @@ function relayStatusRow() {
   const draw = (state) => {
     row.textContent = '';
     row.className = 'sc-set-row sc-relay is-' + state;
-    row.append(el('span', { class: 'sc-relay-dot', 'aria-hidden': 'true' }),
+    appendAll(row, el('span', { class: 'sc-relay-dot', 'aria-hidden': 'true' }),
       el('span', { class: 'sc-set-text' }, el('strong', { text: 'Relay-Server (TURN): ' + texts[state][0] }), el('span', { text: texts[state][1] })),
       state === 'ok' || state === 'fail' ? el('button', { type: 'button', class: 'btn', text: 'Erneut prüfen', onclick: () => run(true) }) : null);
   };

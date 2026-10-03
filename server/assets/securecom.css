@@ -1080,6 +1080,48 @@ html[data-theme="light"] .sc-modal { background: rgba(40, 40, 40, .3); }
 .sc-modal-head .section-head { flex: 1; min-width: 0; margin: 0; }
 .sc-modal-head .section-head .label { overflow: hidden; text-overflow: ellipsis; }
 .sc-modal-body { min-height: 0; overflow-y: auto; padding: 18px 22px 20px; }
+
+/* Scrollleisten im Stil der Seite: eine Haarlinie als Spur (wie die Rahmen),
+   darauf ein schmaler, eckiger Griff in Grau – beim Darüberfahren und Ziehen
+   orange und etwas breiter. Chromium und die Windows-App zeichnen sie über
+   ::-webkit-scrollbar; Firefox kennt nur Breite und Farbe (@supports unten).
+   Nicht scrollbar-color auf diese Elemente setzen: Chromium nähme dann wieder
+   seine eigene Leiste. */
+:is(.sc-modal-body, .sc-choice-list, .sc-side-body, .sc-thread, .sc-members, .sc-tiles, .sc-tiles-side, .sc-dg-scroll, .sc-gate, .sc-lockscreen) {
+  --sc-thumb: color-mix(in srgb, var(--muted) 55%, transparent);
+}
+:is(.sc-modal-body, .sc-choice-list, .sc-side-body, .sc-thread, .sc-members, .sc-tiles, .sc-tiles-side, .sc-dg-scroll, .sc-gate, .sc-lockscreen)::-webkit-scrollbar {
+  width: 11px;
+  height: 11px;
+}
+:is(.sc-modal-body, .sc-choice-list, .sc-side-body, .sc-thread, .sc-members, .sc-tiles, .sc-tiles-side, .sc-dg-scroll, .sc-gate, .sc-lockscreen)::-webkit-scrollbar-track {
+  background: linear-gradient(var(--border), var(--border)) center / 1px 100% no-repeat;
+}
+:is(.sc-modal-body, .sc-choice-list, .sc-side-body, .sc-thread, .sc-members, .sc-tiles, .sc-tiles-side, .sc-dg-scroll, .sc-gate, .sc-lockscreen)::-webkit-scrollbar-track:horizontal {
+  background-size: 100% 1px;
+}
+:is(.sc-modal-body, .sc-choice-list, .sc-side-body, .sc-thread, .sc-members, .sc-tiles, .sc-tiles-side, .sc-dg-scroll, .sc-gate, .sc-lockscreen)::-webkit-scrollbar-thumb {
+  min-height: 32px;
+  border: 3px solid transparent;
+  background: var(--sc-thumb) padding-box;
+}
+:is(.sc-modal-body, .sc-choice-list, .sc-side-body, .sc-thread, .sc-members, .sc-tiles, .sc-tiles-side, .sc-dg-scroll, .sc-gate, .sc-lockscreen)::-webkit-scrollbar-thumb:hover,
+:is(.sc-modal-body, .sc-choice-list, .sc-side-body, .sc-thread, .sc-members, .sc-tiles, .sc-tiles-side, .sc-dg-scroll, .sc-gate, .sc-lockscreen)::-webkit-scrollbar-thumb:active {
+  border-width: 2px;
+  background-color: var(--accent);
+}
+:is(.sc-modal-body, .sc-choice-list, .sc-side-body, .sc-thread, .sc-members, .sc-tiles, .sc-tiles-side, .sc-dg-scroll, .sc-gate, .sc-lockscreen)::-webkit-scrollbar-button,
+:is(.sc-modal-body, .sc-choice-list, .sc-side-body, .sc-thread, .sc-members, .sc-tiles, .sc-tiles-side, .sc-dg-scroll, .sc-gate, .sc-lockscreen)::-webkit-scrollbar-corner {
+  display: none;
+  background: transparent;
+}
+@supports not selector(::-webkit-scrollbar) {
+  :is(.sc-modal-body, .sc-choice-list, .sc-side-body, .sc-thread, .sc-members, .sc-tiles, .sc-tiles-side, .sc-dg-scroll, .sc-gate, .sc-lockscreen) {
+    scrollbar-width: thin;
+    scrollbar-color: var(--sc-thumb) transparent;
+  }
+}
+
 .sc-modal-foot {
   display: flex;
   flex-wrap: wrap;
@@ -1197,7 +1239,7 @@ html[data-theme="light"] .sc-modal { background: rgba(40, 40, 40, .3); }
    wischen seitlich, damit die Schrift lesbar bleibt. */
 .sc-dg-intro { margin-bottom: 20px; }
 .sc-dg { margin: 0 0 8px; }
-.sc-dg-scroll { overflow-x: auto; padding: 6px 0; scrollbar-width: thin; scrollbar-color: var(--border) transparent; }
+.sc-dg-scroll { overflow-x: auto; padding: 6px 0; }
 .sc-dg svg { display: block; width: 100%; min-width: 500px; height: auto; overflow: visible; }
 .sc-dg-box { fill: var(--bg); stroke: var(--border); stroke-width: 1; }
 .sc-dg-tick { fill: none; stroke: var(--accent); stroke-width: 1; }
