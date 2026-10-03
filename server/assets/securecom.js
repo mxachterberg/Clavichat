@@ -1363,6 +1363,7 @@ async function enterApp() {
   bootDone();
   refreshOnline();
   loadIce();
+  startIceRefresh();
   await loadRooms().catch(() => {});
   if (S.view.kind === 'room' && !S.rooms.has(S.view.rid)) S.view = { kind: 'home' };
   if (S.view.kind === 'dm') await ensureIds([S.view.peer]);
@@ -4241,6 +4242,64 @@ async function loadIce() {
   } catch (e) { /* bleibt bei STUN */ }
 }
 
+/**
+ * Die Zugangsdaten des Relays gelten nur einen Tag, die Windows-App läuft
+ * aber oft tagelang: alle sechs Stunden neu holen. Sonst scheitern Anrufe
+ * über das Relay – mit „IP verbergen“ also jeder Anruf.
+ */
+const ICE_REFRESH = 6 * 3600 * 1000;
+let iceTimer = null;
+
+function startIceRefresh() {
+  if (!iceTimer) iceTimer = setInterval(() => { if (S.entered) loadIce(); }, ICE_REFRESH);
+}
+
+/** Die Relay-Server (TURN) unter den Verbindungsservern. */
+function turnServers() {
+  return (S.cfg.ice || []).filter((s) => [].concat(s.urls).some((u) => /^turns?:/i.test(String(u))));
+}
+
+/* ---------- IP-Adresse verbergen ------------------------------------------
+   Nur über das Relay verbinden: Dann stehen im Verbindungsangebot keine
+   eigenen Adressen, das Gegenüber sieht nur die des Relays – auch beim
+   Klingeln, auch wenn es nie abnimmt. Konten speichern die Wahl im Tresor
+   (gilt auf allen Geräten), temporäre Sitzungen je Gerät. Dort ist sie von
+   Haus aus an: Wer Fremde aus der Online-Liste anruft, gäbe sonst seine IP
+   preis. */
+const HIDE_KEY = 'sc-hide-ip';
+let hideIpTemp = null;   // falls localStorage gesperrt ist
+
+function hidingIp() {
+  if (!S.cfg || !S.cfg.relay) return false;
+  if (S.mode !== 'temp') return !!S.vault.settings.hideIp;
+  let on = hideIpTemp;
+  try {
+    const v = localStorage.getItem(HIDE_KEY);
+    if (v === '1' || v === '0') on = v === '1';
+  } catch (e) { /* privater Modus */ }
+  return on === null ? true : on;
+}
+
+function setHideIp(on) {
+  if (S.mode !== 'temp') { S.vault.settings.hideIp = !!on; saveVault(); return; }
+  hideIpTemp = !!on;
+  try { localStorage.setItem(HIDE_KEY, on ? '1' : '0'); } catch (e) { /* gilt dann nur bis zum Neuladen */ }
+}
+
+/**
+ * Vor einem Anruf: Soll die IP verborgen bleiben, muss ein Relay da sein.
+ * Fehlen die Zugangsdaten, einmal nachladen – klappt das nicht, lieber kein
+ * Anruf als einer, der die IP preisgibt.
+ */
+async function relayReady() {
+  if (!hidingIp()) return true;
+  if (!turnServers().length) await loadIce();
+  if (turnServers().length) return true;
+  toast('„IP verbergen“ ist an, aber der Relay-Server ist gerade nicht erreichbar – ohne ihn wäre deine IP sichtbar. ' +
+    'Versuch es gleich noch einmal oder schalte „IP verbergen“ in den Einstellungen aus.', 'error', 12000);
+  return false;
+}
+
 /** Einmal je Sitzung erklären, warum eine Verbindung nicht zustande kommt. */
 let routeHint = false;
 function noDirectRoute(id) {
@@ -4275,9 +4334,8 @@ const RELAY = { state: null, at: 0 };
 
 async function probeRelay(ms) {
   if (!S.cfg.relay) return 'none';
-  const turnOnly = () => (S.cfg.ice || []).filter((s) => [].concat(s.urls).some((u) => /^turns?:/i.test(String(u))));
-  if (!turnOnly().length) await loadIce();
-  const servers = turnOnly();
+  if (!turnServers().length) await loadIce();
+  const servers = turnServers();
   if (!servers.length || typeof RTCPeerConnection !== 'function') return 'fail';
   let pc = null;
   try {
@@ -4330,8 +4388,7 @@ function relayStatusRow() {
 }
 
 function rtcConfig() {
-  const relayOnly = S.vault.settings.hideIp && S.cfg.relay;
-  return { iceServers: S.cfg.ice || [], iceTransportPolicy: relayOnly ? 'relay' : 'all', bundlePolicy: 'max-bundle' };
+  return { iceServers: S.cfg.ice || [], iceTransportPolicy: hidingIp() ? 'relay' : 'all', bundlePolicy: 'max-bundle' };
 }
 
 class Peer {
@@ -4574,6 +4631,7 @@ async function startCall(peerId, video) {
   if (ident.changed) { toast('Erst den geänderten Schlüssel prüfen.', 'error'); return; }
   if (isBlocked(ident)) { toast('Diese Person ist blockiert.', 'error'); return; }
   audioCtx();
+  if (!(await relayReady()) || S.call || S.voice) return;
   const call = S.call = { id: C.randomId(), peerId: peerId, dir: 'out', state: 'ringing', video: !!video, started: 0, peer: null, bye: null };
   if (!(S.view.kind === 'dm' && S.view.peer === peerId)) openDm(peerId);
   renderAll();
@@ -4625,6 +4683,8 @@ async function acceptCall(video) {
   audioCtx();
   call.state = 'connecting';
   openDm(call.peerId);
+  // Ohne Relay nicht annehmen, solange die IP verborgen bleiben soll.
+  if (!(await relayReady())) { if (S.call === call) declineCall(); return; }
   try {
     await ensureMic();
     if (video && !M.cam) await toggleCam();
@@ -4784,6 +4844,7 @@ async function joinVoice(rid, ch) {
   if (S.voice) await leaveVoice(S.voice.rid === rid);
   if (!roomKeyRaw(rid, room.epoch)) { toast('Der aktuelle Raumschlüssel fehlt noch.', 'error'); return; }
   audioCtx();
+  if (!(await relayReady())) return;
   S.joiningVoice = rid;   // gibt der Raum die Sprachqualität vor, gilt sie schon fürs Mikrofon
   try {
     await ensureMic();
@@ -5765,8 +5826,8 @@ function showSettings() {
 
       // Anrufe
       body.appendChild(sectionHead('ANRUFE'));
-      const hide = el('input', { type: 'checkbox', checked: !!S.vault.settings.hideIp, disabled: !S.cfg.relay });
-      hide.addEventListener('change', () => { S.vault.settings.hideIp = hide.checked; saveVault(); });
+      const hide = el('input', { type: 'checkbox', checked: hidingIp(), disabled: !S.cfg.relay });
+      hide.addEventListener('change', () => setHideIp(hide.checked));
       const sound = el('input', { type: 'checkbox', checked: S.vault.settings.sound !== false });
       sound.addEventListener('change', () => { S.vault.settings.sound = sound.checked; saveVault(); });
       // Auswahlfelder in einem schlichten Container statt <label>: Ein Klick
@@ -5796,7 +5857,8 @@ function showSettings() {
           (roomAq ? ' Im Sprachkanal von „' + roomAqName + '“ gilt gerade die Einstellung des Raums: ' + roomAq.name + '.' : '')),
         pickField('Bildschirm teilen', screenPick, 'Gilt für dieses Gerät. Während einer Übertragung lässt sie sich über den Regler-Knopf neben „Bildschirm teilen“ ändern.'),
         el('label', { class: 'sc-check' + (S.cfg.relay ? '' : ' is-disabled') }, hide, el('span', { text: S.cfg.relay
-          ? 'IP-Adresse verbergen: Anrufe laufen immer über den Relay-Server. Dein Gegenüber sieht deine IP dann nicht – der Betreiber des Relays schon.'
+          ? 'IP-Adresse verbergen: Anrufe laufen nur über den Relay-Server. Dein Gegenüber sieht deine IP nicht – auch nicht beim Klingeln –, der Betreiber des Relays schon. ' +
+            (S.mode === 'temp' ? 'Bei temporären Sitzungen von Haus aus an, gilt für dieses Gerät.' : 'Gilt auf all deinen Geräten.') + ' Ab dem nächsten Anruf.'
           : 'IP-Adresse verbergen – braucht einen Relay-Server (TURN), der auf diesem Server noch nicht eingerichtet ist.' })),
         el('label', { class: 'sc-check' }, sound, el('span', { text: 'Töne (Klingeln, neue Nachricht)' })));
 
@@ -6018,7 +6080,7 @@ function showSecurityInfo() {
         'Wer gerade online ist, welche öffentlichen Schlüssel, Namen/Aliasse und Profilbilder (nur Konten) es gibt, wer in welchem Raum ist und wer in welchem Sprachkanal.',
         'Welcher Briefkasten wann wie viele Einträge bekommt.',
         'Dass ein Status-Fach beschrieben oder gelesen wird – nicht, wem es gehört, und nicht den Status selbst. Im Moment der Anfrage sieht er, wer fragt; gespeichert wird das nicht.',
-        'Bei Anrufen ohne Relay sehen sich die beiden Gesprächspartner gegenseitig die IP-Adresse.'
+        'Ohne „IP verbergen“ sehen sich die Gesprächspartner gegenseitig die IP-Adresse – sie steht schon im Verbindungsangebot, das beim Klingeln ankommt. Mit „IP verbergen“ (bei temporären Sitzungen von Haus aus an) läuft alles über den Relay-Server; dessen Betreiber sieht die IP-Adressen, aber keine Inhalte.'
       ]);
       block('GRENZEN', [
         DESKTOP

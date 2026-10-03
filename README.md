@@ -115,7 +115,9 @@ Cloudflare-TURN.
 **Anrufe über Mobilfunk** brauchen oft einen Relay-Server (TURN), weil sich
 die Geräte sonst nicht direkt erreichen. In `config.php` entweder einen eigenen
 eintragen (`securecom_turn`) oder Cloudflare Realtime TURN (`securecom_cf_turn`).
-Mit TURN funktioniert auch die Einstellung „IP-Adresse verbergen“. Die
+Mit TURN funktioniert auch die Einstellung „IP-Adresse verbergen“ (bei
+temporären Sitzungen von Haus aus an): Das Gegenüber sieht dann nur das
+Relay, nie die eigene IP. Die
 Zugangsdaten bekommen nur angemeldete Sitzungen, damit niemand Fremdes das
 TURN-Kontingent nutzt.
 

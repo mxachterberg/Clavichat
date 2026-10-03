@@ -244,8 +244,14 @@ erfunden.
 - Bei Konten mit dem Postfach von achterberg.dev den SHA-256-Hash des
   Postfachs. Wer die Adresse kennt, kann sie damit dem Konto zuordnen.
 - Bei Anrufen ohne Relay sehen sich die Gesprächspartner gegenseitig die
-  IP-Adresse, der STUN-Server sieht die eigene. „IP-Adresse verbergen“ leitet
-  alles über TURN, sofern einer eingerichtet ist.
+  IP-Adresse, der STUN-Server sieht die eigene. Sie steht schon im
+  Verbindungsangebot, das beim Klingeln ankommt – auch wenn niemand abnimmt.
+  „IP-Adresse verbergen“ leitet alles über TURN, sofern einer eingerichtet
+  ist: Im Angebot stehen dann nur Adressen des Relays. Bei temporären
+  Sitzungen ist das von Haus aus an (je Gerät gemerkt), bei Konten eine
+  Einstellung im Tresor. Ist kein Relay erreichbar, kommt der Anruf nicht
+  zustande, statt die IP doch zu zeigen. Die Zugangsdaten des Relays holt die
+  App alle sechs Stunden neu (sie gelten einen Tag).
 
 ## Grenzen
 

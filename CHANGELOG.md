@@ -6,12 +6,20 @@ Abschnitt einer Version zum Text des GitHub-Releases
 
 ## Unveröffentlicht
 
+- **IP-Adresse verbergen** ist bei temporären Sitzungen jetzt von Haus aus
+  an und wird je Gerät gemerkt. Ohne den Schalter stand die eigene IP schon
+  beim Klingeln im Verbindungsangebot – auch wenn das Gegenüber nie abnahm.
+  Mit ihm stehen dort nur Adressen des Relays. Ist kein Relay erreichbar,
+  kommt der Anruf nicht zustande, statt die IP doch preiszugeben.
 - **Räume aus temporären Sitzungen** löscht der Server nach 7 Tagen ohne
   Aktivität samt Verlauf – auch wenn noch Konten drin sind. Aktivität:
   Nachricht, Beitritt, Sprachkanal, Einladung oder Änderung am Raum. Solche
   Räume tragen ein TEMP-Zeichen; das Raum-Menü nennt das Datum, und beim
   Erstellen als temporäre Sitzung steht ein Hinweis. Einstellbar mit
   `securecom_temp_room_days` (Docker: `SECURECOM_TEMP_ROOM_DAYS`).
+- Behoben: Die Zugangsdaten des Relays gelten einen Tag, die App holte sie
+  aber nur beim Start. Lief die Windows-App länger, scheiterten Anrufe über
+  das Relay. Jetzt holt sie sie alle sechs Stunden neu.
 - Server: Reste ohne Bezug (Verläufe ohne Raum, Briefkästen ohne
   Identität) räumt das stündliche Aufräumen mit weg.
 
