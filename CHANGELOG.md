@@ -4,7 +4,10 @@ Was sich von Version zu Version ändert. Beim Veröffentlichen wird der
 Abschnitt einer Version zum Text des GitHub-Releases
 (`.github/workflows/windows.yml`).
 
-## Unveröffentlicht
+## 1.6.1 – 03.10.2026
+
+Erklärt, wie Clavichat funktioniert: zwei neue Grafiken. Die Windows-App
+1.6.0 holt sich diese Version von selbst.
 
 - **So funktioniert’s:** Das Erklärfenster (Info-Symbol oben, Knopf auf der
   Startseite) zeigt jetzt zwei Grafiken im Stil der Seite. „So läuft ein
