@@ -318,6 +318,21 @@ function field(label, input, note, extra) {
 const PW_LABELS = ['sehr schwach', 'schwach', 'okay', 'stark', 'sehr stark'];
 const PW_MIN_SCORE = 2;
 
+/* ---------- Schutz vor Bildschirmfotos (nur Windows-App) --------------------
+   Je Gerät gemerkt; die App setzt dafür die Anzeige-Sperre von Windows. */
+const PROTECT_KEY = 'sc-protect';
+
+function protectingContent() {
+  try { return localStorage.getItem(PROTECT_KEY) === '1'; } catch (e) { return false; }
+}
+
+function setProtectContent(on) {
+  try { localStorage.setItem(PROTECT_KEY, on ? '1' : '0'); } catch (e) { /* gilt bis zum Neustart */ }
+  if (DESKTOP && DESKTOP.protect) DESKTOP.protect(on);
+}
+
+if (DESKTOP && DESKTOP.protect && protectingContent()) DESKTOP.protect(true);
+
 function strengthMeter(input, hints) {
   const bar = el('span', { class: 'sc-pw-bar', 'aria-hidden': 'true' }, el('span'), el('span'), el('span'), el('span'));
   const label = el('span', { class: 'sc-pw-label' });
@@ -5927,6 +5942,12 @@ function showSettings() {
       body.append(themeRow,
         el('label', { class: 'sc-check' + (canNotify ? '' : ' is-disabled') }, note, el('span', { text:
           'Benachrichtigungen, wenn Clavichat nicht im Blick ist – nur wer schreibt oder anruft, nie der Inhalt.' })));
+      if (DESKTOP && DESKTOP.protect) {
+        const shield = el('input', { type: 'checkbox', checked: protectingContent() });
+        shield.addEventListener('change', () => setProtectContent(shield.checked));
+        body.append(el('label', { class: 'sc-check' }, shield, el('span', { text:
+          'Bildschirmfotos und Aufnahmen verhindern: Andere Programme, Screenshots und Bildschirmübertragungen sehen dieses Fenster schwarz. Gilt für dieses Gerät.' })));
+      }
 
       // Updates (nur Windows-App)
       if (UPDATES) {

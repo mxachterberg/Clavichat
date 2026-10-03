@@ -430,6 +430,12 @@ ipcMain.on('securecom:attention', (event) => {
   if (win && event.sender === win.webContents && !win.isFocused()) win.flashFrame(true);
 });
 
+// Bildschirmfotos und Aufnahmen anderer Programme verhindern (Einstellung je
+// Gerät): Windows zeigt das Fenster dann schwarz (SetWindowDisplayAffinity).
+ipcMain.on('securecom:protect', (event, on) => {
+  if (win && event.sender === win.webContents) win.setContentProtection(!!on);
+});
+
 // Für „abwesend“: zählt Maus und Tastatur am ganzen Rechner, nicht nur im
 // Fenster – wer in einer anderen App arbeitet, ist nicht abwesend.
 ipcMain.handle('securecom:idle', (event) => {
@@ -534,6 +540,16 @@ async function smoke() {
   await run("document.documentElement.setAttribute('data-theme', 'dark'); true");
   await wait(500);
   check('Qualität in den Einstellungen', await run("(async () => { const b = [...document.querySelectorAll('#sc-user button')].find((x) => x.title === 'Einstellungen'); b.click(); await new Promise((r) => setTimeout(r, 300)); const names = [...document.querySelectorAll('#sc-modal-panel .sc-choice-opt .sc-choice-name')].map((n) => n.textContent); document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' })); return names.includes('Flüssig') && names.indexOf('Sparsam') < names.indexOf('Quelle'); })()"));
+
+  // Bildschirmschutz: Der Schalter in den Einstellungen setzt die Anzeige-Sperre von Windows.
+  const toggleShield = "(async () => { const b = [...document.querySelectorAll('#sc-user button')].find((x) => x.title === 'Einstellungen'); b.click(); await new Promise((r) => setTimeout(r, 300)); const box = [...document.querySelectorAll('#sc-modal-panel label.sc-check')].find((l) => l.textContent.includes('Bildschirmfotos')); if (box) box.querySelector('input').click(); document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' })); return !!box; })()";
+  const shieldFound = await run(toggleShield);
+  await wait(300);
+  const shieldOn = win.isContentProtected();
+  await run(toggleShield);
+  await wait(300);
+  const shieldOff = win.isContentProtected();
+  check('Bildschirmschutz umschaltbar', shieldFound && shieldOn && !shieldOff, String(shieldOn) + ' → ' + String(shieldOff));
 
   const sources = await desktopCapturer.getSources({ types: ['screen', 'window'], thumbnailSize: { width: 320, height: 180 } });
   check('Bildschirmquellen gefunden', sources.length > 0, sources.length + ' Quellen');
