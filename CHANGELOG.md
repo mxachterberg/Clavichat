@@ -4,6 +4,49 @@ Was sich von Version zu Version ändert. Beim Veröffentlichen wird der
 Abschnitt einer Version zum Text des GitHub-Releases
 (`.github/workflows/windows.yml`).
 
+## 1.6.2 – 03.10.2026
+
+Mehr Sicherheit in vielen Ecken: Forward Secrecy, verschlüsselte Dateien und
+Bilder, App-Sperre mit PIN, Geräte verwalten und Nachrichtenanfragen. Die
+Windows-App 1.6.1 holt sich diese Version von selbst.
+
+- **Forward Secrecy:** Der Schlüssel für Nachrichten an dich wechselt jede
+  Woche; alte werden gelöscht, sobald alles damit Verschlüsselte beim Server
+  abgelaufen ist. Wer später an deinen privaten Schlüssel kommt, kann
+  mitgeschnittene ältere Nachrichten damit nicht mehr öffnen. In Räumen
+  wechselt der Besitzer den Raumschlüssel wöchentlich (nicht, solange
+  Einladungslinks offen sind); alte Generationen löscht jedes Mitglied nach
+  der Aufbewahrung des Raums.
+- **Dateien und Bilder:** über die Büroklammer, per Hereinziehen oder
+  Einfügen (mit Rückfrage). Ende-zu-Ende verschlüsselt mit eigenem Schlüssel
+  je Datei, bis 25 MB, sie verschwinden mit ihrer Nachricht. Bilder gehen ohne
+  Metadaten raus (etwa ohne den Aufnahmeort), mit Vorschau und Großansicht.
+  Vor Programmen (.exe, .bat …) warnt Clavichat.
+- **App-Sperre mit PIN:** sperrt beim Start, nach Leerlauf (1 Minute bis
+  1 Stunde), beim Sperren von Windows und mit Strg+L oder dem Schloss unten
+  links. Die gespeicherte Anmeldung liegt dann nur mit der PIN verschlüsselt
+  auf dem Gerät; zehn falsche PINs löschen sie. Gesperrt nennen
+  Benachrichtigungen keine Namen.
+- **Windows-App:** Die gespeicherte Anmeldung ist jetzt an dein Windows-Konto
+  gebunden (DPAPI) – eine Kopie des Profils lässt sich anderswo nicht öffnen.
+  Neu ist auch der Schutz vor Bildschirmfotos (Einstellungen → Anzeige).
+- **Geräte verwalten:** Einstellungen → Geräte zeigt, wo dein Konto
+  angemeldet ist; einzelne Geräte oder alle anderen lassen sich aus der Ferne
+  abmelden – sie kommen nur mit Passwort oder Code wieder hinein. Meldet sich
+  ein neues Gerät an, sagen die anderen Bescheid.
+- **Nachrichtenanfragen:** Wer dir zum ersten Mal schreibt, landet unter
+  „Nachrichtenanfragen“ – ohne Ton, Links nur als Text, Einladungen und
+  Dateien gesperrt. Anrufe von Unbekannten klingeln bei Konten nicht
+  (einstellbar). Annehmen, Ablehnen oder Blockieren; Antworten nimmt an.
+- **Passwörter:** Eine Anzeige schätzt die Stärke; zu schwache und häufige
+  Passwörter nimmt Clavichat nicht mehr an.
+- Repository: Dependabot und eine wöchentliche Prüfung melden neue
+  Versionen von Electron, OpenPGP.js und PHP.
+- Server: neue Einstellungen `securecom_file_max_mb`,
+  `securecom_file_quota_mb` und `securecom_files_total_mb` (Docker:
+  `SECURECOM_FILE_MAX_MB` …), neue Aktionen für Geräte, Dateien und den
+  Schlüsselwechsel. Ältere Apps zeigen statt einer Datei „📎 Name (Größe)“.
+
 ## 1.6.1 – 03.10.2026
 
 Erklärt, wie Clavichat funktioniert: zwei neue Grafiken. Die Windows-App
