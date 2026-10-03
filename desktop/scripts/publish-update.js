@@ -9,7 +9,9 @@
      npm run build
      node scripts/publish-update.js "<Webroot>\downloads\clavichat"
 
-   Danach zuerst die .exe-Dateien hochladen, zuletzt update.json.
+   Danach hochladen – zuerst die .exe-Dateien, zuletzt update.json; ältere
+   Fassungen auf dem Server löscht es gleich mit:
+     powershell -ExecutionPolicy Bypass -File scripts\upload-update.ps1 -Dir "<Webroot>\downloads\clavichat"
    ========================================================================== */
 'use strict';
 
