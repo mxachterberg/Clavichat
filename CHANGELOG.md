@@ -4,7 +4,11 @@ Was sich von Version zu Version ändert. Beim Veröffentlichen wird der
 Abschnitt einer Version zum Text des GitHub-Releases
 (`.github/workflows/windows.yml`).
 
-## Unveröffentlicht
+## 1.6.0 – 03.10.2026
+
+Mehr Schutz für die eigene IP-Adresse bei Anrufen und Aufräumen bei Räumen
+aus temporären Sitzungen. Die Windows-App 1.5.0 holt sich diese Version von
+selbst.
 
 - **IP-Adresse verbergen** ist bei temporären Sitzungen jetzt von Haus aus
   an und wird je Gerät gemerkt. Ohne den Schalter stand die eigene IP schon
