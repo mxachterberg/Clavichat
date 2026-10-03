@@ -117,6 +117,19 @@ try {
             sc_limit('devr:' . $me['id'], 30, 3600);
             json_out(['ok' => true] + SecureCom::revokeDevices($me, $body));
 
+        case 'key.lease':
+            // Forward Secrecy: wer wechselt gerade den Unterschlüssel?
+            sc_limit('klease:' . $me['id'], 60, 3600);
+            json_out(['ok' => true] + SecureCom::keyLease($me));
+
+        case 'key.pub':
+            sc_limit('kpub:' . $me['id'], 30, 3600);
+            json_out(['ok' => true] + SecureCom::updateKey($me, $body));
+
+        case 'key.wrap':
+            sc_limit('kwrap:' . $me['id'], 20, 3600);
+            json_out(['ok' => true] + SecureCom::rewrapKey($me, $body));
+
         case 'vault':
             sc_limit('vault:' . $me['id'], 240, 3600);
             json_out(['ok' => true] + SecureCom::saveVault($me, $body));

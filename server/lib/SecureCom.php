@@ -656,6 +656,69 @@ class SecureCom
     }
 
     /* ======================================================================
+       Forward Secrecy: Die Geräte hängen regelmäßig einen neuen
+       Verschlüsselungs-Unterschlüssel an und löschen alte, sobald alles damit
+       Verschlüsselte abgelaufen ist. Der Hauptschlüssel (Fingerabdruck) bleibt.
+       ====================================================================== */
+    /**
+     * Nur ein Gerät eines Kontos wechselt gleichzeitig – sonst entstünden zwei
+     * neue Unterschlüssel und eins der Geräte kennte den des anderen nicht.
+     * Die Sperre gilt zwei Minuten (oder bis zum neuen Schlüssel).
+     */
+    public static function keyLease(array $me)
+    {
+        $now = time();
+        $ok = self::mutate(self::idFile($me['id']), function (&$i) use ($now) {
+            if (!$i || (int)($i['kl'] ?? 0) > $now) return false;
+            $i['kl'] = $now + 120;
+            return true;
+        });
+        return ['lease' => (bool)$ok];   // nicht 'ok': das setzt api.php schon
+    }
+
+    /**
+     * Neuer öffentlicher Schlüssel: gleicher Hauptschlüssel, andere
+     * Unterschlüssel. Ob der Schlüssel wirklich zum Fingerabdruck passt,
+     * prüfen die anderen Geräte selbst (resolveIdentity) – passt er nicht,
+     * gilt die Identität dort als ungültig.
+     */
+    public static function updateKey(array $me, array $b)
+    {
+        $pub = self::pubKey(self::str($b, 'pub'));
+        $fp  = self::fingerprint(self::str($b, 'fp'));
+        $out = null;
+        self::mutate(self::idFile($me['id']), function (&$i) use ($pub, $fp, &$out) {
+            if (!$i) return;
+            if (strtolower((string)$i['fp']) !== $fp) { $out = 'fp'; return; }
+            $i['pub'] = $pub;
+            $i['kv']  = (int)($i['kv'] ?? 1) + 1;
+            unset($i['kl']);
+            $out = $i;
+        });
+        if ($out === 'fp') throw new SecureComException('Der Hauptschlüssel darf sich nicht ändern.', 409);
+        if (!is_array($out)) throw new SecureComException('Identität nicht gefunden.', 404);
+        return ['kv' => (int)$out['kv']];
+    }
+
+    /**
+     * Den beim Server eingepackten Schlüssel durch den aktuellen ersetzen
+     * (ohne gelöschte Unterschlüssel). Nur mit Passwort bzw. Code – mit einer
+     * gestohlenen Sitzung allein lässt er sich nicht überschreiben.
+     */
+    public static function rewrapKey(array $me, array $b)
+    {
+        $acc = self::accountFor($me);
+        if (!password_verify(self::str($b, 'auth'), (string)$acc['auth'])) {
+            throw new SecureComException('Passwort oder Code stimmen nicht.', 403);
+        }
+        $wrap = self::b64(self::str($b, 'wrapped'), self::MAX_WRAPPED, 'Schlüssel');
+        self::mutate(self::accountFile($acc['u']), function (&$a) use ($wrap) {
+            if ($a) $a['w'] = $wrap;
+        });
+        return [];
+    }
+
+    /* ======================================================================
        Wer ist da? Wer ist wer?
        In der Online-Liste stehen nur temporäre Sitzungen (siehe listed()).
        ====================================================================== */
@@ -1591,6 +1654,13 @@ class SecureCom
     {
         $members = [];
         foreach ($room['mem'] as $id => $joined) $members[] = ['id' => $id, 'j' => (int)$joined];
+        // Offene Einladungen: Solange es welche gibt, wechselt der Besitzer den
+        // Raumschlüssel nicht von selbst – das machte die Links ungültig.
+        $open = 0;
+        $now  = time();
+        foreach ((array)($room['inv'] ?? []) as $inv) {
+            if ((int)$inv['x'] >= $now && (int)$inv['n'] < (int)$inv['max']) $open++;
+        }
         return [
             'id'      => $room['id'],
             'owner'   => $room['o'],
@@ -1602,6 +1672,7 @@ class SecureCom
             'tmp'     => !empty($room['tmp']),              // aus einer temporären Sitzung angelegt
             'exp'     => !empty($room['tmp']) ? self::lastActive($room) + self::tempRoomDays() * 86400 : 0,
             'members' => $members,
+            'iv'      => $open,                             // offene Einladungen
             'vc'      => self::voiceList($room),            // erster Sprachkanal (ältere Apps)
             'vcs'     => (object)self::voiceMap($room),     // alle: Kanal => wer drin ist
         ];
