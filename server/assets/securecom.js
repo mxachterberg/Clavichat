@@ -563,7 +563,7 @@ function idbSet(key, value) {
    Tresor: Kontakte, Raumschlüssel, Gelesen-Stand, Einstellungen
    ========================================================================== */
 function emptyVault() {
-  return { v: 1, contacts: {}, rooms: {}, blocked: {}, reads: {}, cleared: {}, friends: {}, ttl: {}, settings: { hideIp: false, sound: true, mic: '', status: 'on' } };
+  return { v: 1, contacts: {}, rooms: {}, blocked: {}, reads: {}, cleared: {}, friends: {}, ttl: {}, reqs: {}, settings: { hideIp: false, sound: true, mic: '', status: 'on' } };
 }
 
 function mergeVault(a, b) {
@@ -583,8 +583,8 @@ function mergeVault(a, b) {
     Object.assign(out.blocked, src.blocked || {});
     for (const [k, t] of Object.entries(src.reads || {})) out.reads[k] = Math.max(out.reads[k] || 0, t || 0);
     for (const [k, t] of Object.entries(src.cleared || {})) out.cleared[k] = Math.max(out.cleared[k] || 0, t || 0);
-    // Freunde und Aufbewahrung: je Person gilt der jüngste Stand.
-    for (const key of ['friends', 'ttl']) {
+    // Freunde, Aufbewahrung und Anfragen: je Person gilt der jüngste Stand.
+    for (const key of ['friends', 'ttl', 'reqs']) {
       for (const [id, f] of Object.entries(src[key] || {})) {
         if (!f || typeof f !== 'object') continue;
         const prev = out[key][id];
@@ -698,6 +698,98 @@ function noteContact(ident) {
     c.n = ident.name;
     saveVault();
   }
+}
+
+/* ---------- Nachrichtenanfragen ---------------------------------------------
+   Wer schreibt oder anruft, ohne bekannt zu sein, landet erst unter
+   NACHRICHTENANFRAGEN: kein Ton, in der Benachrichtigung kein Name, Links
+   nicht anklickbar, Einladungen gesperrt. Bekannt ist, wer schon Kontakt ist
+   (auch alle bisherigen), Freund oder Mitglied eines gemeinsamen Raums – oder
+   wem du selbst geschrieben hast. Annehmen oder Antworten macht daraus eine
+   normale Unterhaltung. Tresor: reqs[peer] = { s: 'req' | 'ok', t } – wie bei
+   den Freunden gilt geräteübergreifend der jüngste Stand. */
+function isRequest(peer) {
+  const r = S.vault && S.vault.reqs && S.vault.reqs[peer];
+  if (!r || r.s !== 'req') return false;
+  const f = S.vault.friends && S.vault.friends[peer];
+  return !(f && f.st === 'yes');   // Freunde sind keine Anfrage mehr
+}
+
+function setRequest(peer, state, t) {
+  if (!S.vault.reqs) S.vault.reqs = {};
+  S.vault.reqs[peer] = { s: state, t: t || serverNow() };
+  saveVault();
+}
+
+function knownPeer(id) {
+  if (S.vault.contacts[id] && !isRequest(id)) return true;
+  const f = S.vault.friends && S.vault.friends[id];
+  if (f && f.st === 'yes') return true;
+  for (const room of S.rooms.values()) if (room.members.some((m) => m.id === id)) return true;
+  return false;
+}
+
+/** Erste Nachricht oder erster Anruf einer unbekannten Person: als Anfrage merken. */
+function noteRequest(peer, ts) {
+  if (isRequest(peer) || knownPeer(peer)) return;
+  const conv = S.convs.get(peer);
+  if (conv && conv.msgs.some((m) => m.from === S.me.id)) return;   // du hast selbst geschrieben
+  const r = S.vault.reqs && S.vault.reqs[peer];
+  if (r && r.s === 'ok') return;   // schon einmal angenommen
+  setRequest(peer, 'req', ts);
+}
+
+function acceptRequest(peer, quiet) {
+  if (!isRequest(peer)) return;
+  setRequest(peer, 'ok');
+  if (!quiet) toast('Angenommen – ihr könnt jetzt ganz normal schreiben und telefonieren.', 'ok');
+  renderAll();
+}
+
+/** Ablehnen: Verlauf hier weg, Kontakt vergessen. Schreibt die Person wieder, kommt eine neue Anfrage. */
+function declineRequest(peer) {
+  const conv = S.convs.get(peer);
+  let last = serverNow();
+  if (conv) for (const m of conv.msgs) last = Math.max(last, m.ts || 0);
+  S.vault.cleared[peer] = last;
+  delete S.vault.contacts[peer];
+  setRequest(peer, 'req');
+  S.convs.delete(peer);
+  if (S.view.kind === 'dm' && S.view.peer === peer) setView({ kind: 'home' });
+  renderAll();
+}
+
+/* Anrufe von Unbekannten: bei temporären Sitzungen klingeln sie (dafür ist die
+   Online-Liste da), bei Konten landen sie als Anfrage. Temporär je Gerät,
+   bei Konten im Tresor. */
+const UNKNOWN_CALLS_KEY = 'sc-unknown-calls';
+
+function unknownCallsAllowed() {
+  if (S.mode !== 'temp') return S.vault.settings.unknownCalls === true;
+  try { const v = localStorage.getItem(UNKNOWN_CALLS_KEY); if (v === '0' || v === '1') return v === '1'; } catch (e) { /* privater Modus */ }
+  return true;
+}
+
+function setUnknownCalls(on) {
+  if (S.mode !== 'temp') { S.vault.settings.unknownCalls = !!on; saveVault(); return; }
+  try { localStorage.setItem(UNKNOWN_CALLS_KEY, on ? '1' : '0'); } catch (e) { /* gilt bis zum Neuladen */ }
+}
+
+/** Anruf einer unbekannten Person, der nicht klingeln soll: still als Anfrage vermerken. */
+function noteRequestCall(from, ts, obj) {
+  noteRequest(from.id, ts);
+  noteContact(from);
+  const conv = convOf(from.id);
+  const id = 'call-' + String(obj.call);
+  if (!conv.byId.has(id)) {
+    const m = { id: id, sys: (obj.video ? 'Videoanruf' : 'Anruf') + ' – nicht durchgestellt, weil ihr euch noch nicht kennt', icon: 'phone', ts: ts, from: '' };
+    insertSorted(conv.msgs, m);
+    conv.byId.set(id, m);
+    conv.last = Math.max(conv.last, ts);
+    conv.unread++;
+    notify('Clavichat', 'Neue Nachrichtenanfrage', 'req');
+  }
+  scheduleRender();
 }
 
 function isVerified(ident) {
@@ -1646,8 +1738,26 @@ function renderHomeSide(head, body) {
   for (const ident of online) list.appendChild(personRow(ident, () => openDm(ident.id)));
   body.appendChild(list);
 
-  const convs = [...S.convs.values()].filter((c) => c.msgs.length || (S.view.kind === 'dm' && S.view.peer === c.peer))
+  const all = [...S.convs.values()].filter((c) => c.msgs.length || (S.view.kind === 'dm' && S.view.peer === c.peer))
     .sort((a, b) => b.last - a.last);
+  const reqs = all.filter((c) => isRequest(c.peer) && c.msgs.length);
+  const convs = all.filter((c) => !reqs.includes(c));
+  if (reqs.length) {
+    body.appendChild(sectionHead('NACHRICHTENANFRAGEN — ' + reqs.length));
+    const rl = el('div', { class: 'sc-list' });
+    for (const conv of reqs) {
+      const ident = S.ids.get(conv.peer);
+      const lastMsg = conv.msgs.filter((m) => !m.deleted).slice(-1)[0];
+      const row = personRow(ident, () => openDm(conv.peer), {
+        current: S.view.kind === 'dm' && S.view.peer === conv.peer,
+        sub: 'Anfrage · ' + (lastMsg ? (lastMsg.sys || lastMsg.body).replace(/\s+/g, ' ').slice(0, 50) : ''),
+        unread: conv.unread
+      });
+      withMenu(row, () => requestMenuItems(conv.peer));
+      rl.appendChild(row);
+    }
+    body.appendChild(rl);
+  }
   body.appendChild(sectionHead('UNTERHALTUNGEN'));
   const cl = el('div', { class: 'sc-list' });
   if (!convs.length) cl.appendChild(el('p', { class: 'sc-empty-note', text: 'Noch keine Unterhaltungen.' }));
@@ -1725,7 +1835,17 @@ function withMenu(node, items) {
   node.addEventListener('click', (ev) => { if (Date.now() - ctxOpened < 700) { ev.preventDefault(); ev.stopImmediatePropagation(); } }, true);
 }
 
+function requestMenuItems(peer) {
+  const ident = S.ids.get(peer);
+  return [
+    { icon: 'check', label: 'Annehmen', run: () => acceptRequest(peer) },
+    { icon: 'x', label: 'Ablehnen', note: 'Verlauf weg; schreibt die Person wieder, kommt eine neue Anfrage', run: () => declineRequest(peer) },
+    ident ? { icon: 'shield', label: 'Blockieren', danger: true, run: () => { toggleBlock(ident); declineRequest(peer); } } : null
+  ];
+}
+
 function convMenuItems(conv) {
+  if (isRequest(conv.peer)) return requestMenuItems(conv.peer);
   return [
     { icon: 'check', label: 'Als gelesen markieren', disabled: !conv.unread, run: () => markConvRead(conv) },
     { icon: 'users', label: 'Profil anzeigen', run: () => showProfile(conv.peer) },
@@ -2010,6 +2130,7 @@ function renderThread() {
       prev = m;
     }
   }
+  if (S.view.kind === 'dm' && isRequest(S.view.peer)) thread.appendChild(requestBar(S.view.peer));
   if (S.forceBottom || atBottom) thread.scrollTop = thread.scrollHeight;
   else thread.scrollTop = keep;
   S.forceBottom = false;
@@ -2037,7 +2158,9 @@ function messageNode(m, grouped) {
     text.classList.add('is-deleted');
     text.textContent = 'Nachricht gelöscht';
   } else {
-    text.appendChild(linkify(m.body));
+    // In einer Anfrage sind Links nur Text – erst nach dem Annehmen anklickbar.
+    const locked = !own && S.view.kind === 'dm' && isRequest(S.view.peer);
+    text.appendChild(locked ? document.createTextNode(m.body) : linkify(m.body));
     if (m.edited) text.appendChild(el('span', { class: 'sc-edited', text: ' (bearbeitet)' }));
   }
   body.appendChild(text);
@@ -2057,15 +2180,31 @@ function inviteCard(m) {
   const inv = m.invite;
   const mine = m.from === S.me.id;
   const joined = S.rooms.has(inv.rid);
+  const locked = !mine && S.view.kind === 'dm' && isRequest(S.view.peer);   // erst nach dem Annehmen
   return el('div', { class: 'sc-invite tickbox' },
     el('span', { class: 'sc-invite-icon' }, icon('userPlus', 18)),
     el('span', { class: 'sc-invite-text' },
       el('span', { class: 'sc-invite-title', text: mine ? 'Einladung verschickt' : 'Einladung in einen Raum' }),
       el('span', { class: 'sc-invite-name', text: inv.name || 'Raum' })),
     mine ? null : el('button', {
-      type: 'button', class: 'btn btn--primary', text: joined ? 'Öffnen' : 'Beitreten',
+      type: 'button', class: 'btn btn--primary', text: joined ? 'Öffnen' : 'Beitreten', disabled: locked,
+      title: locked ? 'Erst die Anfrage annehmen' : null,
       onclick: () => (joined ? openRoom(inv.rid) : joinRoom(inv))
     }));
+}
+
+/** Unter einer Anfrage: wer das ist und was du tun kannst. */
+function requestBar(peer) {
+  const ident = S.ids.get(peer);
+  return el('div', { class: 'sc-request tickbox' },
+    el('p', { class: 'section-head' }, el('span', { class: 'sq' }), el('span', { class: 'label', text: 'NACHRICHTENANFRAGE' }), el('span', { class: 'rule' })),
+    el('p', { class: 'sc-p', text: displayName(ident) + ' ist noch nicht in deinen Kontakten. Bis du annimmst, klingeln keine Anrufe' +
+      (unknownCallsAllowed() ? ' (außer du lässt Anrufe von Unbekannten zu)' : '') + ', Links sind nur Text und Einladungen gesperrt. Antworten nimmt die Anfrage auch an.' }),
+    ident ? el('p', { class: 'sc-mono sc-request-fp', text: C.formatFingerprint(ident.fp) }) : null,
+    el('div', { class: 'sc-card-actions' },
+      el('button', { type: 'button', class: 'btn btn--primary', onclick: () => acceptRequest(peer) }, icon('check', 14), 'Annehmen'),
+      el('button', { type: 'button', class: 'btn', onclick: () => declineRequest(peer) }, icon('x', 14), 'Ablehnen'),
+      ident ? el('button', { type: 'button', class: 'btn sc-btn--danger', onclick: () => { toggleBlock(ident); declineRequest(peer); } }, icon('shield', 14), 'Blockieren') : null));
 }
 
 function emptyThread() {
@@ -2288,14 +2427,14 @@ function isViewing(kind, id, ch) {
  * Neue Nachricht von jemand anderem: Ist die Unterhaltung gerade offen,
  * gilt sie als gelesen (Stand merken), sonst zählt sie als ungelesen.
  */
-function noteArrival(key, ts, viewing, countUnread, notice) {
+function noteArrival(key, ts, viewing, countUnread, notice, quiet) {
   if (viewing) {
     S.vault.reads[key] = Math.max(S.vault.reads[key] || 0, ts);
     saveVault();
   } else {
     countUnread();
     if (S.cursorLoaded) {
-      notifySound();
+      if (!quiet) notifySound();
       if (notice) notify('Clavichat', notice, key);
     }
   }
@@ -2509,6 +2648,7 @@ async function sendDm(peerId, body) {
   conv.byId.set(local.id, local);
   conv.last = local.ts;
   noteContact(ident);
+  if (isRequest(peerId)) acceptRequest(peerId, true);   // Antworten heißt Annehmen
   S.forceBottom = true;
   scheduleRender();
   try {
@@ -2582,7 +2722,12 @@ function handleDm(obj, from, e) {
   if (ts + convTtl(peer) * 1000 < serverNow()) { noteExpired(e.s); return; }
   if ((S.vault.cleared[peer] || 0) >= ts) return;   // Unterhaltung hier gelöscht
   const conv = convOf(peer);
-  if (from.id !== S.me.id) noteContact(from);
+  if (from.id !== S.me.id) {
+    if (obj.t === 'msg' || obj.t === 'invite') noteRequest(peer, ts);
+    noteContact(from);
+  } else if (obj.t === 'msg' && isRequest(peer)) {
+    acceptRequest(peer, true);   // deine Antwort – auch von einem anderen Gerät – nimmt an
+  }
   const ref = typeof obj.ref === 'string' ? conv.byId.get(obj.ref) : null;
 
   switch (obj.t) {
@@ -2607,8 +2752,9 @@ function handleDm(obj, from, e) {
       conv.byId.set(m.id, m);
       conv.last = Math.max(conv.last, ts);
       if (from.id !== S.me.id && ts > (S.vault.reads['dm:' + peer] || 0)) {
+        const req = isRequest(peer);   // Anfrage: ohne Ton, ohne Namen
         noteArrival('dm:' + peer, ts, isViewing('dm', peer), () => { conv.unread++; },
-          'Neue Nachricht von ' + displayName(from));
+          req ? 'Neue Nachrichtenanfrage' : 'Neue Nachricht von ' + displayName(from), req);
       }
       break;
     }
@@ -4807,6 +4953,12 @@ async function handleSignal(obj, from, e) {
     }
     case 'call': {
       if (from.id === S.me.id || age > 45000) return;
+      // Unbekannt oder offene Anfrage, und Anrufe von Unbekannten sind aus: still
+      // als Anfrage vermerken – auch kein „besetzt“, das verriete, dass du da bist.
+      if ((isRequest(from.id) || !knownPeer(from.id)) && !unknownCallsAllowed()) {
+        if (typeof obj.sdp === 'string') noteRequestCall(from, e.t * 1000, obj);
+        return;
+      }
       if (call || S.voice) {
         if (!call || call.id !== obj.call) sendSignal(from.id, { t: 'busy', call: obj.call }).catch(() => {});
         return;
@@ -5883,6 +6035,8 @@ function showSettings() {
       hide.addEventListener('change', () => setHideIp(hide.checked));
       const sound = el('input', { type: 'checkbox', checked: S.vault.settings.sound !== false });
       sound.addEventListener('change', () => { S.vault.settings.sound = sound.checked; saveVault(); });
+      const unknown = el('input', { type: 'checkbox', checked: unknownCallsAllowed() });
+      unknown.addEventListener('change', () => setUnknownCalls(unknown.checked));
       // Auswahlfelder in einem schlichten Container statt <label>: Ein Klick
       // auf den Hinweistext soll die Liste nicht aufklappen.
       const pickField = (label, picker, note) => el('div', { class: 'field' },
@@ -5913,6 +6067,9 @@ function showSettings() {
           ? 'IP-Adresse verbergen: Anrufe laufen nur über den Relay-Server. Dein Gegenüber sieht deine IP nicht – auch nicht beim Klingeln –, der Betreiber des Relays schon. ' +
             (S.mode === 'temp' ? 'Bei temporären Sitzungen von Haus aus an, gilt für dieses Gerät.' : 'Gilt auf all deinen Geräten.') + ' Ab dem nächsten Anruf.'
           : 'IP-Adresse verbergen – braucht einen Relay-Server (TURN), der auf diesem Server noch nicht eingerichtet ist.' })),
+        el('label', { class: 'sc-check' }, unknown, el('span', { text:
+          'Anrufe von Unbekannten klingeln lassen. Sonst landen sie still unter Nachrichtenanfragen. Bekannt sind Kontakte, Freunde und Mitglieder gemeinsamer Räume. ' +
+          (S.mode === 'temp' ? 'Bei temporären Sitzungen von Haus aus an, gilt für dieses Gerät.' : 'Bei Konten von Haus aus aus; gilt auf all deinen Geräten.') })),
         el('label', { class: 'sc-check' }, sound, el('span', { text: 'Töne (Klingeln, neue Nachricht)' })));
 
       // Benachrichtigungen und Darstellung
