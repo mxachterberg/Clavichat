@@ -13,7 +13,7 @@
 
 :root {
   --sc-rail: 68px;
-  --sc-side: 250px;
+  --sc-side: 276px;   /* unten links passen damit 12+ Zeichen des eigenen Namens, auch mit Schloss */
   --sc-members: 256px;
   --sc-danger: #f87171;
   --sc-away: #eab308;
@@ -328,17 +328,19 @@
 .sc-user {
   display: flex;
   align-items: center;
-  gap: 2px;
+  gap: 0;
   flex: none;
-  padding: 8px 6px 8px 8px;
+  padding: 8px 4px 8px 8px;
   border-top: 1px solid var(--border);
   background: color-mix(in srgb, var(--panel) 85%, transparent);
 }
+/* Schmalere Knöpfe (Mikrofon, Ton, Schloss, Einstellungen): mehr Platz für den Namen. */
+.sc-user .sc-ibtn { width: 28px; }
 .sc-user-info {
   display: flex;
   flex: 1;
   align-items: center;
-  gap: 10px;
+  gap: 8px;
   min-width: 0;
   padding: 4px;
   border: 0;
