@@ -1,0 +1,57 @@
+# Wöchentliche Prüfung der Abhängigkeiten, die Dependabot nicht kennt:
+#   - OpenPGP.js liegt als Datei in server/assets/vendor (openpgp-X.Y.Z.min.js)
+#   - PHP für den Windows-Server steht fest in desktop/scripts/fetch-php.js
+# Gibt es Neueres, öffnet die Prüfung ein Issue (eins je Version, keine
+# Doppelten). Ausdrücklich zu beachten bei OpenPGP.js: Post-Quanten-Verfahren
+# (ML-KEM), sobald die Bibliothek sie stabil anbietet.
+name: Abhängigkeiten
+
+on:
+  schedule:
+    - cron: '17 6 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  pruefen:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: OpenPGP.js
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          have=$(ls server/assets/vendor | sed -n 's/^openpgp-\([0-9.]*\)\.min\.js$/\1/p' | head -1)
+          latest=$(npm view openpgp version)
+          echo "OpenPGP.js: im Repo $have, aktuell $latest"
+          if [ -n "$have" ] && [ -n "$latest" ] && [ "$have" != "$latest" ]; then
+            title="OpenPGP.js $latest verfügbar (im Repo: $have)"
+            if [ -z "$(gh issue list --state open --search "in:title \"$title\"" --json number --jq '.[].number')" ]; then
+              gh issue create --title "$title" --body "Neue Version von OpenPGP.js: https://github.com/openpgpjs/openpgpjs/releases
+
+          Aktualisieren: \`openpgp.min.mjs\` aus dem npm-Paket als \`server/assets/vendor/openpgp-$latest.min.js\` ablegen (alte Datei entfernen), Verweise in \`securecom-core.js\`, \`server/index.php\` und auf der Website (\`app/clavichat/index.php\`) anpassen, dann \`tests/e2e.mjs\` laufen lassen.
+
+          Dabei prüfen: Bringt die Version Post-Quanten-Verfahren (ML-KEM, ML-DSA) als stabile Funktion mit? Dann kann Clavichat hybride Schlüssel anbieten."
+            fi
+          fi
+
+      - name: PHP für den Windows-Server
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          have=$(sed -n "s/^const VERSION = '\([0-9.]*\)';/\1/p" desktop/scripts/fetch-php.js)
+          branch=$(echo "$have" | cut -d. -f1,2)
+          latest=$(curl -fsSL https://windows.php.net/downloads/releases/releases.json | jq -r --arg b "$branch" '.[$b].version // empty')
+          echo "PHP $branch: im Repo $have, aktuell $latest"
+          if [ -n "$have" ] && [ -n "$latest" ] && [ "$have" != "$latest" ]; then
+            title="PHP $latest verfügbar (Windows-Server nutzt $have)"
+            if [ -z "$(gh issue list --state open --search "in:title \"$title\"" --json number --jq '.[].number')" ]; then
+              gh issue create --title "$title" --body "Neue PHP-Version im Zweig $branch: https://windows.php.net/download/
+
+          Aktualisieren: In \`desktop/scripts/fetch-php.js\` VERSION und SHA256 (aus https://downloads.php.net/~windows/releases/sha256sum.txt) setzen, \`npm run php\` und \`npm run build:server\`, dann den Rauchtest des Servers."
+            fi
+          fi

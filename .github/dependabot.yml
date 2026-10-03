@@ -1,0 +1,30 @@
+# Abhängigkeiten aktuell halten. Wichtig vor allem für Electron: Darin steckt
+# Chromium, dessen Sicherheitslücken die Windows-App sonst mitschleppt.
+# GitHub öffnet dafür wöchentlich Pull Requests; nach dem Zusammenführen kommt
+# die nächste Version per Auto-Update zu allen.
+#
+# OpenPGP.js (liegt als Datei in server/assets/vendor) und das PHP des
+# Windows-Servers prüft .github/workflows/abhaengigkeiten.yml.
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: /desktop
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    groups:
+      electron:
+        patterns: ['electron', 'electron-builder']
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+
+  - package-ecosystem: docker
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
