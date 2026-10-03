@@ -7724,7 +7724,10 @@ function showSecurityInfo() {
         'Anrufe und Bildschirm: WebRTC direkt zwischen den Geräten, verschlüsselt mit DTLS-SRTP. Die Schlüssel dafür handeln nur die beiden Browser aus; die Verbindungsangaben sind signiert und verschlüsselt, der Sicherheitscode zeigt, dass niemand dazwischensitzt.',
         'Konten: Aus deinem Passwort entstehen ' + LOCAL + ' (PBKDF2, 600.000 Runden, dann HKDF) ein Anmeldeschlüssel – beim Server nur als Hash – und ein Schlüssel, der deinen privaten Schlüssel einpackt. Das Passwort selbst verlässt ' + (DESKTOP ? 'die App' : 'den Browser') + ' nie.',
         'Konto mit achterberg.dev: Das Postfach bestätigt nur, wer du bist – mit einem signierten Ticket, das fünf Minuten und nur einmal gilt. Deinen Schlüssel schützt statt eines Passworts ein Wiederherstellungscode aus 160 Zufallsbits (HKDF-SHA-256). Ihn kennst nur du; der Server sieht ihn nie.',
-        'Freunde: Die Anfrage bringt ein gemeinsames Geheimnis mit (PGP-verschlüsselt). Daraus entstehen zwei zufällige Fächer beim Server und ein Schlüssel; dein Status liegt dort verschlüsselt (AES-256-GCM). Der Server weiß nicht, wer mit wem befreundet ist.'
+        'Freunde: Die Anfrage bringt ein gemeinsames Geheimnis mit (PGP-verschlüsselt). Daraus entstehen zwei zufällige Fächer beim Server und ein Schlüssel; dein Status liegt dort verschlüsselt (AES-256-GCM). Der Server weiß nicht, wer mit wem befreundet ist.',
+        'Forward Secrecy: Der Schlüssel für Nachrichten an dich wechselt jede Woche; alte werden gelöscht, sobald alles damit Verschlüsselte abgelaufen ist. Raumschlüssel wechselt der Besitzer ebenfalls wöchentlich.',
+        'Dateien und Bilder: Jede Datei bekommt einen eigenen Zufallsschlüssel (AES-256-GCM); Schlüssel, Name und Vorschau stehen nur in der verschlüsselten Nachricht. Bilder gehen ohne Metadaten wie den Aufnahmeort raus.',
+        'Auf dem Gerät: Mit App-Sperre ist die gespeicherte Anmeldung nur mit deiner PIN verschlüsselt (PBKDF2, 600.000 Runden)' + (DESKTOP ? ' und zusätzlich an dein Windows-Konto gebunden.' : '.')
       ]);
       block('VERSCHLEIERUNG', [
         'Alle Klartexte werden vor dem Verschlüsseln auf feste Größen aufgefüllt – „ok“ und ein langer Absatz sind gleich groß.',
@@ -7738,7 +7741,7 @@ function showSecurityInfo() {
       block('WAS DER SERVER TROTZDEM SIEHT', [
         'IP-Adressen und Zeitpunkte der Anfragen (der Webserver des Hosters protokolliert sie).',
         'Wer gerade online ist, welche öffentlichen Schlüssel, Namen/Aliasse und Profilbilder (nur Konten) es gibt, wer in welchem Raum ist und wer in welchem Sprachkanal.',
-        'Welcher Briefkasten wann wie viele Einträge bekommt.',
+        'Welcher Briefkasten wann wie viele Einträge bekommt; bei Dateien Größe und Zeitpunkt.',
         'Dass ein Status-Fach beschrieben oder gelesen wird – nicht, wem es gehört, und nicht den Status selbst. Im Moment der Anfrage sieht er, wer fragt; gespeichert wird das nicht.',
         'Ohne „IP verbergen“ sehen sich die Gesprächspartner gegenseitig die IP-Adresse – sie steht schon im Verbindungsangebot, das beim Klingeln ankommt. Mit „IP verbergen“ (bei temporären Sitzungen von Haus aus an) läuft alles über den Relay-Server; dessen Betreiber sieht die IP-Adressen, aber keine Inhalte.'
       ]);
@@ -7746,7 +7749,7 @@ function showSecurityInfo() {
         DESKTOP
           ? 'Die Windows-App bringt ihren Programmcode selbst mit. Der Server kann ihn nicht austauschen, er reicht nur Chiffretext weiter. Neuer Code kommt nur mit einer neuen Fassung der App.'
           : 'Wie jede Web-App lädt Clavichat seinen Programmcode vom Server. Ein Hoster, der gezielt manipulierten Code ausliefert, könnte das umgehen. Gegen Mitlesen auf dem Server, gestohlene Datenbanken und Lauscher im Netz schützt Clavichat vollständig. Die Windows-App bringt ihren Code selbst mit.',
-        'Nachrichten sind mit deinem langfristigen Schlüssel verschlüsselt. Wer später an deinen privaten Schlüssel und alte Nachrichten kommt, kann diese lesen. Anrufe sind davon nicht betroffen, ihre Schlüssel gelten nur für das eine Gespräch.',
+        'Forward Secrecy gibt es wochenweise, nicht für jede einzelne Nachricht: Wer an deinen privaten Schlüssel kommt, kann Nachrichten lesen, deren Schlüssel noch nicht gelöscht ist (etwa die letzten fünf Wochen). Anrufe sind davon nicht betroffen, ihre Schlüssel gelten nur für das eine Gespräch.',
         'Die Sicherheit steht und fällt mit der Prüfung der Fingerabdrücke. Verifiziere wichtige Kontakte über einen zweiten Weg.'
       ]);
     }
