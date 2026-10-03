@@ -489,3 +489,110 @@ export async function safetyCode(sdpA, sdpB) {
   const s = String(n).padStart(6, '0');
   return s.slice(0, 3) + ' ' + s.slice(3);
 }
+
+/* ---------- Passwortstärke ------------------------------------------------ */
+/**
+ * Schätzt, wie viele Versuche ein Angreifer bräuchte – in Bit. Wichtig, weil
+ * aus dem Passwort der Schlüssel entsteht, der den privaten Schlüssel
+ * einpackt: Wer die Server-Daten stiehlt, kann offline raten. Bewusst
+ * vorsichtig: Wörter, Namen, Jahreszahlen, Zahlenfolgen und Tastaturmuster
+ * zählen wenig, Länge und zufällige Wörter viel. Ergebnis 0–4:
+ * sehr schwach, schwach, okay, stark, sehr stark.
+ */
+const COMMON_PASSWORDS = new Set(('123456 123456789 12345678 12345 1234567 1234567890 111111 000000 123123 654321 ' +
+  '666666 121212 112233 987654321 123321 147258369 159753 7777777 88888888 99999999 1q2w3e4r 1q2w3e q1w2e3r4 ' +
+  'zaq12wsx qazwsx 1qaz2wsx aa123456 qwerty qwertz qwertz123 qwerty123 asdfgh asdfghjkl yxcvbnm password passwort ' +
+  'passwort1 password1 password123 passwort123 kennwort hallo hallo123 hallo1 schatz schatzi liebe ichliebedich ' +
+  'iloveyou geheim geheim123 admin administrator letmein welcome willkommen master dragon monkey shadow sunshine ' +
+  'princess football fussball baseball superman batman trustno1 abc123 abcdef abcd1234 a1b2c3 test test123 ' +
+  'testtest login starwars pokemon killer freedom whatever ficken arschloch schalke04 bvb09 bayern fcbayern ' +
+  'borussia mausi hase schnecke baerchen lol123 changeme default guest gast root toor user benutzer clavichat ' +
+  'securecom achterberg').split(' '));
+
+const COMMON_WORDS = new Set(('passwort password kennwort hallo hello liebe love schatz geheim secret sommer winter ' +
+  'fruehling frühling herbst sonne mond stern blume rose engel teufel himmel hoelle hölle drache dragon tiger loewe ' +
+  'löwe baer bär adler pferd katze hund maus hase vogel fisch affe monkey welpe kitty kater januar februar maerz ' +
+  'märz april juni juli august september oktober november dezember montag dienstag mittwoch donnerstag freitag ' +
+  'samstag sonntag fussball fußball football soccer bayern schalke dortmund borussia hamburg berlin muenchen ' +
+  'münchen koeln köln frankfurt stuttgart deutschland germany europa computer internet schule arbeit familie ' +
+  'freund freundin mama papa mutter vater oma opa baby kind kinder bruder schwester michael thomas andreas stefan ' +
+  'daniel christian alexander markus martin peter klaus jürgen juergen sabine julia anna lisa sarah laura lena ' +
+  'tobias jonas lukas felix paul emma sophie hannah marie maria nicole jennifer jessica tanja sandra melanie ' +
+  'master admin login welcome willkommen sunshine princess shadow superman batman pokemon starwars matrix ' +
+  'blau blue rot red gruen grün green gelb yellow schwarz black weiss weiß white orange silber gold diamant ' +
+  'auto haus garten wasser feuer erde luft musik gitarre rock party pizza kaffee schokolade bier wein ' +
+  'clavichat securecom achterberg').split(' '));
+
+const KEY_ROWS = ['qwertzuiopü', 'asdfghjklöä', 'yxcvbnm', 'qwertyuiop', 'asdfghjkl', 'zxcvbnm', '1234567890', 'abcdefghijklmnopqrstuvwxyz'];
+const LEET = { '@': 'a', '4': 'a', '3': 'e', '1': 'i', '!': 'i', '0': 'o', '5': 's', '$': 's', '7': 't' };
+
+function unleet(s) {
+  return s.replace(/[@4310!5$7]/g, (c) => LEET[c] || c);
+}
+
+/** Folge wie „abcd“, „4321“, Tastaturreihe wie „qwert“ oder Wiederholung (ab 4 Zeichen)? */
+function isRun(s) {
+  if (s.length < 4) return false;
+  for (const row of KEY_ROWS) {
+    const back = [...row].reverse().join('');
+    if (row.includes(s) || back.includes(s)) return true;
+  }
+  return /^(.)\1+$/.test(s);
+}
+
+function letterBits(lower) {
+  const word = unleet(lower);
+  if (COMMON_WORDS.has(word) || COMMON_PASSWORDS.has(word)) return { bits: 11, hint: 'word' };
+  if (isRun(lower)) return { bits: 5, hint: 'run' };
+  // Klingt es wie ein Wort (Vokale im Wechsel)? Dann zählt es wie ein Eintrag
+  // in einem großen Wörterbuch – lange Folgen wie mehrere Wörter.
+  const vowels = (lower.match(/[aeiouyäöü]/g) || []).length;
+  const wordlike = lower.length >= 4 && vowels / lower.length >= 0.25 && !/[^aeiouyäöü]{5,}/.test(lower);
+  const random = lower.length * Math.log2(26);
+  if (!wordlike) return { bits: random };
+  return { bits: Math.min(random, lower.length >= 12 ? (lower.length / 6) * 15 : 15 + lower.length * 0.4) };
+}
+
+export function passwordStrength(password, hints) {
+  const pw = String(password || '');
+  if (!pw) return { bits: 0, score: 0, tip: '' };
+  const lower = pw.toLowerCase();
+  const tips = new Set();
+  const bare = lower.replace(/[\d\W_]+$/, '');
+  if (COMMON_PASSWORDS.has(lower) || COMMON_PASSWORDS.has(unleet(lower)) || (bare && COMMON_PASSWORDS.has(unleet(bare)))) {
+    return { bits: 5, score: 0, tip: 'Das gehört zu den häufigsten Passwörtern.' };
+  }
+  let bits = 0;
+  const segs = pw.match(/[A-Za-zÄÖÜäöüß]+|\d+|[^A-Za-zÄÖÜäöüß\d]+/g) || [];
+  segs.forEach((seg, i) => {
+    const last = i === segs.length - 1;
+    if (/^[A-Za-zÄÖÜäöüß]+$/.test(seg)) {
+      const r = letterBits(seg.toLowerCase());
+      if (r.hint === 'word') tips.add('Einzelne Wörter und Namen sind leicht zu erraten.');
+      if (r.hint === 'run') tips.add('Tastaturmuster und Folgen sind leicht zu erraten.');
+      const upper = (seg.match(/[A-ZÄÖÜ]/g) || []).length;
+      const firstOnly = upper === 1 && /^[A-ZÄÖÜ]/.test(seg);
+      bits += r.bits + (upper === 0 ? 0 : upper === seg.length || firstOnly ? 1 : Math.min(upper, 4));
+    } else if (/^\d+$/.test(seg)) {
+      if (/^(19|20)\d\d$/.test(seg)) { bits += 7; tips.add('Jahreszahlen sind leicht zu erraten.'); }
+      else if (isRun(seg)) { bits += 3; tips.add('Zahlenfolgen wie 1234 sind leicht zu erraten.'); }
+      else bits += seg.length * Math.log2(10) * (seg.length <= 4 && last ? 0.8 : 1);
+    } else if (/^[\s._-]+$/.test(seg) && i > 0 && !last) {
+      bits += 1;                       // Trennzeichen zwischen Wörtern
+    } else {
+      bits += seg.length === 1 && last ? 3 : seg.length * 5;
+    }
+  });
+  for (const h of (hints || [])) {
+    const n = String(h || '').toLowerCase();
+    if (n.length >= 3 && lower.includes(n)) {
+      bits -= Math.min(bits / 2, n.length * 4);
+      tips.add('Dein Name gehört nicht ins Passwort.');
+    }
+  }
+  if (/^(.+)\1+$/.test(pw)) { bits = Math.min(bits, 20); tips.add('Wiederholungen machen ein Passwort nicht stärker.'); }
+  bits = Math.max(0, Math.round(bits));
+  const score = bits < 28 ? 0 : bits < 40 ? 1 : bits < 55 ? 2 : bits < 70 ? 3 : 4;
+  if (score < 3 && !tips.size) tips.add('Länger ist besser – zum Beispiel vier zufällige Wörter.');
+  return { bits: bits, score: score, tip: [...tips][0] || '' };
+}
