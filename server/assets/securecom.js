@@ -142,7 +142,9 @@ const ICONS = {
   userMinus: '<circle cx="9" cy="8" r="3.5"/><path d="M2.5 20a6.5 6.5 0 0 1 13 0"/><path d="M16 11h6"/>',
   clock: '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>',
   message: '<path d="M4 5h16v11H9l-5 4z"/>',
-  mobile: '<rect x="7" y="3" width="10" height="18" rx="1.5"/><path d="M11 17.5h2"/>'
+  mobile: '<rect x="7" y="3" width="10" height="18" rx="1.5"/><path d="M11 17.5h2"/>',
+  clip: '<path d="M20 11.5l-8 8a5 5 0 0 1-7-7l8.5-8.5a3.3 3.3 0 0 1 4.7 4.7l-8.5 8.5a1.7 1.7 0 0 1-2.4-2.4l7.8-7.8"/>',
+  file: '<path d="M6 3h8l5 5v13H6z"/><path d="M14 3v5h5"/>'
 };
 
 function icon(name, size) {
@@ -2415,7 +2417,7 @@ function renderUser() {
   box.dataset.sig = sig;
   box.textContent = '';
   const label = chosenStatus() === 'off' ? 'Unsichtbar' : st === 'away' && chosenStatus() === 'on' ? 'Abwesend (inaktiv)' : STATUS[st].label;
-  box.append(
+  appendAll(box,
     el('button', { type: 'button', class: 'sc-user-info', title: 'Status und Profil', 'aria-haspopup': 'menu', onclick: (ev) => openStatusMenu(ev.currentTarget) },
       el('span', { class: 'sc-row-av' }, avatar(me), el('span', { class: 'sc-on' + STATUS[st].cls, title: label })),
       el('span', { class: 'sc-row-text' },
@@ -2579,20 +2581,23 @@ function messageNode(m, grouped) {
   if (m.deleted) {
     text.classList.add('is-deleted');
     text.textContent = 'Nachricht gelöscht';
+    body.appendChild(text);
+  } else if (m.file) {
+    body.appendChild(fileCard(m));   // der Text ist nur der Ersatz für ältere Apps
   } else {
     // In einer Anfrage sind Links nur Text – erst nach dem Annehmen anklickbar.
     const locked = !own && S.view.kind === 'dm' && isRequest(S.view.peer);
     text.appendChild(locked ? document.createTextNode(m.body) : linkify(m.body));
     if (m.edited) text.appendChild(el('span', { class: 'sc-edited', text: ' (bearbeitet)' }));
+    body.appendChild(text);
   }
-  body.appendChild(text);
   if (m.invite && !m.deleted) body.appendChild(inviteCard(m));
   if (m.state === 'failed') body.appendChild(el('span', { class: 'sc-msg-state', text: 'Nicht gesendet' }));
   node.appendChild(body);
 
   if (own && !m.deleted && !m.invite && m.state !== 'pending') {
     node.appendChild(el('div', { class: 'sc-msg-actions' },
-      iconBtn('edit', 'Bearbeiten', () => editMessage(m, node)),
+      m.file ? null : iconBtn('edit', 'Bearbeiten', () => editMessage(m, node)),
       iconBtn('trash', 'Löschen', () => deleteMessage(m))));
   }
   return node;
@@ -2627,6 +2632,360 @@ function requestBar(peer) {
       el('button', { type: 'button', class: 'btn btn--primary', onclick: () => acceptRequest(peer) }, icon('check', 14), 'Annehmen'),
       el('button', { type: 'button', class: 'btn', onclick: () => declineRequest(peer) }, icon('x', 14), 'Ablehnen'),
       ident ? el('button', { type: 'button', class: 'btn sc-btn--danger', onclick: () => { toggleBlock(ident); declineRequest(peer); } }, icon('shield', 14), 'Blockieren') : null));
+}
+
+/* ==========================================================================
+   Dateien und Bilder – Ende-zu-Ende verschlüsselt
+   ==========================================================================
+   Jede Datei: eigener Zufallsschlüssel, in 512-KB-Stücken verschlüsselt
+   hochgeladen (securecom-core.js). Schlüssel, Name, Typ und – bei Bildern –
+   eine kleine Vorschau stehen nur in der verschlüsselten Nachricht. Bilder
+   gehen ohne Metadaten (etwa den Aufnahmeort) raus: Sie werden hier neu
+   gezeichnet. Die Datei verschwindet mit der Aufbewahrung der Unterhaltung. */
+const IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'];
+const RISKY_FILE = /\.(exe|msi|msix|appx|bat|cmd|com|scr|pif|cpl|dll|ps1|psm1|vbs|vbe|js|jse|mjs|wsf|wsh|hta|lnk|url|jar|reg|iso|img|vhd|vhdx|sh|apk|app|dmg|pkg)$/i;
+const IMAGE_MAX_SIDE = 4096;   // längere Seite beim Senden
+const THUMB_SIDE = 360;        // Vorschau in der Nachricht
+const THUMB_MAX_B64 = 20000;
+const FILE_CACHE = new Map();  // id → { bytes, url } – zuletzt geöffnete Dateien
+
+function fmtSize(bytes) {
+  if (bytes < 1024) return bytes + ' B';
+  if (bytes < 1048576) return (bytes / 1024).toFixed(bytes < 10240 ? 1 : 0).replace('.', ',') + ' KB';
+  return (bytes / 1048576).toFixed(1).replace('.', ',') + ' MB';
+}
+
+/** Dateiname ohne Pfad und Steuerzeichen, höchstens 120 Zeichen. */
+function cleanFileName(name) {
+  const base = String(name || '').split(/[\\/]/).pop()
+    .replace(/[\u0000-\u001F\u007F<>:"|?*‪-‮⁦-⁩]/g, '').replace(/^[.\s]+/, '').trim();
+  return (base || 'Datei').slice(0, 120);
+}
+
+function filesSupported() {
+  return !!(S.cfg && S.cfg.file_max);
+}
+
+/** Angaben zur Datei aus einer Nachricht prüfen – oder null. */
+function parseFileMeta(f) {
+  if (!f || typeof f !== 'object') return null;
+  if (!/^[A-Za-z0-9_-]{22}$/.test(f.id || '') || !/^[A-Za-z0-9_-]{43}$/.test(f.k || '')) return null;
+  const s = parseInt(f.s, 10);
+  const c = parseInt(f.c, 10);
+  if (!(s >= 0) || s > 104857600 || c !== C.fileChunks(s)) return null;
+  const out = { id: f.id, k: f.k, s: s, c: c, n: cleanFileName(f.n), m: typeof f.m === 'string' ? f.m.slice(0, 100).toLowerCase() : '' };
+  if (IMAGE_TYPES.includes(out.m) && typeof f.th === 'string' && f.th.length <= 40000 && /^[A-Za-z0-9+/]+={0,2}$/.test(f.th)) {
+    out.th = f.th;
+    out.w = Math.max(0, Math.min(20000, parseInt(f.w, 10) || 0));
+    out.h = Math.max(0, Math.min(20000, parseInt(f.h, 10) || 0));
+  }
+  return out;
+}
+
+/* ---------- Senden --------------------------------------------------------- */
+function canvasBlob(canvas, type, quality) {
+  return new Promise((resolve) => canvas.toBlob(resolve, type, quality));
+}
+
+function drawScaled(bmp, maxSide, background) {
+  const scale = Math.min(1, maxSide / Math.max(bmp.width, bmp.height));
+  const cv = document.createElement('canvas');
+  cv.width = Math.max(1, Math.round(bmp.width * scale));
+  cv.height = Math.max(1, Math.round(bmp.height * scale));
+  const ctx = cv.getContext('2d');
+  if (background) { ctx.fillStyle = background; ctx.fillRect(0, 0, cv.width, cv.height); }
+  ctx.drawImage(bmp, 0, 0, cv.width, cv.height);
+  return cv;
+}
+
+/** Kleine Vorschau (JPEG, Base64) – sie reist in der verschlüsselten Nachricht. */
+async function makeThumb(bmp) {
+  let side = THUMB_SIDE;
+  for (let i = 0; i < 6; i++) {
+    const blob = await canvasBlob(drawScaled(bmp, side, '#16161a'), 'image/jpeg', i < 3 ? 0.72 : 0.55);
+    if (blob) {
+      const b64 = C.b64(new Uint8Array(await blob.arrayBuffer()));
+      if (b64.length <= THUMB_MAX_B64) return b64;
+    }
+    side = Math.round(side * 0.8);
+  }
+  return '';
+}
+
+/**
+ * Bild neu zeichnen: ohne Metadaten (EXIF mit Ort, Kamera …), längere Seite
+ * höchstens IMAGE_MAX_SIDE, dazu eine Vorschau. GIFs bleiben, wie sie sind
+ * (Animation) – nur die Vorschau entsteht aus dem ersten Bild.
+ */
+async function prepareImage(file) {
+  let bmp;
+  try { bmp = await createImageBitmap(file); } catch (e) { return null; }
+  try {
+    if (!bmp.width || !bmp.height) return null;
+    let out = null;
+    if (file.type !== 'image/gif') {
+      const png = file.type === 'image/png';
+      const cv = drawScaled(bmp, IMAGE_MAX_SIDE, png ? null : '#ffffff');
+      let blob = await canvasBlob(cv, png ? 'image/png' : 'image/jpeg', png ? undefined : 0.9);
+      let mime = png ? 'image/png' : 'image/jpeg';
+      // Durchsichtiges PNG zu groß für den Server: dann eben als JPEG.
+      if (blob && png && blob.size > S.cfg.file_max) {
+        blob = await canvasBlob(drawScaled(bmp, IMAGE_MAX_SIDE, '#ffffff'), 'image/jpeg', 0.88);
+        mime = 'image/jpeg';
+      }
+      if (blob) out = { blob: blob, mime: mime, w: cv.width, h: cv.height };
+    }
+    if (!out) out = { blob: file, mime: file.type, w: bmp.width, h: bmp.height };
+    out.thumb = await makeThumb(bmp);
+    return out;
+  } finally {
+    if (bmp.close) bmp.close();
+  }
+}
+
+/** Verschlüsseln und hochladen; onProgress(0…1). Gibt { id, k, c } zurück. */
+async function uploadEncrypted(bytes, ttl, onProgress, cancelled) {
+  const id = C.randomId();
+  const raw = C.newFileKey();
+  const key = await C.importFileKey(raw);
+  const total = C.fileChunks(bytes.length);
+  for (let n = 0; n < total; n++) {
+    if (cancelled && cancelled()) {
+      if (n > 0) api('file.del', { id: id }).catch(() => {});
+      throw new Error('Abgebrochen.');
+    }
+    const part = bytes.subarray(n * C.FILE_CHUNK, Math.min(bytes.length, (n + 1) * C.FILE_CHUNK));
+    const body = { id: id, n: n, of: total, size: bytes.length, ttl: ttl, d: C.b64(await C.sealChunk(key, id, n, total, part)) };
+    for (let tries = 1; ; tries++) {
+      try {
+        await api('file.put', body);
+        break;
+      } catch (e) {
+        // Netz weg oder Server kurz überlastet: noch zweimal versuchen.
+        if (tries >= 3 || (e.status && e.status < 500 && e.status !== 429)) throw e;
+        await sleep(1500 * tries);
+      }
+    }
+    if (onProgress) onProgress((n + 1) / total);
+  }
+  return { id: id, k: C.b64url(raw), c: total };
+}
+
+/** Zeile über dem Eingabefeld: Name, Fortschritt, Abbrechen. */
+function uploadRow(name, size, where) {
+  let box = $('sc-uploads');
+  if (!box) {
+    box = el('div', { id: 'sc-uploads', class: 'sc-uploads', 'aria-live': 'polite' });
+    $('sc-compose').before(box);
+  }
+  let stop = false;
+  const fill = el('span', { class: 'sc-upload-fill' });
+  const pct = el('span', { class: 'sc-upload-pct', text: 'verschlüsselt …' });
+  const row = el('div', { class: 'sc-upload' },
+    icon('lock', 13),
+    el('span', { class: 'sc-upload-name', text: name, title: name + (where ? ' – an ' + where : '') }),
+    el('span', { class: 'sc-upload-size', text: fmtSize(size) }),
+    el('span', { class: 'sc-upload-bar' }, fill), pct,
+    iconBtn('x', 'Abbrechen', () => { stop = true; pct.textContent = 'wird abgebrochen …'; }));
+  box.appendChild(row);
+  const gone = () => { row.remove(); if (!box.children.length) box.remove(); };
+  return {
+    cancelled: () => stop,
+    progress: (p) => { fill.style.width = Math.round(p * 100) + '%'; pct.textContent = Math.round(p * 100) + ' %'; },
+    done: gone,
+    fail: () => { row.classList.add('is-failed'); pct.textContent = stop ? 'abgebrochen' : 'nicht gesendet'; setTimeout(gone, 4000); }
+  };
+}
+
+/** Wohin gerade geschrieben wird – oder null (Startseite). */
+function sendTarget() {
+  if (S.view.kind === 'dm') return { kind: 'dm', peer: S.view.peer, name: displayName(S.ids.get(S.view.peer)) };
+  if (S.view.kind === 'room' && S.rooms.has(S.view.rid)) {
+    const room = S.rooms.get(S.view.rid);
+    return { kind: 'room', rid: room.id, ch: S.view.ch, name: room.meta.name };
+  }
+  return null;
+}
+
+async function sendFiles(files) {
+  if (!filesSupported()) { toast('Dieser Server nimmt noch keine Dateien an.', 'error'); return; }
+  const target = sendTarget();
+  if (!target) return;
+  for (const file of files) await sendOneFile(file, target);
+}
+
+async function sendOneFile(file, target) {
+  let blob = file;
+  let name = cleanFileName(file.name);
+  let mime = IMAGE_TYPES.includes(file.type) ? file.type : 'application/octet-stream';
+  let extra = {};
+  if (IMAGE_TYPES.includes(file.type)) {
+    const img = await prepareImage(file);
+    if (img) {
+      blob = img.blob;
+      mime = img.mime;
+      extra = { w: img.w, h: img.h, th: img.thumb };
+      if (mime === 'image/jpeg' && !/\.jpe?g$/i.test(name)) name = name.replace(/\.[A-Za-z0-9]{1,5}$/, '') + '.jpg';
+      if (!extra.th) delete extra.th;
+    }
+  }
+  if (blob.size > S.cfg.file_max) {
+    toast('„' + name + '“ ist zu groß – höchstens ' + fmtSize(S.cfg.file_max) + '.', 'error', 7000);
+    return;
+  }
+  const row = uploadRow(name, blob.size, target.name);
+  try {
+    const bytes = new Uint8Array(await blob.arrayBuffer());
+    const ttl = target.kind === 'dm' ? convTtl(target.peer) : roomTtl(S.rooms.get(target.rid));
+    const up = await uploadEncrypted(bytes, ttl, row.progress, row.cancelled);
+    const meta = Object.assign({ id: up.id, k: up.k, s: bytes.length, c: up.c, n: name, m: mime }, extra);
+    // Ältere Apps zeigen nur den Text.
+    const body = '📎 ' + name + ' (' + fmtSize(bytes.length) + ')';
+    if (target.kind === 'dm') await sendDm(target.peer, body, meta);
+    else if (S.rooms.has(target.rid)) await sendRoomMessage(S.rooms.get(target.rid), target.ch, body, meta);
+    row.done();
+  } catch (e) {
+    row.fail();
+    if (!row.cancelled()) toast(e.message, 'error');
+  }
+}
+
+/** Eingefügt oder hereingezogen: lieber einmal nachfragen (Bildschirmfotos!). */
+function confirmFiles(files) {
+  const target = sendTarget();
+  if (!target || !files.length) return;
+  if (!filesSupported()) { toast('Dieser Server nimmt noch keine Dateien an.', 'error'); return; }
+  openModal({
+    title: files.length === 1 ? 'DATEI SENDEN' : files.length + ' DATEIEN SENDEN',
+    build: (body) => {
+      const list = el('ul', { class: 'sc-file-list' });
+      for (const f of files) list.appendChild(el('li', {}, el('span', { class: 'sc-file-name', text: cleanFileName(f.name) }), el('span', { class: 'sc-file-size', text: fmtSize(f.size) })));
+      const first = files.find((f) => IMAGE_TYPES.includes(f.type));
+      if (first) {
+        const url = URL.createObjectURL(first);
+        const img = el('img', { class: 'sc-file-preview', alt: '', src: url });
+        img.addEventListener('load', () => URL.revokeObjectURL(url), { once: true });
+        body.appendChild(img);
+      }
+      body.append(list, el('p', { class: 'sc-note', text: 'An ' + target.name + ' – Ende-zu-Ende verschlüsselt. Bilder gehen ohne Metadaten (etwa den Aufnahmeort) raus.' }));
+    },
+    actions: [
+      { label: 'Abbrechen', onClick: (close) => close() },
+      { label: 'Senden', primary: true, onClick: (close) => { close(); sendFiles(files); } }
+    ]
+  });
+}
+
+/* ---------- Empfangen ------------------------------------------------------ */
+function cacheFile(id, bytes) {
+  FILE_CACHE.set(id, { bytes: bytes, url: '' });
+  while (FILE_CACHE.size > 12) {
+    const [oldId, old] = FILE_CACHE.entries().next().value;
+    if (old.url) URL.revokeObjectURL(old.url);
+    FILE_CACHE.delete(oldId);
+  }
+}
+
+/** Ganze Datei holen und entschlüsseln; onProgress(0…1). */
+async function fetchFile(f, onProgress) {
+  const hit = FILE_CACHE.get(f.id);
+  if (hit) return hit.bytes;
+  const key = await C.importFileKey(C.unb64url(f.k));
+  const out = new Uint8Array(f.s);
+  let off = 0;
+  for (let n = 0; n < f.c; n++) {
+    const r = await api('file.get', { id: f.id, n: n });
+    let plain;
+    try {
+      plain = await C.openChunk(key, f.id, n, f.c, C.unb64(r.d));
+    } catch (e) {
+      throw new Error('Die Datei ließ sich nicht entschlüsseln – sie wurde unterwegs verändert.');
+    }
+    if (off + plain.length > f.s) throw new Error('Die Datei passt nicht zur Nachricht.');
+    out.set(plain, off);
+    off += plain.length;
+    if (onProgress) onProgress((n + 1) / f.c);
+  }
+  if (off !== f.s) throw new Error('Die Datei ist unvollständig.');
+  cacheFile(f.id, out);
+  return out;
+}
+
+function saveBytes(name, bytes) {
+  const url = URL.createObjectURL(new Blob([bytes], { type: 'application/octet-stream' }));
+  const a = el('a', { href: url, download: name });
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 15000);
+}
+
+async function downloadFile(f, btn) {
+  if (RISKY_FILE.test(f.n)) {
+    const ok = await confirmBox('Programm herunterladen?', '„' + f.n + '“ ist ein Programm oder Skript. Öffne es nur, wenn du die Datei erwartet hast und dem Absender vertraust – Schadsoftware kommt oft genau so.', 'Trotzdem herunterladen', true);
+    if (!ok) return;
+  }
+  if (btn) btn.disabled = true;
+  try {
+    const bytes = await fetchFile(f, (p) => { if (btn) btn.textContent = Math.round(p * 100) + ' %'; });
+    saveBytes(f.n, bytes);
+  } catch (e) {
+    toast(e.message, 'error');
+  }
+  if (btn) {
+    btn.disabled = false;
+    btn.replaceChildren(icon('download', 14), 'Herunterladen');
+  }
+}
+
+/** Bild groß: erst die Vorschau, dann das ganze Bild (entschlüsselt hier). */
+function openImage(f) {
+  openModal({
+    title: 'BILD',
+    wide: true,
+    build: (body) => {
+      const img = el('img', { class: 'sc-viewer-img is-preview', alt: f.n, src: 'data:image/jpeg;base64,' + f.th });
+      const status = el('span', { class: 'sc-viewer-status', text: 'wird geladen …' });
+      const save = el('button', { type: 'button', class: 'btn', disabled: true }, icon('download', 14), 'Herunterladen');
+      body.append(el('div', { class: 'sc-viewer' }, img),
+        el('div', { class: 'sc-viewer-bar' }, el('span', { class: 'sc-viewer-name', text: f.n + ' · ' + fmtSize(f.s) }), status, save));
+      fetchFile(f, (p) => { status.textContent = 'wird geladen … ' + Math.round(p * 100) + ' %'; }).then((bytes) => {
+        const hit = FILE_CACHE.get(f.id);
+        if (hit && !hit.url) hit.url = URL.createObjectURL(new Blob([bytes], { type: f.m }));
+        img.src = hit ? hit.url : URL.createObjectURL(new Blob([bytes], { type: f.m }));
+        img.classList.remove('is-preview');
+        status.remove();
+        save.disabled = false;
+        save.addEventListener('click', () => saveBytes(f.n, bytes));
+      }).catch((e) => { status.textContent = e.message; });
+    }
+  });
+}
+
+/** In der Nachricht: Bild-Vorschau oder Datei mit Knopf. */
+function fileCard(m) {
+  const f = m.file;
+  const own = m.from === S.me.id;
+  const locked = !own && S.view.kind === 'dm' && isRequest(S.view.peer);   // erst nach dem Annehmen
+  if (f.th) {
+    if (locked) {
+      return el('div', { class: 'sc-file tickbox is-locked' }, el('span', { class: 'sc-file-icon' }, icon('image', 18)),
+        el('span', { class: 'sc-file-text' }, el('span', { class: 'sc-file-name', text: 'Bild' }),
+          el('span', { class: 'sc-file-size', text: 'sichtbar, sobald du die Anfrage annimmst' })));
+    }
+    const card = el('button', { type: 'button', class: 'sc-file-image', title: f.n + ' – groß ansehen', onclick: () => openImage(f) },
+      el('img', { alt: f.n, src: 'data:image/jpeg;base64,' + f.th }));
+    card.style.aspectRatio = String(f.w && f.h ? Math.max(0.25, Math.min(4, f.w / f.h)) : 4 / 3);   // kein Springen beim Laden
+    return card;
+  }
+  const btn = el('button', { type: 'button', class: 'btn', disabled: locked, title: locked ? 'Erst die Anfrage annehmen' : null }, icon('download', 14), 'Herunterladen');
+  btn.addEventListener('click', () => downloadFile(f, btn));
+  return el('div', { class: 'sc-file tickbox' + (RISKY_FILE.test(f.n) ? ' is-risky' : '') },
+    el('span', { class: 'sc-file-icon' }, icon('file', 18)),
+    el('span', { class: 'sc-file-text' },
+      el('span', { class: 'sc-file-name', text: f.n, title: f.n }),
+      el('span', { class: 'sc-file-size', text: fmtSize(f.s) + ' · verschlüsselt' + (RISKY_FILE.test(f.n) ? ' · Programm – Vorsicht' : '') })),
+    btn);
 }
 
 function emptyThread() {
@@ -2696,6 +3055,13 @@ function renderCompose() {
   input.placeholder = placeholder;
   input.disabled = blocked;
   $('sc-send').disabled = blocked;
+  // Büroklammer nur, wenn der Server Dateien annimmt.
+  const attach = $('sc-attach');
+  if (attach) {
+    attach.hidden = !filesSupported();
+    attach.disabled = blocked;
+    form.classList.toggle('has-attach', !attach.hidden);
+  }
 }
 
 function autoGrow() {
@@ -3065,11 +3431,12 @@ function handleTtl(obj, from, peer, ts, e) {
   scheduleRender();
 }
 
-async function sendDm(peerId, body) {
+async function sendDm(peerId, body, file) {
   const ident = S.ids.get(peerId);
   if (!ident) return;
   const msg = { v: 1, t: 'msg', id: C.randomId(), from: S.me.id, to: peerId, ts: Date.now(), body: body };
   const local = { id: msg.id, from: S.me.id, ts: msg.ts, body: body, state: 'pending' };
+  if (file) { msg.file = file; local.file = parseFileMeta(file); }
   const conv = convOf(peerId);
   insertSorted(conv.msgs, local);
   conv.byId.set(local.id, local);
@@ -3169,6 +3536,10 @@ function handleDm(obj, from, e) {
         break;
       }
       const m = { id: String(obj.id), from: from.id, ts: ts, body: cleanText(obj.body), seq: e.s };
+      if (obj.t === 'msg' && obj.file) {
+        const f = parseFileMeta(obj.file);
+        if (f) m.file = f;
+      }
       if (obj.t === 'invite') {
         const inv = obj.invite || {};
         if (!/^[A-Za-z0-9_-]{22}$/.test(inv.rid || '') || !/^[A-Za-z0-9_-]{43}$/.test(inv.key || '')) return;
@@ -3226,12 +3597,14 @@ async function editMessage(m, node) {
 
 async function deleteMessage(m) {
   const keep = S.view.kind === 'dm' ? convTtl(S.view.peer) : roomTtl(S.rooms.get(S.view.rid));
-  const ok = await confirmBox('Nachricht löschen', 'Die Nachricht wird bei allen als gelöscht angezeigt. Der verschlüsselte Eintrag verschwindet spätestens nach ' + ttlLabel(keep) + ' vom Server.', 'Löschen', true);
+  const ok = await confirmBox('Nachricht löschen', 'Die Nachricht wird bei allen als gelöscht angezeigt. ' +
+    (m.file ? 'Die Datei verschwindet sofort vom Server, der' : 'Der') + ' verschlüsselte Eintrag spätestens nach ' + ttlLabel(keep) + '.', 'Löschen', true);
   if (!ok) return;
   try {
     if (S.view.kind === 'dm') await sendDmEvent(S.view.peer, { t: 'del', ref: m.id });
     else await postRoom(S.rooms.get(S.view.rid), { t: 'del', ref: m.id, ch: S.view.ch });
     m.deleted = true;
+    if (m.file) api('file.del', { id: m.file.id }).catch(() => {});
   } catch (e) { toast(e.message, 'error'); }
   scheduleRender();
 }
@@ -4185,8 +4558,9 @@ async function postRoom(room, obj) {
   return msg;
 }
 
-async function sendRoomMessage(room, ch, body) {
+async function sendRoomMessage(room, ch, body, file) {
   const local = { id: C.randomId(), from: S.me.id, ts: Date.now(), body: body, state: 'pending' };
+  if (file) local.file = parseFileMeta(file);
   const list = room.msgs.get(ch) || [];
   room.msgs.set(ch, list);
   insertSorted(list, local);
@@ -4197,6 +4571,7 @@ async function sendRoomMessage(room, ch, body) {
     const key = await roomKey(room.id, room.epoch);
     if (!key) throw new Error('Der aktuelle Raumschlüssel fehlt noch.');
     const msg = { v: 1, t: 'msg', id: local.id, from: S.me.id, room: room.id, ch: ch, ts: local.ts, body: body };
+    if (file) msg.file = file;
     const d = await C.sealRoom(msg, key, room.epoch, room.id, S.me.priv);
     await api('room.post', { id: room.id, k: 'msg', d: d });
     local.state = null;
@@ -4255,6 +4630,10 @@ function roomMessage(room, obj, from, e) {
     return;
   }
   const m = { id: String(obj.id), from: from.id, ts: ts, body: cleanText(obj.body) };
+  if (obj.file) {
+    const f = parseFileMeta(obj.file);
+    if (f) m.file = f;
+  }
   const list = room.msgs.get(ch) || [];
   room.msgs.set(ch, list);
   insertSorted(list, m);
@@ -7115,6 +7494,34 @@ function bind() {
       $('sc-compose').requestSubmit();
     }
   });
+  // Dateien: Büroklammer, Hereinziehen, Einfügen aus der Zwischenablage.
+  const picker = el('input', { type: 'file', multiple: true, hidden: true, tabindex: '-1' });
+  picker.addEventListener('change', () => {
+    const files = [...picker.files];
+    picker.value = '';
+    if (files.length) sendFiles(files);
+  });
+  $('sc-compose').prepend(el('button', { type: 'button', class: 'sc-attach', id: 'sc-attach', title: 'Datei oder Bild senden', 'aria-label': 'Datei oder Bild senden', onclick: () => picker.click() }, icon('clip', 18)), picker);
+  input.addEventListener('paste', (ev) => {
+    const files = [...((ev.clipboardData && ev.clipboardData.files) || [])];
+    if (!files.length || !filesSupported()) return;
+    ev.preventDefault();
+    confirmFiles(files);
+  });
+  const stage = $('sc-compose').parentElement;
+  let dragDepth = 0;
+  const hasFiles = (ev) => ev.dataTransfer && [...ev.dataTransfer.types].includes('Files') && filesSupported() && !!sendTarget();
+  stage.addEventListener('dragenter', (ev) => { if (!hasFiles(ev)) return; ev.preventDefault(); dragDepth++; stage.classList.add('is-drop'); });
+  stage.addEventListener('dragover', (ev) => { if (hasFiles(ev)) { ev.preventDefault(); ev.dataTransfer.dropEffect = 'copy'; } });
+  stage.addEventListener('dragleave', () => { if (dragDepth && !--dragDepth) stage.classList.remove('is-drop'); });
+  stage.addEventListener('drop', (ev) => {
+    if (!hasFiles(ev)) return;
+    ev.preventDefault();
+    dragDepth = 0;
+    stage.classList.remove('is-drop');
+    confirmFiles([...ev.dataTransfer.files]);
+  });
+
   $('sc-compose').addEventListener('submit', (ev) => {
     ev.preventDefault();
     const body = cleanText(input.value).trim();

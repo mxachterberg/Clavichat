@@ -210,6 +210,19 @@ try {
         case 'room.voice':
             json_out(['ok' => true] + SecureCom::voice($me, $body));
 
+        case 'file.put':
+            // Dateistücke (512 KB): 600 je Stunde = ein Dutzend Dateien zu 25 MB.
+            sc_limit('fput:' . $me['id'], 600, 3600);
+            json_out(['ok' => true] + SecureCom::filePut($me, $body));
+
+        case 'file.get':
+            sc_limit('fget:' . $me['id'], 3000, 3600);
+            json_out(['ok' => true] + SecureCom::fileGet($me, $body));
+
+        case 'file.del':
+            sc_limit('fdel:' . $me['id'], 120, 3600);
+            json_out(['ok' => true] + SecureCom::fileDel($me, $body));
+
         default:
             json_fail('Unbekannte Aktion.', 404);
     }

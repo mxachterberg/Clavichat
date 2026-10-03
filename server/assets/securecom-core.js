@@ -265,6 +265,43 @@ export function importWrapKey(raw, extractable) {
   return subtle.importKey('raw', raw, { name: 'AES-GCM' }, !!extractable, ['encrypt', 'decrypt']);
 }
 
+/* ---------- Dateien --------------------------------------------------------
+   Jede Datei bekommt einen eigenen Zufallsschlüssel (AES-256-GCM) und wird
+   in Stücken zu FILE_CHUNK Bytes verschlüsselt. Der IV ist die Stücknummer
+   – jeder Schlüssel verschlüsselt jede Nummer genau einmal (ein erneutes
+   Senden ergibt denselben Chiffretext). Die Zusatzdaten binden Datei, Nummer
+   und Anzahl: Stücke lassen sich weder vertauschen noch weglassen noch aus
+   einer anderen Datei einschmuggeln. Schlüssel, Name und Typ reisen nur in
+   der Ende-zu-Ende verschlüsselten Nachricht. */
+export const FILE_CHUNK = 524288;
+
+export function newFileKey() {
+  return randomBytes(32);
+}
+
+export function importFileKey(raw) {
+  return subtle.importKey('raw', raw, { name: 'AES-GCM' }, false, ['encrypt', 'decrypt']);
+}
+
+/** Anzahl der Stücke für eine Datei dieser Größe (mindestens eins). */
+export function fileChunks(size) {
+  return Math.max(1, Math.ceil(size / FILE_CHUNK));
+}
+
+function chunkParams(fileId, n, total) {
+  const iv = new Uint8Array(12);
+  new DataView(iv.buffer).setUint32(8, n);
+  return { name: 'AES-GCM', iv: iv, additionalData: te.encode('clavichat-file|' + fileId + '|' + n + '|' + total) };
+}
+
+export async function sealChunk(key, fileId, n, total, bytes) {
+  return new Uint8Array(await subtle.encrypt(chunkParams(fileId, n, total), key, bytes));
+}
+
+export async function openChunk(key, fileId, n, total, bytes) {
+  return new Uint8Array(await subtle.decrypt(chunkParams(fileId, n, total), key, bytes));
+}
+
 /* ---------- App-Sperre: PIN → Schlüssel ------------------------------------
    PBKDF2-SHA-256 wie bei Konten, aber mit zufälligem Salt je Gerät. Der
    Schlüssel (AES-256-GCM, nicht auslesbar) versiegelt die gespeicherte
