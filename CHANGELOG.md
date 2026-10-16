@@ -4,6 +4,18 @@ Was sich von Version zu Version ändert. Beim Veröffentlichen wird der
 Abschnitt einer Version zum Text des GitHub-Releases
 (`.github/workflows/windows.yml`).
 
+## 1.8.1 – 16.10.2026
+
+Meetings vereinfacht. Für installierte Apps ein kleines Update.
+
+- **Nur noch eine Art Meeting:** Der MEET-Knopf erstellt sofort ein Meeting
+  und zeigt den Link – ohne Auswahl. Gäste brauchen nur einen Namen.
+  Bestehende feste Meetings funktionieren weiter.
+- **Meeting erstellen auf der Startseite:** Unter „Temporäre Sitzung
+  starten“ eröffnet man mit einem Namen direkt ein Meeting. Der Gastgeber
+  sieht wie die Gäste nur das Meeting; verlässt oder beendet er es, endet
+  seine Sitzung.
+
 ## 1.8.0 – 16.10.2026
 
 Zwei Arten von Meetings. Für installierte Apps ein kleines Update.
