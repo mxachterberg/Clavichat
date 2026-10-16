@@ -7653,9 +7653,13 @@ function relayHost() {
   return '';
 }
 
-/** So läuft ein Anruf – mit und ohne „IP verbergen“. Nur zum Zeigen, die Einstellung bleibt. */
-function callDiagram() {
-  const relayOk = !!(S.cfg && S.cfg.relay);
+/**
+ * So läuft ein Anruf – mit und ohne „IP verbergen“. Nur zum Zeigen, die
+ * Einstellung bleibt. own: so sähe es auf einem selbst betriebenen Server
+ * mit eigenem Relay aus.
+ */
+function callDiagram(own) {
+  const relayOk = own || !!(S.cfg && S.cfg.relay);
   const host = serverHost();
   const root = svgEl('svg', { viewBox: '0 0 616 306', role: 'img' });
   const direct = svgEl('path', { d: 'M162 156H454' });
@@ -7673,12 +7677,14 @@ function callDiagram() {
     dgText(460, 30, 'sc-dg-label', 'PGP-VERSCHLÜSSELT'),
     d1, d2, rl, rr);
   dgBox(root, 8, 126, 150, 60, 'DU', 'dein Gerät');
-  dgBox(root, 233, 14, 150, 60, host.length <= 18 ? host : 'SERVER', 'nur Vermittlung');
+  dgBox(root, 233, 14, 150, 60, own ? 'DEIN SERVER' : host.length <= 18 ? host : 'SERVER', 'nur Vermittlung');
   dgBox(root, 458, 126, 150, 60, 'GEGENÜBER', 'sein Gerät');
-  dgBox(root, 233, 238, 150, 60, 'RELAY (TURN)', relayOk ? (relayHost() || 'eingerichtet') : 'nicht eingerichtet');
+  dgBox(root, 233, 238, 150, 60, own ? 'DEIN RELAY' : 'RELAY (TURN)',
+    own ? 'coturn oder Cloudflare' : relayOk ? (relayHost() || 'eingerichtet') : 'nicht eingerichtet');
 
   const offer = el('span', { class: 'sc-dg-fact-value' });
   const seen = el('span', { class: 'sc-dg-fact-value' });
+  const operator = el('span', { class: 'sc-dg-fact-value' });
   const box = el('input', { type: 'checkbox', disabled: !relayOk });
   const draw = (on) => {
     direct.setAttribute('class', 'sc-dg-flow' + (on ? ' is-faint' : ''));
@@ -7690,23 +7696,30 @@ function callDiagram() {
     rl.textContent = on ? 'RELAY' : 'STUN-ABFRAGE';
     rr.textContent = on ? 'RELAY' : '';
     offer.textContent = on ? 'nur Adressen des Relays' : 'deine Heimnetz-Adresse und deine öffentliche IP' + (relayOk ? ', dazu das Relay' : '');
-    seen.textContent = on ? 'nur das Relay' + (relayHost() ? ' (' + relayHost() + ')' : '') : 'deine IP-Adresse';
+    seen.textContent = on ? 'nur das Relay' + (!own && relayHost() ? ' (' + relayHost() + ')' : '') : 'deine IP-Adresse';
     seen.className = 'sc-dg-fact-value ' + (on ? 'is-safe' : 'is-accent');
+    operator.textContent = own
+      ? 'nur du als Betreiber (und dein Hoster): IP-Adressen und Zeitpunkte – keine Inhalte' + (on ? '; das Relay auch nur verschlüsselte Pakete' : '')
+      : (host + ': IP-Adressen und Zeitpunkte – keine Inhalte') + (on ? '; das Relay' + (relayHost() ? ' (' + relayHost() + ')' : '') + ' ebenso' : '');
     root.setAttribute('aria-label', 'Anruf: Das Verbindungsangebot läuft PGP-verschlüsselt über ' + host + '. ' + (on
       ? 'Ton und Bild laufen über das Relay; das Gegenüber sieht nur das Relay.'
       : 'Ton und Bild laufen direkt; das Gegenüber sieht deine IP-Adresse.'));
   };
-  box.checked = hidingIp();
+  box.checked = own || hidingIp();
   box.addEventListener('change', () => draw(box.checked));
   draw(box.checked);
   return el('div', { class: 'sc-dg' },
     el('div', { class: 'sc-dg-scroll' }, root),
     el('div', { class: 'sc-dg-facts' },
       el('div', { class: 'sc-dg-fact' }, el('span', { class: 'sc-dg-fact-label', text: 'Im Angebot – schon beim Klingeln' }), offer),
-      el('div', { class: 'sc-dg-fact' }, el('span', { class: 'sc-dg-fact-label', text: 'Das Gegenüber sieht' }), seen)),
-    el('label', { class: 'sc-check' + (relayOk ? '' : ' is-disabled') }, box, el('span', { text: relayOk
-      ? 'Mit „IP verbergen“ zeigen. Bei dir ist es gerade ' + (hidingIp() ? 'an' : 'aus') + ' – einstellen unter Einstellungen → ANRUFE.'
-      : '„IP verbergen“ braucht einen Relay-Server (TURN), der auf diesem Server nicht eingerichtet ist.' })));
+      el('div', { class: 'sc-dg-fact' }, el('span', { class: 'sc-dg-fact-label', text: 'Das Gegenüber sieht' }), seen),
+      el('div', { class: 'sc-dg-fact' }, el('span', { class: 'sc-dg-fact-label', text: 'Der Betreiber sieht' }), operator)),
+    el('label', { class: 'sc-check' + (relayOk ? '' : ' is-disabled') }, box, el('span', { text: own
+      ? 'Mit „IP verbergen“ zeigen. Auf dem eigenen Server braucht das ein Relay (TURN): ein eigenes mit coturn oder Cloudflare mit eigenem Schlüssel.'
+      : relayOk
+        ? 'Mit „IP verbergen“ zeigen. Bei dir ist es gerade ' + (hidingIp() ? 'an' : 'aus') + ' – einstellen unter Einstellungen → ANRUFE.'
+        : '„IP verbergen“ braucht einen Relay-Server (TURN), der auf diesem Server nicht eingerichtet ist.' })),
+    own ? el('p', { class: 'sc-note', text: 'Zu Hause betrieben und aus dem Internet erreichbar, sehen alle Nutzer deine Heim-IP – für Nutzung übers Internet besser einen Webspace oder gemieteten Server nehmen.' }) : null);
 }
 
 /* Wo und wie verschlüsselt wird – je Art: auf deinem Gerät, beim Server, beim Empfänger. */
@@ -7738,7 +7751,7 @@ const SEAL = [
     peer: 'Nach der Anmeldung entschlüsseln deine anderen Geräte den Tresor. Das Passwort verlässt nie ein Gerät. Temporäre Sitzungen haben keinen Tresor beim Server.' }
 ];
 
-function sealDiagram() {
+function sealDiagram(own) {
   const host = serverHost();
   const root = svgEl('svg', { viewBox: '0 0 616 166', role: 'img' });
   const algo = dgText(308, 122, 'sc-dg-label is-accent');
@@ -7753,7 +7766,7 @@ function sealDiagram() {
     dgLock(83, 104, false), dgLock(533, 104, true),
     algo, media, mediaText);
   dgBox(root, 8, 14, 150, 60, 'DEIN GERÄT', 'privater Schlüssel');
-  dgBox(root, 233, 14, 150, 60, host.length <= 18 ? host : 'SERVER', 'sieht nur Chiffretext');
+  dgBox(root, 233, 14, 150, 60, own ? 'DEIN SERVER' : host.length <= 18 ? host : 'SERVER', 'sieht nur Chiffretext');
   const right = dgBox(root, 458, 14, 150, 60, '', '');
 
   const cols = el('div', { class: 'sc-dg-cols' });
@@ -7800,10 +7813,24 @@ function showSecurityInfo() {
         for (const l of lines) ul.appendChild(el('li', { text: l }));
         body.appendChild(ul);
       };
+      // Ansicht: dieser Server oder selbst betrieben (eigener Server, eigenes Relay)
+      const callBox = el('div');
+      const sealBox = el('div');
+      const view = el('div', { class: 'sc-tabs sc-dg-tabs sc-dg-view', role: 'tablist', 'aria-label': 'Ansicht' });
+      const setView = (own) => {
+        for (const b of view.children) b.setAttribute('aria-selected', String(b.dataset.own === String(own)));
+        callBox.replaceChildren(callDiagram(own));
+        sealBox.replaceChildren(sealDiagram(own));
+      };
+      for (const [own, label] of [[false, 'Dieser Server (' + serverHost() + ')'], [true, 'Selbst betrieben']]) {
+        view.appendChild(el('button', { type: 'button', class: 'sc-tab', role: 'tab', dataset: { own: String(own) }, text: label, onclick: () => setView(own) }));
+      }
+      setView(false);
       body.append(
-        el('p', { class: 'sc-p sc-dg-intro', text: 'Ende-zu-Ende verschlüsselt heißt: Ver- und entschlüsselt wird nur auf den Geräten. Der Server vermittelt und speichert – aber nur Chiffretext.' }),
-        sectionHead('SO LÄUFT EIN ANRUF'), callDiagram(),
-        sectionHead('WO VERSCHLÜSSELT WIRD'), sealDiagram());
+        el('p', { class: 'sc-p sc-dg-intro', text: 'Ende-zu-Ende verschlüsselt heißt: Ver- und entschlüsselt wird nur auf den Geräten. Der Server vermittelt und speichert – aber nur Chiffretext. Das gilt genauso, wenn du Server und Relay selbst betreibst.' }),
+        view,
+        sectionHead('SO LÄUFT EIN ANRUF'), callBox,
+        sectionHead('WO VERSCHLÜSSELT WIRD'), sealBox);
       block('VERSCHLÜSSELUNG', [
         'Deine Identität ist ein OpenPGP-Schlüsselpaar (Curve25519: Ed25519 signiert, X25519 verschlüsselt). Es entsteht ' + (DESKTOP ? 'in der App' : 'in deinem Browser') + '.',
         'Direktnachrichten: Für jede Nachricht ein neuer, zufälliger AES-256-Schlüssel, der mit den öffentlichen Schlüsseln von Empfänger und Absender eingepackt wird. Dazu deine Signatur.',

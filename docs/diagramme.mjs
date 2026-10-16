@@ -91,10 +91,10 @@ function lock(x, y, open, green) {
 }
 
 /* ---------- So läuft ein Anruf ------------------------------------------ */
-function anruf(c) {
-  const W = 880, H = 470;
+function anruf(c, own) {
+  const W = 880, H = own ? 530 : 470;
   const body = [
-    head(40, 36, W - 80, 'SO LÄUFT EIN ANRUF'),
+    head(40, 36, W - 80, own ? 'SELBST BETRIEBEN: EIGENER SERVER, EIGENES RELAY' : 'SO LÄUFT EIN ANRUF'),
     // Vermittlung über den Server (Angebot und Antwort, PGP-verschlüsselt)
     `<path class="sig" d="M135 196V112H341"/>`,
     `<path class="sig" d="M539 112H745V196"/>`,
@@ -110,14 +110,20 @@ function anruf(c) {
     text(238, 338, 'l lg', 'MIT „IP VERBERGEN“'),
     text(642, 338, 'l lg', 'SIEHT NUR DAS RELAY'),
     box(40, 200, 190, 64, 'DU', 'dein Gerät'),
-    box(345, 80, 190, 64, 'SERVER', 'nur Vermittlung'),
+    box(345, 80, 190, 64, own ? 'DEIN SERVER' : 'SERVER', own ? 'Webspace · Docker · Windows' : 'nur Vermittlung'),
     box(650, 200, 190, 64, 'GEGENÜBER', 'sein Gerät'),
-    box(345, 320, 190, 64, 'RELAY (TURN)', 'z. B. Cloudflare'),
+    box(345, 320, 190, 64, own ? 'DEIN RELAY' : 'RELAY (TURN)', own ? 'coturn oder Cloudflare' : 'z. B. Cloudflare'),
     // Legende
     `<path class="dir" d="M40 430H66"/>`, text(76, 430, 'note', 'direkt – das Gegenüber sieht deine IP', 'start'),
     `<path class="rel" d="M335 430H361"/>`, text(371, 430, 'note', 'über das Relay – es sieht nur das Relay', 'start'),
-    `<path class="sig" d="M640 430H666"/>`, text(676, 430, 'note', 'Vermittlung (verschlüsselt)', 'start')
+    `<path class="sig" d="M640 430H666"/>`, text(676, 430, 'note', 'Vermittlung (verschlüsselt)', 'start'),
+    own ? text(40, 466, 'note', 'Server und Relay betreibst du: IP-Adressen und Zeitpunkte sehen nur du und dein Hoster – Inhalte niemand.', 'start') : '',
+    own ? text(40, 492, 'note la', 'Zu Hause betrieben und aus dem Internet erreichbar, sehen alle Nutzer deine Heim-IP.', 'start') : ''
   ].join('\n');
+  if (own) {
+    return svg(W, H, c, 'Clavichat selbst betrieben',
+      'Mit eigenem Server und eigenem Relay (coturn oder Cloudflare mit eigenem Schlüssel) läuft alles wie beim offiziellen Server: Das Angebot geht PGP-verschlüsselt über deinen Server, Ton und Bild direkt oder über dein Relay. IP-Adressen sehen nur du und dein Hoster.', body);
+  }
   return svg(W, H, c, 'So läuft ein Anruf bei Clavichat',
     'Das Verbindungsangebot läuft PGP-verschlüsselt über den Server. Ton und Bild laufen direkt zwischen den Geräten – dann sieht das Gegenüber deine IP – oder mit „IP verbergen“ über das Relay, das nur verschlüsselte Pakete sieht.', body);
 }
@@ -176,6 +182,7 @@ function verschluesselung(c) {
 
 for (const [name, theme] of Object.entries(THEMES)) {
   fs.writeFileSync(path.join(DIR, `anruf-${name}.svg`), anruf(theme));
+  fs.writeFileSync(path.join(DIR, `anruf-selbst-${name}.svg`), anruf(theme, true));
   fs.writeFileSync(path.join(DIR, `verschluesselung-${name}.svg`), verschluesselung(theme));
 }
-console.log('Grafiken geschrieben: docs/anruf-*.svg, docs/verschluesselung-*.svg');
+console.log('Grafiken geschrieben: docs/anruf-*.svg, docs/anruf-selbst-*.svg, docs/verschluesselung-*.svg');

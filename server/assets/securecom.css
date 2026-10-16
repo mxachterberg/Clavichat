@@ -1268,6 +1268,8 @@ html[data-theme="light"] .sc-modal { background: rgba(40, 40, 40, .3); }
 .sc-dg-facts { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); margin: 10px 0 12px; border: 1px solid var(--border); }
 .sc-dg-fact { padding: 10px 12px; }
 .sc-dg-fact + .sc-dg-fact { border-left: 1px solid var(--border); }
+.sc-dg-fact:nth-child(3) { grid-column: 1 / -1; border-left: 0; border-top: 1px solid var(--border); }
+.sc-dg-view { margin-bottom: 14px; }
 .sc-dg-fact-label,
 .sc-dg-col-label {
   display: block;

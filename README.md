@@ -154,6 +154,15 @@ Kein Build-Schritt für die Web-Fassung: Die Oberfläche ist reines JavaScript
 
 ## Eigenen Server einrichten
 
+Selbst betrieben läuft alles wie auf clavichat.de – nur gehören Server und
+Relay dir. Die Verschlüsselung ändert sich nicht; IP-Adressen und Zeitpunkte
+sehen dann nur du und dein Hoster.
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/anruf-selbst-dunkel.svg">
+  <img alt="Selbst betrieben: Das Angebot geht PGP-verschlüsselt über deinen Server, Ton und Bild direkt oder über dein eigenes Relay (coturn oder Cloudflare). IP-Adressen sehen nur du und dein Hoster; zu Hause betrieben sehen Nutzer deine Heim-IP." src="docs/anruf-selbst-hell.svg" width="100%">
+</picture>
+
 Gebraucht wird ein Webspace mit **PHP 8** (getestet mit 8.3), **HTTPS** und
 Apache. Keine Datenbank, kein Composer; die PHP-Erweiterung `curl` nur für
 Cloudflare-TURN.
