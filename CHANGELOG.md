@@ -4,6 +4,21 @@ Was sich von Version zu Version ändert. Beim Veröffentlichen wird der
 Abschnitt einer Version zum Text des GitHub-Releases
 (`.github/workflows/windows.yml`).
 
+## 1.8.0 – 16.10.2026
+
+Zwei Arten von Meetings. Für installierte Apps ein kleines Update.
+
+- **Schnelles Meeting (einmalig):** Wer den Link öffnet und nicht angemeldet
+  ist, gibt nur einen Namen ein und ist im Meeting – als Gast, der nur dieses
+  Meeting sieht: Chat, Call und Teilnehmer, sonst nichts. Der Server setzt die
+  Grenzen selbst durch. Das Meeting endet, wenn der Besitzer es beendet oder
+  es 12 Stunden ruht; verlässt ein Gast es, endet seine Sitzung. Für
+  temporäre Sitzungen die Standardwahl.
+- **Festes Meeting:** wie bisher – Teilnehmer kommen mit Konto oder
+  temporärer Sitzung; mit einem Konto erstellt, bleibt es bestehen.
+- **Meeting starten:** Der MEET-Knopf fragt jetzt, welche Art.
+- Verlässt jemand ein Meeting, bleiben geteilte Links gültig.
+
 ## 1.7.1 – 16.10.2026
 
 Meetings im eigenen Design und clavichat.de als Zuhause. Für installierte
