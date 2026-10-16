@@ -39,24 +39,32 @@ function onLine(x, y, x1, y1, x2, y2, r) {
   return Math.hypot(x - (x1 + t * dx), y - (y1 + t * dy)) <= r;
 }
 
+// Das Motiv füllt die Kachel weiter aus als im SVG (Taskleiste: besser
+// erkennbar) und sitzt mittig; in kleinen Größen kräftigere Linien.
+const ZOOM = 1.25;
+const MOTIF_CY = 30.25;   // Mitte des Motivs im 64er-Raster des SVG
+
 /** Farbe am Punkt (x, y) im 64er-Raster – oder null (durchsichtig). */
-function shade(x, y) {
+function shade(x, y, size) {
   if (!inRoundRect(x, y, 0, 0, 64, 64, 10)) return null;
+  x = 32 + (x - 32) / ZOOM;
+  y = MOTIF_CY + (y - 32) / ZOOM;
+  const bold = (size <= 32 ? 0.45 : 0) / ZOOM;
 
   // Lämpchen
-  if (Math.hypot(x - 32, y - 46) <= 2.6) return ORANGE;
+  if (Math.hypot(x - 32, y - 46) <= 2.6 + bold) return ORANGE;
   // Schlüsselbart an der Antenne: Block mit Kerbe (zwei Zähne)
   if (inRect(x, y, 28.6, 8, 6.6, 11) && !inRect(x, y, 32.6, 12, 2.6, 3)) return ORANGE;
 
-  const s = 1.7;   // halbe Strichstärke des Funkgeräts (3,4)
+  const s = 1.7 + bold;   // halbe Strichstärke des Funkgeräts (3,4)
   // Antenne (Schlüsselschaft) und Drehknopf
   if (onLine(x, y, 27, 8.5, 27, 26, s) || onLine(x, y, 38, 21.5, 38, 26, s)) return WHITE;
   // Gehäuse: Rahmen eines abgerundeten Rechtecks (24 × 26, Radius 4)
   const outer = inRoundRect(x, y, 20 - s, 26 - s, 24 + 2 * s, 26 + 2 * s, 4 + s);
   const inner = inRoundRect(x, y, 20 + s, 26 + s, 24 - 2 * s, 26 - 2 * s, 4 - s);
   if (outer && !inner) return WHITE;
-  // Lautsprecher: zwei Striche
-  if (onLine(x, y, 26.5, 33.5, 37.5, 33.5, 1.5) || onLine(x, y, 26.5, 39, 37.5, 39, 1.5)) return WHITE;
+  // Lautsprecher: zwei Striche – unter 24 Pixeln weggelassen, dort verschwimmen sie
+  if (size >= 24 && (onLine(x, y, 26.5, 33.5, 37.5, 33.5, 1.5 + bold) || onLine(x, y, 26.5, 39, 37.5, 39, 1.5 + bold))) return WHITE;
 
   return BG;
 }
@@ -71,7 +79,7 @@ function render(size) {
       let r = 0, g = 0, b = 0, a = 0;
       for (let sy = 0; sy < ss; sy++) {
         for (let sx = 0; sx < ss; sx++) {
-          const c = shade((px + (sx + 0.5) / ss) / u, (py + (sy + 0.5) / ss) / u);
+          const c = shade((px + (sx + 0.5) / ss) / u, (py + (sy + 0.5) / ss) / u, size);
           if (!c) continue;
           r += c[0]; g += c[1]; b += c[2]; a += 1;
         }
