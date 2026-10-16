@@ -128,7 +128,7 @@ server/            PHP-Server ohne Datenbank, dazu die Web-Oberfläche
 desktop/           Windows-App (Electron), nimmt die Oberfläche aus server/assets
   host/            Clavichat Server für Windows: PHP + HTTPS als Programm
 Dockerfile         Server als Container (Apache + PHP)
-compose.yaml       Container samt Caddy für HTTPS – fürs Homelab
+compose.yaml       Container samt Caddy für HTTPS – für einen eigenen Server
 docker/            Einstellungen für den Container
 tests/e2e.mjs      Ende-zu-Ende-Test gegen einen laufenden Server
 ```
@@ -185,17 +185,23 @@ einrichten muss man nichts.
 - Läuft im Hintergrund weiter (Symbol im Infobereich), auf Wunsch mit Windows.
 - Daten und Einstellungen liegen in `%APPDATA%\Clavichat Server`: `data` und
   `config.php` (Zugangscode, Relay-Server). Ein Update ändert daran nichts.
-- Aus dem Internet erreichbar machen geht auch (Portweiterleitung), dann aber
-  besser mit eigener Domain und Docker – siehe unten.
+- Gedacht fürs Heimnetz. Von außen per Portweiterleitung erreichbar machen
+  rate ich ab: Dann sieht jeder, der die Adresse aufruft oder anruft, die
+  IP-Adresse deines Anschlusses zu Hause. Für Nutzung übers Internet besser
+  einen Webspace oder gemieteten Server nehmen – siehe oben und unten.
 
-## Docker / Homelab
+## Docker
 
 ```
 docker compose up -d
 ```
 
 `compose.yaml` startet Clavichat (Apache + PHP) und davor Caddy, das sich um
-HTTPS kümmert. Die Adresse steht in `SECURECOM_SITE` (in einer `.env`-Datei
+HTTPS kümmert. Am besten auf einem gemieteten Server (VPS). Zu Hause betrieben
+und aus dem Internet erreichbar, zeigt die Domain auf deinen Anschluss – wer
+Clavichat dort nutzt, sieht deine Heim-IP. Nur im Heimnetz ist das egal.
+
+Die Adresse steht in `SECURECOM_SITE` (in einer `.env`-Datei
 daneben oder in der Shell):
 
 | `SECURECOM_SITE` | HTTPS |

@@ -1,9 +1,11 @@
 # ============================================================================
-#  Clavichat im Homelab:  docker compose up -d
+#  Clavichat als Container:  docker compose up -d
 # ============================================================================
 #  SECURECOM_SITE bestimmt, unter welcher Adresse Clavichat erreichbar ist
 #  (in einer .env-Datei neben dieser Datei oder in der Shell):
 #    SECURECOM_SITE=chat.example.com   eigene Domain, Zertifikat von Let's Encrypt
+#                                      (am besten auf einem gemieteten Server –
+#                                      zu Hause sähen Nutzer deine Heim-IP)
 #    SECURECOM_SITE=192.168.1.10       nur im Heimnetz, eigenes Zertifikat von Caddy
 #  Ohne Angabe: localhost.
 #

@@ -7752,6 +7752,11 @@ function showSecurityInfo() {
         'Forward Secrecy gibt es wochenweise, nicht für jede einzelne Nachricht: Wer an deinen privaten Schlüssel kommt, kann Nachrichten lesen, deren Schlüssel noch nicht gelöscht ist (etwa die letzten fünf Wochen). Anrufe sind davon nicht betroffen, ihre Schlüssel gelten nur für das eine Gespräch.',
         'Die Sicherheit steht und fällt mit der Prüfung der Fingerabdrücke. Verifiziere wichtige Kontakte über einen zweiten Weg.'
       ]);
+      const ext = (href, text) => el('a', { href, target: '_blank', rel: 'noopener noreferrer', text });
+      body.append(sectionHead('OPEN SOURCE'),
+        el('p', { class: 'sc-p sc-about' }, 'Clavichat ist Open Source (MIT): Web-App, Server und Windows-App – zum Nachprüfen und selbst Betreiben. ',
+          ext('https://github.com/mxachterberg/Clavichat', 'Quellcode auf GitHub ↗')),
+        el('p', { class: 'sc-p sc-about sc-by' }, 'Ein Projekt von ', ext('https://achterberg.dev/projects.html', 'Max Achterberg ↗')));
     }
   });
 }
