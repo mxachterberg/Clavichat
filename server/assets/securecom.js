@@ -149,13 +149,13 @@ const ICONS = {
   file: '<path d="M6 3h8l5 5v13H6z"/><path d="M14 3v5h5"/>'
 };
 
-/** Das Clavichat-Logo ohne Hintergrund: Linien in Textfarbe, Schlüsselbart und Lämpchen orange. */
-const LOGO = '<path d="M27 26V8.5M38 26V21.5" fill="none" stroke="currentColor" stroke-width="3.4" stroke-linecap="round"/><path d="M28.6 8h6.6v4h-2.6v3h2.6v4h-6.6z" fill="#f97316"/><rect x="20" y="26" width="24" height="26" rx="4" fill="none" stroke="currentColor" stroke-width="3.4"/><path d="M26.5 33.5h11M26.5 39h11" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"/><circle cx="32" cy="46" r="2.6" fill="#f97316"/>';
+/** Das Clavichat-Logo, durchsichtig: Funkgerät innen dunkel, helle Linien mit dunklem Rand, Bart und Lämpchen orange. */
+const LOGO = '<path d="M27 26V8.5M38 26V21.5" fill="none" stroke="#0b0b0d" stroke-width="5.8" stroke-linecap="round"/><rect x="20" y="26" width="24" height="26" rx="4" fill="#0b0b0d" stroke="#0b0b0d" stroke-width="5.8"/><rect x="27.4" y="6.8" width="9" height="13.4" rx="1.2" fill="#0b0b0d"/><path d="M28.6 8h6.6v4h-2.6v3h2.6v4h-6.6z" fill="#f97316"/><path d="M27 26V8.5M38 26V21.5" fill="none" stroke="#ededec" stroke-width="3.4" stroke-linecap="round"/><rect x="20" y="26" width="24" height="26" rx="4" fill="none" stroke="#ededec" stroke-width="3.4"/><path d="M26.5 33.5h11M26.5 39h11" fill="none" stroke="#ededec" stroke-width="3" stroke-linecap="round"/><circle cx="32" cy="46" r="2.6" fill="#f97316"/>';
 function logoMark(size) {
   const span = document.createElement('span');
   span.className = 'sc-ic sc-logo';
   span.setAttribute('aria-hidden', 'true');
-  span.innerHTML = '<svg width="' + size + '" height="' + size + '" viewBox="7 5 50 50">' + LOGO + '</svg>';
+  span.innerHTML = '<svg width="' + size + '" height="' + size + '" viewBox="7.3 5.5 49.4 49.4">' + LOGO + '</svg>';
   return span;
 }
 

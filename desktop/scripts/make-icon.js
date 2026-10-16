@@ -3,8 +3,8 @@
      build/icon.png   512 × 512 (Linux, Vorschau)
      build/icon.ico   16 … 256 (Windows: Programmdatei, Fenster, Taskleiste,
                       Infobereich – Windows nimmt je Stelle die passende Größe)
-   Gleiches Motiv wie server/assets/securecom-icon.svg: dunkles Quadrat,
-   Funkgerät mit Schlüssel als Antenne (seit 1.6.4 ohne Eckmarken). Ohne Grafikprogramm: Pixel per
+   Gleiches Motiv wie server/assets/securecom-icon.svg: durchsichtig,
+   Funkgerät mit Schlüssel als Antenne, innen dunkel, dunkler Rand. Ohne Grafikprogramm: Pixel per
    Hand, überabgetastet (glatte Kanten), PNG mit zlib.
    Aufruf: npm run icon
    ========================================================================== */
@@ -39,34 +39,35 @@ function onLine(x, y, x1, y1, x2, y2, r) {
   return Math.hypot(x - (x1 + t * dx), y - (y1 + t * dy)) <= r;
 }
 
-// Das Motiv füllt die Kachel weiter aus als im SVG (Taskleiste: besser
-// erkennbar) und sitzt mittig; in kleinen Größen kräftigere Linien.
+// Seit 1.6.6 ohne Kachel (durchsichtig): Das Funkgerät ist innen dunkel,
+// alle hellen Linien haben einen schmalen dunklen Rand – so steht es auf
+// heller wie dunkler Taskleiste. Das Motiv füllt die Fläche fast ganz aus.
 const ZOOM = 1.25;
 const MOTIF_CY = 30.25;   // Mitte des Motivs im 64er-Raster des SVG
+const HALO = 1.2;         // dunkler Rand um die hellen Linien
 
 /** Farbe am Punkt (x, y) im 64er-Raster – oder null (durchsichtig). */
 function shade(x, y, size) {
-  if (!inRoundRect(x, y, 0, 0, 64, 64, 10)) return null;
   x = 32 + (x - 32) / ZOOM;
   y = MOTIF_CY + (y - 32) / ZOOM;
   const bold = (size <= 32 ? 0.45 : 0) / ZOOM;
+  const s = 1.7 + bold;   // halbe Strichstärke des Funkgeräts (3,4)
 
-  // Lämpchen
+  // Lämpchen und Schlüsselbart (Block mit Kerbe, zwei Zähne)
   if (Math.hypot(x - 32, y - 46) <= 2.6 + bold) return ORANGE;
-  // Schlüsselbart an der Antenne: Block mit Kerbe (zwei Zähne)
   if (inRect(x, y, 28.6, 8, 6.6, 11) && !inRect(x, y, 32.6, 12, 2.6, 3)) return ORANGE;
 
-  const s = 1.7 + bold;   // halbe Strichstärke des Funkgeräts (3,4)
-  // Antenne (Schlüsselschaft) und Drehknopf
-  if (onLine(x, y, 27, 8.5, 27, 26, s) || onLine(x, y, 38, 21.5, 38, 26, s)) return WHITE;
-  // Gehäuse: Rahmen eines abgerundeten Rechtecks (24 × 26, Radius 4)
-  const outer = inRoundRect(x, y, 20 - s, 26 - s, 24 + 2 * s, 26 + 2 * s, 4 + s);
+  // Helle Linien: Antenne (Schlüsselschaft), Drehknopf, Gehäuserahmen
+  const antenna = (r) => onLine(x, y, 27, 8.5, 27, 26, r) || onLine(x, y, 38, 21.5, 38, 26, r);
+  const outer = (r) => inRoundRect(x, y, 20 - r, 26 - r, 24 + 2 * r, 26 + 2 * r, 4 + r);
   const inner = inRoundRect(x, y, 20 + s, 26 + s, 24 - 2 * s, 26 - 2 * s, 4 - s);
-  if (outer && !inner) return WHITE;
+  if (antenna(s) || (outer(s) && !inner)) return WHITE;
   // Lautsprecher: zwei Striche – unter 24 Pixeln weggelassen, dort verschwimmen sie
   if (size >= 24 && (onLine(x, y, 26.5, 33.5, 37.5, 33.5, 1.5 + bold) || onLine(x, y, 26.5, 39, 37.5, 39, 1.5 + bold))) return WHITE;
 
-  return BG;
+  // Dunkel: das Innere des Gehäuses und der Rand um alles
+  if (inner || antenna(s + HALO) || outer(s + HALO) || inRect(x, y, 28.6 - HALO, 8 - HALO, 6.6 + 2 * HALO, 11 + 2 * HALO)) return BG;
+  return null;
 }
 
 /** RGBA-Pixel in der Größe size × size. Kleine Größen feiner abtasten. */
