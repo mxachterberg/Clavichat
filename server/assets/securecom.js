@@ -1151,8 +1151,8 @@ function gateRegister(panel) {
   panel.appendChild(form);
 }
 
-/* ---------- Mit dem Postfach von achterberg.dev --------------------------------
-   Nur auf achterberg.dev (S.cfg.sso), nicht in der Windows-App. Wer im
+/* ---------- Mit dem Postfach (offizieller Server) --------------------------------
+   Nur auf dem offiziellen Server (S.cfg.sso), nicht in der Windows-App. Wer im
    Dashboard angemeldet ist, bekommt dort ein signiertes Ticket, das sein
    Postfach bestätigt (fünf Minuten, nur einmal). Das ist der einzige Aufruf,
    der ein Cookie mitschickt – das der Dashboard-Sitzung; die Schnittstelle
@@ -1335,7 +1335,7 @@ async function startTemp(alias, code) {
 }
 
 /**
- * secret: Passwort oder – beim Konto mit dem Postfach von achterberg.dev
+ * secret: Passwort oder – beim Konto mit dem Postfach (offizieller Server)
  * (sso = Ticket) – ein Wiederherstellungscode. Solche Konten bleiben auf
  * diesem Gerät immer angemeldet.
  */

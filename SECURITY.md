@@ -209,9 +209,9 @@ erfunden. Im Überblick – wo verschlüsselt wird und was der Server davon sieh
 - Meldet sich ein Gerät an, das das Konto noch nicht kennt, sagen die anderen
   Geräte Bescheid („Neue Anmeldung bei deinem Konto“).
 
-### Konto mit dem Postfach (nur achterberg.dev)
+### Konto mit dem Postfach (nur offizieller Server)
 
-- Wer im Dashboard von achterberg.dev angemeldet ist (echte Anmeldung am
+- Wer im Dashboard der Website angemeldet ist (echte Anmeldung am
   Postfach), bekommt dort ein Ticket: Postfach, Ablauf nach fünf Minuten und
   ein Zufallswert, signiert mit HMAC-SHA-256. Den Schlüssel dafür leitet der
   Server aus seinem geheimen Server-Schlüssel ab, er verlässt den Server nie.
@@ -235,7 +235,7 @@ erfunden. Im Überblick – wo verschlüsselt wird und was der Server davon sieh
 
 ### Updates der Windows-App
 
-- Die App lädt eine Update-Liste von achterberg.dev. Sie ist mit Ed25519
+- Die App lädt eine Update-Liste vom offiziellen Server. Sie ist mit Ed25519
   signiert; den öffentlichen Schlüssel bringt die App mit
   (`desktop/updater.js`). Der private Schlüssel liegt nur beim Herausgeber,
   weder im Repository noch auf dem Webserver.
@@ -329,7 +329,7 @@ erfunden. Im Überblick – wo verschlüsselt wird und was der Server davon sieh
 - Dass Status-Fächer beschrieben und gelesen werden – im Moment der Anfrage
   auch von wem, gespeichert wird das nicht. Den Status selbst und wem ein
   Fach gehört, kennt er nicht.
-- Bei Konten mit dem Postfach von achterberg.dev den SHA-256-Hash des
+- Bei Konten mit dem Postfach (offizieller Server) den SHA-256-Hash des
   Postfachs. Wer die Adresse kennt, kann sie damit dem Konto zuordnen.
 - Bei Dateien: Größe, Zeitpunkt, Ablauf und wer sie hochgeladen hat; wer
   sie abruft, im Moment der Anfrage (gespeichert wird das nicht).

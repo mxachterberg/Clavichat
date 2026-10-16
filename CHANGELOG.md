@@ -200,12 +200,12 @@ Fassung nehmen. Ab dann kommen Updates von selbst.
   Schlüssel des Herausgebers signiert ist (Ed25519) und zur angekündigten
   Prüfsumme passt. Die portable Fassung ersetzt sich an derselben Stelle,
   Verknüpfungen bleiben gültig.
-- **Konto mit dem Postfach von achterberg.dev** (nur auf achterberg.dev):
+- **Konto mit dem Postfach** (nur auf dem offiziellen Server):
   Wer dort angemeldet ist, legt ein Konto ohne Passwort an. Das Postfach
   bestätigt ein signiertes Ticket (fünf Minuten, nur einmal), den Schlüssel
   schützt ein Wiederherstellungscode mit 160 Zufallsbits. Das Gerät bleibt
   angemeldet und meldet sich nach Ablauf der Sitzung still neu an. Auf einem
-  neuen Gerät findet „Mit achterberg.dev anmelden“ den Kontonamen, dazu kommt
+  neuen Gerät findet die Anmeldung über das Postfach den Kontonamen, dazu kommt
   der Code. In den Einstellungen lässt sich ein neuer Code erzeugen.
 - **Qualitätsmenüs:** Ton- und Bildschirmqualität stehen nach Datenrate
   geordnet, von sparsam bis bestmöglich. Die Auswahlmenüs – auch im

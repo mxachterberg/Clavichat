@@ -1,5 +1,5 @@
 // Erzeugt die Grafiken für README.md und SECURITY.md im Stil von
-// achterberg.dev – je in Hell und Dunkel. GitHub wählt per <picture> die
+// clavichat.de – je in Hell und Dunkel. GitHub wählt per <picture> die
 // passende Fassung zum eigenen Design.
 //
 //   node docs/diagramme.mjs

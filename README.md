@@ -42,9 +42,6 @@ Signaturen.
   für die der Browser ein frisches PGP-Schlüsselpaar erzeugt. Wahlweise mit
   Alias. Eigene PGP-Schlüssel (GnuPG, Kleopatra) lassen sich übernehmen und mit
   Passphrase gesichert exportieren. Konten können ein Profilbild festlegen.
-  Auf achterberg.dev geht ein Konto auch ohne Passwort: Wer dort angemeldet
-  ist, bestätigt sich über sein Postfach, den Schlüssel schützt ein
-  Wiederherstellungscode.
 - **Freunde:** per öffentlichem Schlüssel oder Fingerabdruck hinzufügen;
   nach der Annahme seht ihr gegenseitig euren Status (Online, Beschäftigt,
   Abwesend – nach 10 Minuten ohne Eingabe von selbst – oder „Als offline
@@ -120,7 +117,6 @@ In der App zeigt „So funktioniert’s“ dieselben Grafiken zum Ausprobieren
 | Profilbilder | nur Konten, öffentlich wie der Name; die signierte Karte nennt den SHA-256-Wert, angezeigt wird nur ein passendes Bild |
 | Anrufe, Bildschirm | WebRTC direkt zwischen den Geräten (DTLS-SRTP). Verbindungsangaben signiert und verschlüsselt, Sicherheitscode aus den DTLS-Fingerabdrücken |
 | Konten | PBKDF2-SHA-256 (600.000 Runden) → HKDF → Anmeldeschlüssel (beim Server nur als bcrypt-Hash) und ein Schlüssel, der den privaten PGP-Schlüssel einpackt |
-| Konto mit achterberg.dev | Postfach per HMAC-SHA-256-Ticket bestätigt (fünf Minuten, nur einmal); statt Passwort ein Wiederherstellungscode mit 160 Zufallsbits → HKDF-SHA-256 |
 | Freunde, Status | gemeinsames Geheimnis aus der PGP-verschlüsselten Anfrage → HKDF → zwei zufällige Fächer beim Server und ein AES-256-GCM-Schlüssel; der Server sieht weder Status noch Freundschaften |
 | Aufbewahrung | Ablaufdatum je Nachricht beim Server (Standard 7 Tage); verkürzt eine Unterhaltung, löscht jede Seite ihre älteren Einträge; Abgelaufenes wird stündlich gelöscht |
 | Forward Secrecy | wöchentlich neuer X25519-Unterschlüssel, alte nach Aufbewahrung + 2 Tagen gelöscht; Raumschlüssel wöchentlich neu, alte Generationen gelöscht |
@@ -282,7 +278,8 @@ Unterschiede zur Web-Fassung:
   abschalten oder von Hand anstoßen. Installiert wird nur, was mit dem
   Schlüssel des Herausgebers signiert ist.
 
-Die App verbindet sich mit `https://achterberg.dev`. Für einen eigenen Server
+Die App verbindet sich standardmäßig mit dem offiziellen Server
+(clavichat.de). Für einen eigenen Server
 `%APPDATA%\Clavichat\config.json` anlegen:
 
 ```json
@@ -292,8 +289,8 @@ Die App verbindet sich mit `https://achterberg.dev`. Für einen eigenen Server
 }
 ```
 
-`web` ist die Adresse für Einladungslinks. Liegt Clavichat wie auf
-achterberg.dev unter `/app/clavichat/`, reicht `{ "server": "https://example.com" }`.
+`web` ist die Adresse für Einladungslinks. Liegt Clavichat unter
+`/app/clavichat/`, reicht `{ "server": "https://example.com" }`.
 Für den **Clavichat Server** (selbst erstelltes Zertifikat) kommt
 `"fingerprint"` dazu – den fertigen Text zeigt dessen Fenster. Die App vertraut
 dann genau diesem Zertifikat und keinem anderen.

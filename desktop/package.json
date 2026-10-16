@@ -5,7 +5,7 @@
   "description": "Ende-zu-Ende verschlüsselt schreiben, telefonieren und den Bildschirm teilen.",
   "author": "Max Achterberg",
   "license": "MIT",
-  "homepage": "https://achterberg.dev/app/clavichat/",
+  "homepage": "https://clavichat.de/",
   "repository": {
     "type": "git",
     "url": "https://github.com/mxachterberg/clavichat.git"

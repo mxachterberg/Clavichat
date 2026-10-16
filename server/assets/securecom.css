@@ -1,5 +1,5 @@
 /* ==========================================================================
-   Clavichat — Aufbau wie Discord, Gestalt wie achterberg.dev
+   Clavichat — Aufbau wie Discord, eigene Gestalt (Monospace, orange Akzente)
    Baut auf den Tokens aus style.css auf (--bg, --border, --accent …).
    ========================================================================== */
 
@@ -1319,7 +1319,7 @@ html[data-theme="light"] .sc-modal { background: rgba(40, 40, 40, .3); }
 .sc-quality-opt[aria-pressed="true"] .sc-quality-info { color: var(--accent); }
 .sc-quality-note { grid-column: 1 / -1; font-size: 12.5px; line-height: 1.5; }
 
-/* ---- Mit achterberg.dev (Konto ohne Passwort) --------------------------- */
+/* ---- Mit dem Postfach (Konto ohne Passwort) ------------------------------ */
 .sc-sso { margin: 4px 0 18px; padding: 14px; border: 1px solid var(--border); background: var(--accent-soft); }
 .sc-sso-text { margin: 0 0 12px; font-size: 13px; line-height: 1.55; color: var(--text-body); }
 .sc-sso-btn { justify-content: center; gap: 8px; }
