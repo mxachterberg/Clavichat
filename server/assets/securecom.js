@@ -46,6 +46,7 @@ const S = {
   guest: false,        // Gast eines Einmal-Meetings (temporär): sieht nur sein Meeting
   meetOnly: false,     // Gastgeber eines Meetings von der Startseite: ebenfalls nur das Meeting (ohne Gast-Grenzen beim Server)
   meetRid: null,       // das eine Meeting von Gast bzw. Gastgeber
+  guestWait: false,    // Gast wartet, bis der Gastgeber den Beitritt bestätigt
   closingMeeting: null, // Meeting, das man gerade selbst beendet (für den Hinweis danach)
   wrapKey: null,       // Konten: packt Schlüssel und Tresor ein
   username: null,
@@ -155,7 +156,8 @@ const ICONS = {
   message: '<path d="M4 5h16v11H9l-5 4z"/>',
   mobile: '<rect x="7" y="3" width="10" height="18" rx="1.5"/><path d="M11 17.5h2"/>',
   clip: '<path d="M20 11.5l-8 8a5 5 0 0 1-7-7l8.5-8.5a3.3 3.3 0 0 1 4.7 4.7l-8.5 8.5a1.7 1.7 0 0 1-2.4-2.4l7.8-7.8"/>',
-  file: '<path d="M6 3h8l5 5v13H6z"/><path d="M14 3v5h5"/>'
+  file: '<path d="M6 3h8l5 5v13H6z"/><path d="M14 3v5h5"/>',
+  camSwitch: '<path d="M3 8h3.5L8 5.5h8L17.5 8H21v11H3z"/><path d="M8.6 12.6a3.5 3.5 0 0 1 6.2-1.4"/><path d="M15.4 14.4a3.5 3.5 0 0 1-6.2 1.4"/><path d="M15.2 9.4v2h-2M8.8 17.6v-2h2"/>'
 };
 
 /** Das Clavichat-Logo, durchsichtig: Funkgerät innen dunkel, helle Linien mit dunklem Rand, Bart und Lämpchen orange. */
@@ -1494,8 +1496,9 @@ async function joinAsGuest(join, name) {
   S.me.published = identity.armoredPublic;
   storeRoomKey(join.rid, join.epoch, join.key);
   ssSet(SS_KEY, { mode: 'temp', guest: 1, room: join.rid, id: id, token: r.token, priv: C.armorPrivate(identity.privateKey), vault: S.vault });
+  let res;
   try {
-    await api('room.join', { id: join.rid, code: join.code });
+    res = await api('room.join', { id: join.rid, code: join.code });
   } catch (e) {
     // Beitritt gescheitert (etwa gerade voll geworden): Gast-Sitzung gleich wieder löschen.
     try { await api('end'); } catch (e2) { /* verfällt von selbst */ }
@@ -1508,6 +1511,14 @@ async function joinAsGuest(join, name) {
   S.pendingJoin = null;
   ssSet(JOIN_KEY, null);
   ssSet(GUEST_LINK_KEY, join);   // für „Erneut beitreten“ nach dem Verlassen
+  // Link eines anderen Teilnehmers: erst warten, bis der Gastgeber zulässt.
+  if (res && res.room && res.room.pending) {
+    S.guestWait = true;
+    const ss = ssGet(SS_KEY);
+    if (ss) { ss.wait = 1; ssSet(SS_KEY, ss); }
+    showGuestWait();
+    return;
+  }
   await enterApp();
 }
 
@@ -1518,7 +1529,7 @@ async function joinAsGuest(join, name) {
 function showGuestEnd(note) {
   const card = guestCard();
   const host = !!note.host;
-  const kind = ['left', 'expired', 'closed'].includes(note.kind) ? note.kind : 'ended';
+  const kind = ['left', 'expired', 'closed', 'denied', 'noanswer', 'cancelled'].includes(note.kind) ? note.kind : 'ended';
   const text = host ? {
     left: ['Du hast das Meeting verlassen.', 'Deine Sitzung ist beendet – der Server hat deinen Schlüssel gelöscht. War noch jemand mit Sitzung oder Konto drin, läuft das Meeting ohne dich weiter.'],
     closed: ['Du hast das Meeting beendet.', 'Chat und Teilnehmerliste sind gelöscht, der Link gilt nicht mehr. Deine Sitzung ist ebenfalls beendet.'],
@@ -1528,9 +1539,12 @@ function showGuestEnd(note) {
     left: ['Du hast das Meeting verlassen.', 'Deine Gast-Sitzung ist beendet – der Server hat deinen Schlüssel und deine Teilnahme gelöscht.'],
     closed: ['Das Meeting wurde beendet.', 'Das Meeting gibt es nicht mehr. Deine Gast-Sitzung ist damit ebenfalls beendet und gelöscht.'],
     ended: ['Das Meeting wurde beendet.', 'Das Meeting gibt es nicht mehr, oder du wurdest daraus entfernt. Deine Gast-Sitzung ist damit ebenfalls beendet und gelöscht.'],
-    expired: ['Deine Gast-Sitzung ist abgelaufen.', 'Nach längerer Pause löscht der Server Gast-Sitzungen. Mit dem Link kommst du wieder hinein, solange das Meeting läuft.']
-  }[kind];
-  const link = !host && note.link && /^[A-Za-z0-9_-]{22}$/.test(note.link.rid || '') ? note.link : null;
+    expired: ['Deine Gast-Sitzung ist abgelaufen.', 'Nach längerer Pause löscht der Server Gast-Sitzungen. Mit dem Link kommst du wieder hinein, solange das Meeting läuft.'],
+    denied: ['Beitritt abgelehnt.', 'Der Gastgeber hat deinen Beitritt abgelehnt. Deine Gast-Sitzung ist beendet und gelöscht.'],
+    noanswer: ['Keine Antwort vom Gastgeber.', 'Keine Antwort vom Gastgeber – versuche es später noch einmal. Deine Gast-Sitzung ist beendet und gelöscht.'],
+    cancelled: ['Beitritt abgebrochen.', 'Du hast nicht länger auf den Gastgeber gewartet. Deine Gast-Sitzung ist beendet und gelöscht.']
+  }[kind] || ['Das Meeting ist zu Ende.', ''];
+  const link = !host && kind !== 'denied' && note.link && /^[A-Za-z0-9_-]{22}$/.test(note.link.rid || '') ? note.link : null;
   appendAll(card,
     el('span', { class: 'sc-guest-emblem' + (kind === 'left' ? '' : ' is-ended') }, icon(kind === 'left' ? 'leave' : 'meet', 30)),
     el('h1', { class: 'sc-gate-title sc-guest-title', text: text[0] }),
@@ -2327,6 +2341,7 @@ async function restoreSession() {
       S.guest = !!ss.guest;
       S.meetOnly = !S.guest && !!ss.meet;   // Gastgeber eines Meetings von der Startseite
       S.meetRid = typeof ss.room === 'string' ? ss.room : null;
+      S.guestWait = S.guest && !!ss.wait && !!S.meetRid;   // Gast wartet noch auf den Gastgeber
       S.vault = mergeVault(emptyVault(), ss.vault || {});
       setMe(identity, ss.id, 'temp', '', !inMeetingMode());
     } else {
@@ -2564,7 +2579,9 @@ async function boot() {
   ssSet(GATE_NOTE_KEY, null);
   const guestEnd = ssGet(GUEST_END_KEY);
   ssSet(GUEST_END_KEY, null);
-  if (restored) {
+  if (restored && S.guestWait) {
+    showGuestWait();
+  } else if (restored) {
     await enterApp();
   } else if (S.pendingJoin && S.pendingJoin.once) {
     // Link zu einem Einmal-Meeting ohne Sitzung: nur nach dem Namen fragen.
@@ -3054,7 +3071,7 @@ function renderMainHead() {
         el('span', { class: 'sc-head-sub', text: room.meta.name + ' · ' + room.members.length + ' Teilnehmer · Ende-zu-Ende verschlüsselt' })),
       el('span', { class: 'sc-head-spacer' }),
       meetingCallButton(room, 'icon'),
-      S.guest ? null : iconBtn('link', 'Meeting-Link teilen', () => meetingDialog(room)),
+      canShareLink(room) ? iconBtn('link', 'Meeting-Link teilen', () => meetingDialog(room)) : null,
       iconBtn('users', 'Teilnehmer', () => { S.membersOpen = !S.membersOpen; renderAll(); }, { 'aria-pressed': S.membersOpen ? 'true' : 'false' }));
   } else if (S.view.kind === 'room' && S.rooms.has(S.view.rid)) {
     const room = S.rooms.get(S.view.rid);
@@ -4714,6 +4731,9 @@ async function loadRooms() {
     room.exp = Number(raw.exp) || 0;   // dann weg (Unix-Zeit), wenn bis dahin nichts passiert
     room.ot = !!raw.ot;                // Einmal-Meeting (der Server lässt Gäste mit Link hinein)
     room.iv = typeof raw.iv === 'number' ? raw.iv : null;   // offene Einladungen (ältere Server: unbekannt)
+    // Beitrittsanfragen (nur der Besitzer bekommt sie): [{ id, t, x }]
+    room.knocks = Array.isArray(raw.pend) ? raw.pend.filter((k) => k && typeof k.id === 'string' && /^[A-Za-z0-9_-]{22}$/.test(k.id)) : [];
+    if (room.knocks.length) await ensureIds(room.knocks.map((k) => k.id));
     setVoiceState(room, raw.vcs, raw.vc);
     room.rev = raw.rev;
     room.pendingKey = !roomKeyRaw(room.id, room.epoch);
@@ -4726,6 +4746,7 @@ async function loadRooms() {
   }
   for (const rid of [...S.rooms.keys()]) if (!seen.has(rid)) dropRoomLocal(rid);
   if (S.voice) reconcileVoice();
+  syncKnocks();
   scheduleRender();
 }
 
@@ -4931,7 +4952,219 @@ function meetingCallButton(room, kind) {
 }
 
 async function copyMeetingLink(room) {
-  try { copyText(await meetingLink(room), 'Meeting-Link'); } catch (e) { toast(e.message, 'error'); }
+  try {
+    copyText(await meetingLink(room), 'Meeting-Link');
+    if (linkNeedsApproval(room)) toast('Wer über deinen Link kommt, wartet, bis der Gastgeber den Beitritt bestätigt.', 'ok', 6000);
+  } catch (e) { toast(e.message, 'error'); }
+}
+
+/** Gäste teilen nur Links zu ihrem Einmal-Meeting (der Server prüft es). */
+function canShareLink(room) {
+  return !S.guest || !!(room && room.ot);
+}
+
+/**
+ * Beitritt mit Bestätigung: In Einmal-Meetings führen nur Links des
+ * Gastgebers (Besitzers) direkt hinein. Wer über den Link eines anderen
+ * Teilnehmers – etwa eines Gasts – kommt, wartet, bis der Gastgeber zulässt.
+ */
+function linkNeedsApproval(room) {
+  return !!(room && room.ot && room.owner !== S.me.id);
+}
+
+/* ---------- Beitrittsanfragen ----------------------------------------------
+   Kommt jemand über den Link eines anderen Teilnehmers (etwa eines Gasts),
+   tritt er nicht gleich bei: Der Server merkt die Anfrage vor, und der
+   Gastgeber bekommt oben rechts ein Kärtchen je Anfrage (Zulassen /
+   Ablehnen) – zusätzlich steht sie in der Meeting-Karte unter WARTET.
+   Unbeantwortet verfällt sie nach zehn Minuten. Wer wartet, fragt per
+   Abruf (poll mit "w") alle drei Sekunden nach. */
+const KNOCK = { shown: new Map(), closed: new Set(), busy: new Set(), box: null };
+
+function knockKey(rid, id) { return rid + ':' + id; }
+
+/** Offene Anfragen eines Raums, die noch gelten (nur für den Besitzer). */
+function liveKnocks(room) {
+  if (!room || !S.me || room.owner !== S.me.id || !Array.isArray(room.knocks)) return [];
+  const now = serverNow();
+  return room.knocks.filter((k) => Number(k.x) * 1000 > now);
+}
+
+function syncKnocks() {
+  const want = new Map();
+  if (S.me) for (const room of S.rooms.values()) for (const k of liveKnocks(room)) want.set(knockKey(room.id, k.id), { room: room, k: k });
+  let gone = false;
+  // Entschieden, verfallen oder zurückgezogen: Kärtchen weg.
+  for (const [key, box] of KNOCK.shown) if (!want.has(key)) { box.remove(); KNOCK.shown.delete(key); gone = true; }
+  for (const key of [...KNOCK.closed]) if (!want.has(key)) { KNOCK.closed.delete(key); gone = true; }
+  let first = null;
+  for (const [key, v] of want) {
+    if (KNOCK.shown.has(key) || KNOCK.closed.has(key)) continue;
+    KNOCK.shown.set(key, knockCard(v.room, v.k, key));
+    if (!first) first = v;
+  }
+  if (first) {
+    if (S.vault && S.vault.settings && S.vault.settings.sound) { beep(660, 0.12, 0, 0.06); beep(880, 0.16, 0.14, 0.06); }
+    notify('Beitrittsanfrage', displayName(S.ids.get(first.k.id)) + ' möchte dem Meeting beitreten.', 'knock');
+  }
+  if (gone) scheduleRender();
+}
+
+function knockBox() {
+  if (!KNOCK.box || !KNOCK.box.isConnected) {
+    KNOCK.box = el('div', { class: 'sc-knocks', id: 'sc-knocks', 'aria-live': 'polite' });
+    document.body.appendChild(KNOCK.box);
+  }
+  return KNOCK.box;
+}
+
+function knockCard(room, k, key) {
+  const ident = S.ids.get(k.id);
+  const where = room.meta.meet ? 'dem Meeting' + (inMeetingMode() ? '' : ' „' + room.meta.name + '“') : 'dem Raum „' + room.meta.name + '“';
+  const close = () => { KNOCK.closed.add(key); box.remove(); KNOCK.shown.delete(key); };
+  const yes = el('button', { type: 'button', class: 'btn btn--primary', onclick: () => decideKnock(room.id, k.id, true, box) }, icon('check', 14), 'Zulassen');
+  const no = el('button', { type: 'button', class: 'btn', onclick: () => decideKnock(room.id, k.id, false, box) }, icon('x', 14), 'Ablehnen');
+  const box = el('div', { class: 'sc-knock', role: 'alertdialog', 'aria-label': 'Beitrittsanfrage' },
+    el('div', { class: 'sc-knock-head' },
+      avatar(ident, 'sm'),
+      el('span', { class: 'sc-knock-text' },
+        el('strong', { text: ident ? displayName(ident) : 'Jemand' }),
+        el('span', { text: ' möchte ' + where + ' beitreten.' })),
+      iconBtn('x', 'Später entscheiden (steht weiter in der Meeting-Karte unter WARTET)', close)),
+    el('p', { class: 'sc-knock-note', text: (ident && ident.guest ? 'Gast ohne Konto' : ident && ident.kind === 'account' ? 'Konto' : 'Temporäre Sitzung') +
+      (ident ? ' · Fingerabdruck ' + fpTail(ident.fp) : '') + ' · kommt über den Link eines Teilnehmers' }),
+    el('div', { class: 'sc-knock-acts' }, no, yes));
+  knockBox().appendChild(box);
+  return box;
+}
+
+/** Gastgeber: Anfrage zulassen oder ablehnen (beim Server: room.kick mit "pend"). */
+async function decideKnock(rid, id, yes, box) {
+  const key = knockKey(rid, id);
+  if (KNOCK.busy.has(key)) return;
+  KNOCK.busy.add(key);
+  if (box) box.classList.add('is-busy');
+  const ident = S.ids.get(id);
+  try {
+    await api('room.kick', { id: rid, member: id, pend: yes ? 'yes' : 'no' });
+    toast(yes ? displayName(ident) + ' ist jetzt im Meeting.' : 'Beitritt von ' + displayName(ident) + ' abgelehnt.', 'ok');
+  } catch (e) {
+    toast(e.message, 'error');
+  } finally {
+    KNOCK.busy.delete(key);
+    if (box) box.classList.remove('is-busy');
+  }
+  await loadRooms().catch(() => {});
+}
+
+/** Warteliste in der Meeting-Karte (nur für den Gastgeber). */
+function knockList(room) {
+  const knocks = liveKnocks(room);
+  if (!knocks.length) return null;
+  const list = el('div', { class: 'sc-list sc-knock-list' });
+  for (const k of knocks) {
+    const ident = S.ids.get(k.id);
+    list.appendChild(el('div', { class: 'sc-meet-person is-waiting' },
+      avatar(ident, 'xs'),
+      el('span', { class: 'sc-meet-person-name', text: ident ? displayName(ident) : 'Unbekannt' }),
+      ident && ident.guest ? kindBadge(ident) : null,
+      iconBtn('x', 'Ablehnen', () => decideKnock(room.id, k.id, false), { class: 'sc-ibtn sc-knock-no' }),
+      iconBtn('check', 'Zulassen', () => decideKnock(room.id, k.id, true), { class: 'sc-ibtn sc-knock-yes' })));
+  }
+  const frag = document.createDocumentFragment();
+  frag.append(sectionHead('WARTET – ' + knocks.length), list);
+  return frag;
+}
+
+/**
+ * Wer wartet: alle drei Sekunden nachfragen. Ergebnis 'in' (zugelassen),
+ * 'no' (abgelehnt), 'gone' (verfallen, Meeting oder Sitzung weg) oder
+ * 'cancel' (selbst abgebrochen, stopWaiting()).
+ */
+const WAIT = { cur: null };
+async function waitForHost(rid) {
+  const token = {};
+  WAIT.cur = token;
+  while (WAIT.cur === token && S.token) {
+    try {
+      const r = await api('poll', { w: rid, i: S.cursor || { s: 0, o: 0, g: 0 }, r: {} });
+      if (WAIT.cur !== token) break;
+      if (r.w && r.w !== 'wait') { WAIT.cur = null; return r.w; }
+    } catch (e) {
+      if (e.status === 401) { if (WAIT.cur === token) WAIT.cur = null; return 'gone'; }
+    }
+    await sleep(3000);
+  }
+  return 'cancel';
+}
+
+function stopWaiting() { WAIT.cur = null; }
+
+/** Gast wartet auf den Gastgeber (statt der Meeting-Ansicht). */
+function showGuestWait() {
+  const card = guestCard();
+  card.append(
+    el('span', { class: 'sc-guest-emblem is-waiting' }, icon('meet', 30)),
+    el('h1', { class: 'sc-gate-title sc-guest-title is-long', text: 'Warte auf den Gastgeber …' }),
+    el('p', { class: 'sc-gate-sub', text: 'Der Gastgeber muss deinen Beitritt bestätigen.' }),
+    el('div', { class: 'sc-wait-spin', role: 'progressbar', 'aria-label': 'Warte auf den Gastgeber' }),
+    el('p', { class: 'sc-gate-note', text: 'Du bist über den Link eines anderen Teilnehmers gekommen. Sobald der Gastgeber zustimmt, bist du im Meeting. Ohne Antwort verfällt die Anfrage nach zehn Minuten.' }),
+    el('button', { type: 'button', class: 'btn btn--block sc-guest-more', onclick: () => { stopWaiting(); guestEnded('cancelled'); } }, 'Abbrechen'));
+  bootDone();
+  waitForHost(S.meetRid).then(async (st) => {
+    if (st === 'in') {
+      S.guestWait = false;
+      const ss = ssGet(SS_KEY);
+      if (ss) { delete ss.wait; ssSet(SS_KEY, ss); }
+      await enterApp();
+      toast('Der Gastgeber hat dich hereingelassen.', 'ok');
+    } else if (st === 'no') {
+      guestEnded('denied');
+    } else if (st === 'gone') {
+      guestEnded('noanswer');
+    }
+  });
+}
+
+/** Mit Sitzung oder Konto: Warten im Dialog – schließen geht, die Anfrage bleibt. */
+function waitDialog(inv) {
+  let settled = false;
+  const drop = () => { if (!S.rooms.has(inv.rid) && S.vault.rooms[inv.rid]) { delete S.vault.rooms[inv.rid]; saveVault(); } };
+  const closeWait = openModal({
+    title: 'MEETING',
+    build: (body) => body.append(el('div', { class: 'sc-wait' },
+      el('div', { class: 'sc-wait-spin', role: 'progressbar', 'aria-label': 'Warte auf den Gastgeber' }),
+      el('p', { class: 'sc-wait-title', text: 'Warte auf den Gastgeber …' }),
+      el('p', { class: 'sc-p', text: 'Der Gastgeber muss deinen Beitritt bestätigen. Du kannst dieses Fenster schließen – sobald er zustimmt, öffnet sich das Meeting.' }))),
+    actions: [{ label: 'Anfrage zurückziehen', danger: true, onClick: async (close) => {
+      settled = true;
+      stopWaiting();
+      close();
+      try { await api('room.leave', { id: inv.rid }); } catch (e) { /* verfällt von selbst */ }
+      drop();
+      toast('Beitrittsanfrage zurückgezogen.', 'ok');
+    } }]
+  });
+  waitForHost(inv.rid).then(async (st) => {
+    if (settled || st === 'cancel') return;
+    settled = true;
+    const current = modalClose === closeWait;
+    if (st === 'in') {
+      if (current) closeWait();
+      await loadRooms().catch(() => {});
+      if (S.rooms.has(inv.rid)) openRoom(inv.rid);
+      toast('Der Gastgeber hat dich hereingelassen.', 'ok');
+      return;
+    }
+    drop();
+    const msg = st === 'no' ? 'Der Gastgeber hat deinen Beitritt abgelehnt.' : 'Keine Antwort vom Gastgeber – versuche es später noch einmal.';
+    if (current) {
+      openModal({ title: 'MEETING', build: (body) => body.append(el('p', { class: 'sc-p', text: msg })),
+        actions: [{ label: 'OK', primary: true, onClick: (close) => close() }] });
+    } else {
+      toast(msg, 'error', 9000);
+    }
+  });
 }
 
 function renderMeetingSide(head, body, room) {
@@ -4947,8 +5180,8 @@ function renderMeetingSide(head, body, room) {
     el('span', { class: 'sc-meet-name', text: room.meta.name }),
     el('span', { class: 'sc-meet-state', text: inCall ? 'Du bist im Call' : n ? 'Call läuft · ' + n + (n === 1 ? ' Person' : ' Personen') : 'Noch kein Call' }),
     meetingCallButton(room),
-    // Gäste teilen keinen Link (den haben sie schon) – sie können nur gehen.
-    S.guest ? null : el('button', { type: 'button', class: 'btn btn--block', onclick: () => copyMeetingLink(room) }, icon('link', 14), 'Link kopieren'),
+    // Gäste teilen einen eigenen Link – wer damit kommt, lässt der Gastgeber erst zu.
+    canShareLink(room) ? el('button', { type: 'button', class: 'btn btn--block', onclick: () => copyMeetingLink(room) }, icon('link', 14), 'Link kopieren') : null,
     // Meeting-Modus (Gast oder Gastgeber von der Startseite): Verlassen beendet die Sitzung.
     inMeetingMode() ? el('button', { type: 'button', class: 'btn btn--block', onclick: guestLeave }, icon('leave', 14), 'Meeting verlassen') : null,
     once && owner ? el('button', { type: 'button', class: 'btn btn--block sc-btn--danger', onclick: () => deleteRoom(room) }, icon('x', 14), 'Meeting beenden') : null);
@@ -4969,6 +5202,8 @@ function renderMeetingSide(head, body, room) {
       live ? el('span', { class: 'sc-meet-badge', text: 'IM CALL' }) : null));
   }
   body.appendChild(list);
+  const waiting = knockList(room);
+  if (waiting) body.appendChild(waiting);
   if (S.guest) body.appendChild(el('p', { class: 'sc-empty-note', text: 'Du bist als Gast hier – ohne Konto, nur in diesem Meeting. Verlässt du es, endet deine Gast-Sitzung.' }));
   else if (S.meetOnly) body.appendChild(el('p', { class: 'sc-empty-note', text: 'Du bist mit einer temporären Sitzung nur in diesem Meeting. Verlässt oder beendest du es, endet auch die Sitzung.' }));
   const note = meetingExpiryNote(room);
@@ -4998,7 +5233,7 @@ function renderMeetingLobby() {
       el('span', { class: 'sc-meet-lobby-sub', text: n ? names + (n === 1 ? ' ist drin.' : ' sind drin.') : 'Schreibt hier im Chat – oder startet einen Call mit Ton, Kamera und Bildschirm. Alle im Meeting sehen es sofort.' })),
     n ? faces : null,
     appendAll(el('span', { class: 'sc-meet-lobby-acts' }), meetingCallButton(room),
-      S.guest ? null : el('button', { type: 'button', class: 'btn', onclick: () => copyMeetingLink(room) }, icon('link', 14), 'Link kopieren')));
+      canShareLink(room) ? el('button', { type: 'button', class: 'btn', onclick: () => copyMeetingLink(room) }, icon('link', 14), 'Link kopieren') : null));
 }
 
 /** Neuer Link (Einladung für bis zu 100 Beitritte): 1 Tag, ältere feste Meetings 7 Tage. */
@@ -5011,8 +5246,9 @@ async function meetingLink(room) {
 }
 
 function meetingDialog(room) {
-  if (!room || S.guest) return;
+  if (!room || !canShareLink(room)) return;
   const once = isOnceMeeting(room);
+  const approve = linkNeedsApproval(room);
   openModal({
     title: 'MEETING',
     build: (body) => {
@@ -5020,13 +5256,16 @@ function meetingDialog(room) {
       const max = (S.cfg && S.cfg.limits && S.cfg.limits.voice) || 8;
       const keyNote = 'den Schlüssel enthält nur der Teil hinter „#“ – er geht nie an den Server.';
       body.append(
-        el('p', { class: 'sc-p', text: once
+        el('p', { class: 'sc-p', text: approve
+          ? 'Teile diesen Link. Wer ihn öffnet, gibt nur einen Namen ein – und wartet dann, bis der Gastgeber den Beitritt bestätigt. Gäste sehen nur dieses Meeting: Chat, Teilnehmer und Call. Alles ist Ende-zu-Ende verschlüsselt.'
+          : once
           ? 'Teile diesen Link. Wer ihn öffnet, gibt nur einen Namen ein und ist im Meeting – ohne Konto, ohne Anmeldung. Gäste sehen nur dieses Meeting: Chat, Teilnehmer und Call. Alles ist Ende-zu-Ende verschlüsselt.'
           : 'Teile diesen Link. Wer ihn öffnet, ist mit einem Klick im Meeting-Raum – auch ohne Konto, mit einer temporären Sitzung. Dort könnt ihr schreiben; einen Call startet ihr oben mit dem Hörer. Alles ist Ende-zu-Ende verschlüsselt.' }),
         out,
         el('p', { class: 'sc-note', text: once
           ? 'Im Call bis zu ' + max + ' Personen gleichzeitig, im Meeting bis zu 50. Der Link gilt 24 Stunden für bis zu 100 Beitritte; ' + keyNote +
-            ' Das Meeting endet, wenn du es beendest (Knopf „Meeting beenden“) oder es ' + onceHours() + ' Stunden ruht.'
+            (approve ? ' Der Gastgeber muss jeden Beitritt über deinen Link bestätigen.'
+              : ' Das Meeting endet, wenn du es beendest (Knopf „Meeting beenden“) oder es ' + onceHours() + ' Stunden ruht.')
           : 'Im Call bis zu ' + max + ' Personen gleichzeitig, im Raum bis zu 50. Der Link gilt 7 Tage für bis zu 100 Beitritte; ' + keyNote +
             (room.tmp ? ' Ruht das Meeting ' + tempRoomDays() + ' Tage, wird es gelöscht.' : '') }));
       meetingLink(room).then((link) => {
@@ -5043,7 +5282,8 @@ async function joinRoom(inv) {
   try {
     storeRoomKey(inv.rid, inv.epoch, inv.key);
     await saveVault(true);
-    await api('room.join', { id: inv.rid, code: inv.code });
+    const res = await api('room.join', { id: inv.rid, code: inv.code });
+    if (res.room && res.room.pending) { waitDialog(inv); return; }
     await loadRooms();
     openRoom(inv.rid);
     toast('Du bist dem Raum beigetreten.', 'ok');
@@ -5633,6 +5873,7 @@ async function pollOnce() {
   }
 
   if (S.voice) reconcileVoice();
+  if (KNOCK.shown.size) syncKnocks();
   if (r.pv !== S.pv) { S.pv = r.pv; refreshOnline(); }
   checkLogins(r.tv);
   if (first) { S.forceBottom = true; changed = true; }
@@ -5660,7 +5901,8 @@ async function refreshOnline() {
    ========================================================================== */
 const M = {
   mic: null, silent: null, cam: null, screen: null, screenAudio: null,
-  micOn: true, deaf: false, ctx: null, meters: new Map()
+  micOn: true, deaf: false, ctx: null, meters: new Map(),
+  camCount: 0, camBack: false, camBusy: false   // Kameras am Gerät, Rückkamera aktiv (nicht spiegeln), Wechsel läuft
 };
 
 function audioCtx() {
@@ -5808,18 +6050,172 @@ function applyDeaf() {
 async function toggleCam() {
   if (M.cam) {
     M.cam.stop();
-    M.cam = null;
+    setCamTrack(null);
   } else {
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ video: { width: { ideal: 1280 }, height: { ideal: 720 }, frameRate: { ideal: 24 } } });
-      M.cam = stream.getVideoTracks()[0];
-      M.cam.addEventListener('ended', () => { M.cam = null; pushTrack('cam'); });
+      setCamTrack(await openCamTrack(savedCamera()));
     } catch (e) {
       toast('Kein Zugriff auf die Kamera.', 'error');
       return;
     }
+    countCameras();
   }
   pushTrack('cam');
+}
+
+/* ---------- Kamera wechseln ------------------------------------------------
+   Handy: vorne ↔ hinten (facingMode), sonst reihum durch alle Kameras. Die
+   neue Spur ersetzt die alte bei allen Gegenübern ohne neue Aushandlung
+   (replaceTrack über pushTrack). Gewählt wird je Gerät (localStorage
+   sc-camera: d = Geräte-Kennung, f = 'user'/'environment') und beim
+   nächsten Einschalten wieder genommen. Gespiegelt wird nur die Kamera,
+   die zu einem zeigt – die Rückkamera nicht. */
+const CAM_KEY = 'sc-camera';
+
+function savedCamera() {
+  try {
+    const v = JSON.parse(localStorage.getItem(CAM_KEY) || 'null');
+    if (!v || typeof v !== 'object') return {};
+    return {
+      d: typeof v.d === 'string' && v.d.length <= 200 ? v.d : '',
+      f: v.f === 'user' || v.f === 'environment' ? v.f : ''
+    };
+  } catch (e) { return {}; }
+}
+
+function saveCamera(pick) {
+  try {
+    if (!pick || (!pick.d && !pick.f)) localStorage.removeItem(CAM_KEY);
+    else localStorage.setItem(CAM_KEY, JSON.stringify({ d: pick.d || '', f: pick.f || '' }));
+  } catch (e) { /* gilt dann nur bis zum Neuladen */ }
+}
+
+function camConstraints(pick, exact) {
+  const c = { width: { ideal: 1280 }, height: { ideal: 720 }, frameRate: { ideal: 24 } };
+  if (pick && pick.d) c.deviceId = exact ? { exact: pick.d } : { ideal: pick.d };
+  else if (pick && pick.f) c.facingMode = exact ? { exact: pick.f } : { ideal: pick.f };
+  return c;
+}
+
+/** Kamera öffnen – erst genau die gewünschte, sonst die nächstbeste. */
+async function openCamTrack(pick) {
+  let stream;
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({ video: camConstraints(pick, true) });
+  } catch (e) {
+    // Gewählte Kamera fehlt (abgesteckt, anderes Gerät): dann eben eine andere.
+    if (!pick || (!pick.d && !pick.f) || (e && (e.name === 'NotAllowedError' || e.name === 'SecurityError'))) throw e;
+    stream = await navigator.mediaDevices.getUserMedia({ video: camConstraints(pick, false) });
+  }
+  return stream.getVideoTracks()[0];
+}
+
+/** Zeigt die Kamera zu einem (Front, Webcam) oder weg (Rückkamera)? */
+function camFacing(track) {
+  if (!track) return '';
+  const s = track.getSettings ? track.getSettings() : {};
+  if (s.facingMode === 'environment' || s.facingMode === 'user') return s.facingMode;
+  if (/back|rear|environment|rück/i.test(track.label || '')) return 'environment';
+  return 'user';
+}
+
+function setCamTrack(track) {
+  M.cam = track || null;
+  M.camBack = !!track && camFacing(track) === 'environment';
+  if (track) track.addEventListener('ended', () => { if (M.cam === track) { setCamTrack(null); pushTrack('cam'); } });
+}
+
+async function videoInputs() {
+  if (!navigator.mediaDevices || !navigator.mediaDevices.enumerateDevices) return [];
+  try { return (await navigator.mediaDevices.enumerateDevices()).filter((d) => d.kind === 'videoinput'); } catch (e) { return []; }
+}
+
+/** Wie viele Kameras gibt es? Ab zwei erscheint „Kamera wechseln“. */
+async function countCameras() {
+  const n = (await videoInputs()).length;
+  if (n !== M.camCount) { M.camCount = n; renderControls(); }
+  return n;
+}
+if (typeof navigator !== 'undefined' && navigator.mediaDevices && navigator.mediaDevices.addEventListener) {
+  navigator.mediaDevices.addEventListener('devicechange', () => { if (M.cam) countCameras(); });
+}
+
+/** Knopf „Kamera wechseln“: Handy vorne/hinten, sonst die nächste Kamera. */
+async function switchCamera() {
+  if (!M.cam || M.camBusy) return;
+  const cams = await videoInputs();
+  let pick;
+  if (IS_MOBILE) {
+    pick = { f: camFacing(M.cam) === 'environment' ? 'user' : 'environment' };
+  } else {
+    if (cams.length < 2) { toast('Es gibt nur eine Kamera.', 'error'); return; }
+    const cur = (M.cam.getSettings && M.cam.getSettings().deviceId) || '';
+    const i = cams.findIndex((d) => d.deviceId === cur);
+    pick = { d: cams[(i + 1) % cams.length].deviceId };
+  }
+  await useCamera(pick, true);
+}
+
+/**
+ * Laufende Kamera gegen eine andere tauschen (pick wie in sc-camera).
+ * Handys öffnen meist nur eine Kamera zur Zeit: dort erst die alte
+ * schließen, sonst erst die neue öffnen (kein schwarzes Bild dazwischen).
+ */
+async function useCamera(pick, remember) {
+  if (!M.cam || M.camBusy) { if (remember) saveCamera(pick); return; }
+  M.camBusy = true;
+  const old = M.cam;
+  const before = { f: camFacing(old), d: (old.getSettings && old.getSettings().deviceId) || '' };
+  let track = null;
+  try {
+    if (IS_MOBILE) old.stop();
+    try {
+      track = pick && !pick.d && !pick.f ? await openCamTrack({}) : await openCamTrackExact(pick);
+    } catch (e) {
+      toast(IS_MOBILE && pick.f ? (pick.f === 'environment' ? 'Die Rückkamera' : 'Die Frontkamera') + ' ließ sich nicht öffnen.' : 'Diese Kamera ließ sich nicht öffnen.', 'error');
+      if (!IS_MOBILE) return;   // die alte läuft weiter
+      try { track = await openCamTrack(before.d ? { d: before.d } : { f: before.f }); } catch (e2) { track = null; }
+    }
+    if (!IS_MOBILE && track) old.stop();
+    setCamTrack(track);
+    if (track && remember) {
+      const s = track.getSettings ? track.getSettings() : {};
+      saveCamera(IS_MOBILE ? { f: camFacing(track) } : { d: s.deviceId || pick.d || '', f: s.facingMode || '' });
+    }
+    await pushTrack('cam');
+  } finally {
+    M.camBusy = false;
+  }
+}
+
+/** Beim Wechseln genau diese Kamera – sonst merkt man den Knopfdruck nicht. */
+async function openCamTrackExact(pick) {
+  const stream = await navigator.mediaDevices.getUserMedia({ video: camConstraints(pick, true) });
+  return stream.getVideoTracks()[0];
+}
+
+/** Auswahl für die Einstellungen: Handy vorne/hinten, dazu alle Kameras. */
+async function cameraChoices() {
+  const items = [{ id: '', name: 'Standard-Kamera' }];
+  if (IS_MOBILE) items.push({ id: 'f:user', name: 'Frontkamera' }, { id: 'f:environment', name: 'Rückkamera' });
+  let n = 0;
+  for (const d of await videoInputs()) {
+    n++;
+    if (!d.deviceId || d.deviceId === 'default') continue;
+    items.push({ id: 'd:' + d.deviceId, name: d.label || 'Kamera ' + n });
+  }
+  return items;
+}
+
+function cameraChoiceId() {
+  const c = savedCamera();
+  return c.d ? 'd:' + c.d : c.f ? 'f:' + c.f : '';
+}
+
+function setCameraChoice(id) {
+  const pick = id.startsWith('d:') ? { d: id.slice(2) } : id.startsWith('f:') ? { f: id.slice(2) } : {};
+  saveCamera(pick);
+  if (M.cam) useCamera(pick, false);   // läuft gerade: gleich umschalten
 }
 
 /* ---------- Bildschirm teilen: Qualität ----------------------------------- */
@@ -6030,6 +6426,7 @@ function stopScreen() {
 function stopLocalMedia() {
   for (const t of [M.mic, M.cam, M.screen, M.screenAudio]) if (t) t.stop();
   M.mic = M.cam = M.screen = M.screenAudio = null;
+  M.camBack = false;
   unmeter('local');
 }
 
@@ -6908,7 +7305,7 @@ function renderStage() {
   const want = [];
 
   // Eigene Kacheln
-  want.push({ key: 'me:cam', ident: S.ids.get(S.me.id), track: M.cam, video: !!M.cam, self: true, muted: !(M.micOn && !M.deaf), speak: S.me.id });
+  want.push({ key: 'me:cam', ident: S.ids.get(S.me.id), track: M.cam, video: !!M.cam, self: true, back: M.camBack, muted: !(M.micOn && !M.deaf), speak: S.me.id });
   if (M.screen) want.push({ key: 'me:screen', ident: S.ids.get(S.me.id), track: M.screen, video: true, screen: true, self: true, label: 'Dein Bildschirm' });
 
   for (const p of people.peers) {
@@ -6945,7 +7342,7 @@ function renderStage() {
     const meet = !!(room && room.meta.meet);
     top.append(el('span', { class: 'sc-stage-state', text: meet ? room.meta.name + ' · Call · ' + (S.voice.peers.size + 1) + ' Personen' : (room ? room.meta.name : '') + ' · Sprache' }),
       el('span', { class: 'sc-stage-right' }, netQualityBadge(),
-        meet && !S.guest ? el('button', { type: 'button', class: 'sc-code', title: 'Meeting-Link teilen', onclick: () => meetingDialog(room) }, icon('link', 13), 'Link teilen') : null,
+        meet && canShareLink(room) ? el('button', { type: 'button', class: 'sc-code', title: 'Meeting-Link teilen', onclick: () => meetingDialog(room) }, icon('link', 13), 'Link teilen') : null,
         el('button', { type: 'button', class: 'sc-code', title: 'Sicherheitscodes vergleichen', onclick: showCodeInfo },
           icon('lock', 13), 'Ende-zu-Ende verschlüsselt · Codes an den Kacheln')));
   }
@@ -7184,7 +7581,8 @@ function updateTile(t, w) {
     resetZoom(t);
   }
   if (!zoomable(t) && t.zoom.s > 1) resetZoom(t);
-  t.video.classList.toggle('is-mirror', !!(w.self && !w.screen));
+  // Spiegeln wie ein Spiegel – nur die Kamera, die zu einem zeigt, nicht die Rückkamera.
+  t.video.classList.toggle('is-mirror', !!(w.self && !w.screen && !w.back));
   t.hideBtn.hidden = !w.screen || !!w.self;
   t.face.textContent = '';
   if (w.hiddenScreen) {
@@ -7214,7 +7612,8 @@ function renderControls() {
   const canScreen = !!(navigator.mediaDevices && navigator.mediaDevices.getDisplayMedia);
   // Nur bei Änderungen neu bauen – sonst flackert auf dem Handy der eben
   // getippte Knopf bei jedem Abruf.
-  const sig = [M.micOn, M.deaf, !!M.cam, !!M.screen, canScreen, screenQuality().id, !!S.voice].join('|');
+  const canSwitch = !!M.cam && (M.camCount || 0) > 1;
+  const sig = [M.micOn, M.deaf, !!M.cam, canSwitch, M.camBack, !!M.screen, canScreen, screenQuality().id, !!S.voice].join('|');
   if (box.dataset.sig === sig && box.firstChild) return;
   box.dataset.sig = sig;
   box.textContent = '';
@@ -7225,6 +7624,7 @@ function renderControls() {
   appendAll(box,
     ctl(M.micOn ? 'mic' : 'micOff', M.micOn ? 'Stummschalten' : 'Mikrofon an', M.micOn && !M.deaf, toggleMic),
     ctl(M.cam ? 'video' : 'videoOff', M.cam ? 'Kamera aus' : 'Kamera an', !!M.cam, toggleCam),
+    canSwitch ? ctl('camSwitch', IS_MOBILE ? (M.camBack ? 'Zur Frontkamera wechseln' : 'Zur Rückkamera wechseln') : 'Kamera wechseln', true, switchCamera, 'sc-ctl--switch') : null,
     canScreen ? ctl(M.screen ? 'screen' : 'screenOff', M.screen ? 'Teilen beenden' : 'Bildschirm teilen', !!M.screen, toggleScreen) : null,
     canScreen && M.screen ? ctl('sliders', 'Qualität: ' + q.name + ' (' + q.info + ')', true, showScreenQuality) : null,
     ctl(M.deaf ? 'headOff' : 'head', M.deaf ? 'Ton an' : 'Nichts hören', !M.deaf, toggleDeaf),
@@ -7877,6 +8277,8 @@ function showSettings() {
           mic.setItems(items);
         }).catch(() => {});
       }
+      const camPick = choice([{ id: '', name: 'Standard-Kamera' }], cameraChoiceId(), setCameraChoice);
+      cameraChoices().then((items) => camPick.setItems(items)).catch(() => {});
       const audio = choice(AUDIO_QUALITY, ownAudioQuality().id, setAudioQuality);
       const roomAq = roomAudioQuality();
       const roomAqName = roomAq && S.voice ? (S.rooms.get(S.voice.rid) || { meta: { name: '' } }).meta.name : '';
@@ -7884,6 +8286,7 @@ function showSettings() {
       appendAll(body,
         relayStatusRow(),
         pickField('Mikrofon', mic, 'Namen erscheinen, sobald du einmal das Mikrofon erlaubt hast.'),
+        pickField('Kamera', camPick, 'Gilt für dieses Gerät. Im Call wechselst du mit dem Knopf neben der Kamera' + (IS_MOBILE ? ' zwischen vorne und hinten.' : ' zur nächsten Kamera.') + ' Namen erscheinen, sobald du die Kamera einmal erlaubt hast.'),
         pickField('Tonqualität', audio, 'Gilt für dieses Gerät, Datenrate und Filter sofort, Stereo ab dem nächsten Anruf.' +
           (roomAq ? ' Im Sprachkanal von „' + roomAqName + '“ gilt gerade die Einstellung des Raums: ' + roomAq.name + '.' : '')),
         pickField('Bildschirm teilen', screenPick, 'Gilt für dieses Gerät. Während einer Übertragung lässt sie sich über den Regler-Knopf neben „Bildschirm teilen“ ändern.'),

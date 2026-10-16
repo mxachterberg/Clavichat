@@ -51,7 +51,15 @@
  *  der gültigen Einladung eine temporäre Identität mit Merkmal "g" – ohne
  *  Zugangscode. Gäste sind nur im Meeting: keine Online-Liste, keine Suche,
  *  keine Direktnachrichten, keine Freunde, keine eigenen Räume oder
- *  Einladungen, höchstens ein Raum (und nur ein Einmal-Meeting).
+ *  Einladungen (außer Links zu ihrem Meeting), höchstens ein Raum (und nur
+ *  ein Einmal-Meeting).
+ *
+ *  Beitritt mit Bestätigung (nur Einmal-Meetings): Links des aktuellen
+ *  Besitzers (Gastgebers) führen direkt hinein. Links von allen anderen
+ *  Mitgliedern – auch Gäste dürfen in ihrem Meeting welche erstellen –
+ *  stellen nur eine Anfrage (room['pend']). Der Gastgeber lässt zu oder
+ *  lehnt ab (room.kick mit "pend"); unbeantwortet verfällt sie nach
+ *  PEND_TTL. Wer wartet, fragt per poll ("w") nach.
  * ----------------------------------------------------------------------------
  */
 
@@ -83,6 +91,9 @@ class SecureCom
     const ONCE_IDLE     = 43200;     // Einmal-Meeting: 12 Stunden ohne Aktivität, dann weg
     const GUEST_IDLE    = 7200;      // Gäste: zwei Stunden ohne Abruf, dann weg (Tab zu)
     const GUEST_GRACE   = 600;       // Gäste ohne Meeting (verlassen, beendet): nach zehn Minuten weg
+    const PEND_TTL      = 600;       // Beitrittsanfrage an den Gastgeber: zehn Minuten, dann verfallen
+    const DENY_KEEP     = 600;       // so lange erfährt, wer abgelehnt wurde, davon
+    const MAX_PEND      = 20;        // offene Beitrittsanfragen je Meeting
 
     const MAX_ENTRY     = 98304;     // verschlüsselter Eintrag (Base64)
     const MAX_SIGNAL    = 49152;
@@ -953,7 +964,7 @@ class SecureCom
         }
 
         self::maybeCollectGarbage();
-        return [
+        $out = [
             'now'   => $now,
             'i'     => $inbox,
             'r'     => (object)$feeds,
@@ -961,6 +972,26 @@ class SecureCom
             'pv'    => self::presenceVersion($presence, $me['id']),
             'tv'    => $me['k'] === 'account' ? (int)($me['tv'] ?? 0) : null,   // Anmeldungen am Konto
         ];
+        // Wartet auf den Gastgeber: Wie steht die Beitrittsanfrage?
+        if (isset($b['w']) && is_string($b['w']) && preg_match('/^[A-Za-z0-9_-]{22}$/', $b['w'])) {
+            $out['w'] = self::waitState($b['w'], $me['id']);
+        }
+        return $out;
+    }
+
+    /**
+     * Stand einer Beitrittsanfrage: 'in' (zugelassen), 'wait' (offen),
+     * 'no' (abgelehnt) oder 'gone' (verfallen, Meeting weg).
+     */
+    private static function waitState($rid, $id)
+    {
+        $room = self::readJson(self::roomFile($rid), true);
+        if (!$room) return 'gone';
+        if (isset($room['mem'][$id])) return 'in';
+        $now = time();
+        if (isset($room['pend'][$id]) && (int)$room['pend'][$id]['x'] >= $now) return 'wait';
+        if (isset($room['deny'][$id]) && $now - (int)$room['deny'][$id] <= self::DENY_KEEP) return 'no';
+        return 'gone';
     }
 
     /* ======================================================================
@@ -1029,23 +1060,81 @@ class SecureCom
 
     public static function createInvite(array $me, array $b)
     {
-        // Den Link haben Gäste schon – neue Einladungen gibt, wer eine eigene Sitzung oder ein Konto hat.
-        self::guestOnly($me, 'Gäste eines Meetings können keine Einladungen erstellen.');
+        // Gäste: nur Links zu ihrem Einmal-Meeting – wer damit kommt, lässt der Gastgeber erst zu.
+        $guest = self::isGuest($me);
         $rid  = self::idOf(self::str($b, 'id'));
         $days = max(1, min(30, (int)($b['days'] ?? 7)));
         $max  = max(1, min(100, (int)($b['max'] ?? 25)));
-        return self::roomMutate($rid, function (&$room) use ($me, $days, $max) {
+        return self::roomMutate($rid, function (&$room) use ($me, $days, $max, $guest) {
+            if ($guest && (empty($room['ot']) || !isset($room['mem'][$me['id']]))) {
+                throw new SecureComException('Gäste eines Meetings können nur Links zu ihrem Meeting erstellen.', 403);
+            }
             self::requireMember($room, $me['id']);
             $now = time();
             foreach ($room['inv'] as $code => $inv) {
                 if ((int)$inv['x'] < $now || (int)$inv['n'] >= (int)$inv['max']) unset($room['inv'][$code]);
             }
+            $approve = self::needsApproval($room, $me['id']);
+            if ($approve) {
+                // Nicht der Gastgeber: ein Link je Mitglied genügt (sonst füllten
+                // Gäste mit jedem Klick die Liste der offenen Einladungen).
+                foreach ($room['inv'] as $code => $inv) {
+                    if (($inv['b'] ?? '') === $me['id']) {
+                        return ['code' => $code, 'epoch' => (int)$room['e'], 'x' => (int)$inv['x'], 'ap' => true];
+                    }
+                }
+            }
             if (count($room['inv']) >= 50) throw new SecureComException('Zu viele offene Einladungen.', 409);
             $code = self::randomId();
             $room['inv'][$code] = ['b' => $me['id'], 'c' => $now, 'x' => $now + $days * 86400, 'n' => 0, 'max' => $max];
             $room['la'] = $now;
-            return ['code' => $code, 'epoch' => (int)$room['e'], 'x' => $now + $days * 86400];
+            return ['code' => $code, 'epoch' => (int)$room['e'], 'x' => $now + $days * 86400, 'ap' => $approve];
         });
+    }
+
+    /**
+     * Braucht ein Beitritt über einen Link von $by die Zustimmung des
+     * Gastgebers? Nur in Einmal-Meetings, und nur, wenn der Link nicht vom
+     * aktuellen Besitzer stammt (geht der Besitzer, gilt das auch für seine
+     * alten Links – sein Nachfolger entscheidet).
+     */
+    private static function needsApproval(array $room, $by)
+    {
+        return !empty($room['ot']) && $by !== $room['o'];
+    }
+
+    /** Abgelaufene Anfragen und alte Ablehnungen entfernen (im roomMutate). */
+    private static function prunePending(array &$room, $now)
+    {
+        foreach ((array)($room['pend'] ?? []) as $id => $p) {
+            if ((int)$p['x'] < $now || isset($room['mem'][$id])) unset($room['pend'][$id]);
+        }
+        foreach ((array)($room['deny'] ?? []) as $id => $t) {
+            if ($now - (int)$t > self::DENY_KEEP) unset($room['deny'][$id]);
+        }
+        if (empty($room['pend'])) unset($room['pend']);
+        if (empty($room['deny'])) unset($room['deny']);
+    }
+
+    /** Wartet $id auf einen Raum? (mem/<id>.json "w": Raum => bis wann) */
+    private static function setWaiting($id, $rid, $until)
+    {
+        self::mutate(self::dir('mem') . '/' . $id . '.json', function (&$m) use ($rid, $until) {
+            if (!is_array($m)) $m = ['r' => []];
+            $w = isset($m['w']) && is_array($m['w']) ? $m['w'] : [];
+            if ($until) $w[$rid] = $until; else unset($w[$rid]);
+            if ($w) $m['w'] = $w; else unset($m['w']);
+        });
+    }
+
+    private static function waitingFor($id)
+    {
+        $data = self::readJson(self::dir('mem') . '/' . $id . '.json', true);
+        $out = [];
+        foreach ((array)($data['w'] ?? []) as $rid => $until) {
+            if ((int)$until >= time() && is_string($rid)) $out[] = $rid;
+        }
+        return $out;
     }
 
     public static function joinRoom(array $me, array $b)
@@ -1060,38 +1149,146 @@ class SecureCom
         if ($guest && $mine && !in_array($rid, $mine, true)) {
             throw new SecureComException('Als Gast bist du nur in einem Meeting. Verlasse es zuerst.', 403);
         }
-        $room = self::roomMutate($rid, function (&$room) use ($me, $code, $guest) {
-            if (isset($room['mem'][$me['id']])) return $room;
+        $state = 'in';
+        $was   = false;
+        $room = self::roomMutate($rid, function (&$room) use ($me, $code, $guest, &$state, &$was) {
+            if (isset($room['mem'][$me['id']])) { $was = true; return $room; }
             if ($guest && empty($room['ot'])) {
                 throw new SecureComException('Gäste können nur dem Meeting beitreten, zu dem ihr Link gehört.', 403);
             }
-            if (!self::inviteValid($room, $code)) {
+            $now = time();
+            self::prunePending($room, $now);
+            $valid   = self::inviteValid($room, $code);
+            $approve = $valid && self::needsApproval($room, (string)($room['inv'][$code]['b'] ?? ''));
+            // Schon angefragt: weiter warten (die Einladung kann inzwischen verbraucht
+            // sein) – außer mit einem Link des Gastgebers, der führt direkt hinein.
+            if (isset($room['pend'][$me['id']]) && !($valid && !$approve)) { $state = 'wait'; return $room; }
+            if (!$valid) {
                 throw new SecureComException('Die Einladung ist ungültig oder abgelaufen.', 403);
             }
             if (count($room['mem']) >= self::MAX_MEMBERS) {
                 throw new SecureComException('Der Raum ist voll.', 409);
             }
+            if ($approve) {
+                if (isset($room['deny'][$me['id']])) {
+                    throw new SecureComException('Der Gastgeber hat deinen Beitritt abgelehnt.', 403, ['denied' => true]);
+                }
+                if (count((array)($room['pend'] ?? [])) >= self::MAX_PEND) {
+                    throw new SecureComException('Gerade warten zu viele auf den Gastgeber. Bitte später erneut versuchen.', 409);
+                }
+                $room['pend'][$me['id']] = ['t' => $now, 'x' => $now + self::PEND_TTL, 'c' => $code];
+                $room['rev']++;   // der Gastgeber merkt es beim nächsten Abruf
+                $state = 'wait';
+                return $room;
+            }
             $room['inv'][$code]['n']++;
-            $room['mem'][$me['id']] = time();
-            $room['la'] = time();
+            $room['mem'][$me['id']] = $now;
+            unset($room['pend'][$me['id']]);
+            if (empty($room['pend'])) unset($room['pend']);
+            $room['la'] = $now;
             $room['rev']++;
             return $room;
         }, true);
+        if ($state === 'in' && !$was) self::setWaiting($me['id'], $rid, 0);
+        if ($state === 'wait') {
+            $until = (int)$room['pend'][$me['id']]['x'];
+            self::setWaiting($me['id'], $rid, $until);
+            // Gast ohne Meeting, aber mit offener Anfrage: nicht vorzeitig aufräumen.
+            if ($guest) {
+                self::mutate(self::dir() . '/guests.json', function (&$g) use ($me) {
+                    if (is_array($g) && isset($g[$me['id']])) $g[$me['id']] = max((int)$g[$me['id']], time());
+                });
+            }
+            return ['id' => $rid, 'pending' => true, 'x' => $until];
+        }
         self::addMembership($me['id'], $rid);
-        self::appendSys($rid, 'join', $me['id']);
+        if (!$was) self::appendSys($rid, 'join', $me['id']);
         return self::publicRoom($room, $me['id']);
+    }
+
+    /**
+     * Gastgeber entscheidet über eine Beitrittsanfrage (room.kick mit
+     * "pend": "yes" oder "no"). Zulassen wirkt wie ein Beitritt mit Link.
+     */
+    private static function decidePending(array $me, $rid, $who, $yes)
+    {
+        $ident = self::identity($who);
+        if ($yes && !$ident) throw new SecureComException('Diese Person ist nicht mehr da.', 404);
+        if ($yes) {
+            $theirs = self::roomsOf($who);
+            if (count($theirs) >= self::MAX_ROOMS || (self::isGuest($ident) && $theirs && !in_array($rid, $theirs, true))) {
+                throw new SecureComException('Diese Person kann gerade keinem weiteren Raum beitreten.', 409);
+            }
+        }
+        $joined = false;
+        self::roomMutate($rid, function (&$room) use ($me, $who, $yes, &$joined) {
+            self::requireOwner($room, $me['id']);
+            $now = time();
+            self::prunePending($room, $now);
+            if (!isset($room['pend'][$who])) {
+                if (isset($room['mem'][$who])) return;
+                throw new SecureComException('Die Anfrage gibt es nicht mehr (verfallen oder zurückgezogen).', 404);
+            }
+            $code = (string)($room['pend'][$who]['c'] ?? '');
+            unset($room['pend'][$who]);
+            if ($yes) {
+                if (count($room['mem']) >= self::MAX_MEMBERS) throw new SecureComException('Das Meeting ist voll.', 409);
+                if (isset($room['inv'][$code])) $room['inv'][$code]['n']++;
+                $room['mem'][$who] = $now;
+                $room['la'] = $now;
+                $joined = true;
+            } else {
+                $room['deny'][$who] = $now;
+                if (count($room['deny']) > 50) { asort($room['deny']); array_shift($room['deny']); }
+            }
+            if (empty($room['pend'])) unset($room['pend']);
+            $room['rev']++;
+        });
+        if ($ident) self::setWaiting($who, $rid, 0);
+        if ($joined) {
+            self::addMembership($who, $rid);
+            self::appendSys($rid, 'join', $who);
+        }
     }
 
     public static function leaveRoom(array $me, array $b)
     {
         $rid = self::idOf(self::str($b, 'id'));
+        // Wartet nur (Beitrittsanfrage): zurückziehen – Mitglied war er nie.
+        if (self::cancelPending($rid, $me['id'])) return;
         self::removeMember($rid, $me['id'], 'leave');
     }
 
+    /** Wartende zieht ihre Anfrage zurück (room.leave, Sitzung beendet). */
+    private static function cancelPending($rid, $id)
+    {
+        if (!is_file(self::roomFile($rid))) return false;
+        $found = false;
+        try {
+            self::roomMutate($rid, function (&$room) use ($id, &$found) {
+                if (!isset($room['pend'][$id])) return;
+                unset($room['pend'][$id]);
+                if (empty($room['pend'])) unset($room['pend']);
+                $room['rev']++;
+                $found = true;
+            });
+        } catch (SecureComException $ex) { /* Raum schon weg */ }
+        if ($found) self::setWaiting($id, $rid, 0);
+        return $found;
+    }
+
+    /**
+     * Mitglied entfernen – oder mit "pend" ("yes"/"no") über eine
+     * Beitrittsanfrage entscheiden (nur der Besitzer, siehe decidePending).
+     */
     public static function kick(array $me, array $b)
     {
         $rid    = self::idOf(self::str($b, 'id'));
         $member = self::idOf(self::str($b, 'member'));
+        if (isset($b['pend'])) {
+            self::decidePending($me, $rid, $member, $b['pend'] === 'yes' || $b['pend'] === true || $b['pend'] === 1);
+            return;
+        }
         $room = self::readJson(self::roomFile($rid), true);
         if (!$room) throw new SecureComException('Raum nicht gefunden.', 404);
         self::requireOwner($room, $me['id']);
@@ -1117,6 +1314,8 @@ class SecureCom
             $room['m']   = $meta;
             $room['me']  = $epoch;
             $room['inv'] = [];
+            // Offene Beitrittsanfragen hängen an alten Links (alter Schlüssel) – sie verfallen mit.
+            unset($room['pend']);
             $room['la']  = time();
             $room['rev']++;
             return $room;
@@ -1651,6 +1850,7 @@ class SecureCom
         foreach (self::roomsOf($id) as $rid) {
             try { self::removeMember($rid, $id, 'leave'); } catch (Throwable $ex) { /* Raum schon weg */ }
         }
+        foreach (self::waitingFor($id) as $rid) self::cancelPending($rid, $id);
         if ($ident) {
             foreach ((array)($ident['tok'] ?? []) as $th) @unlink(self::dir('tokens') . '/' . $th . '.json');
             if (!empty($ident['u'])) {
@@ -1758,10 +1958,24 @@ class SecureCom
             'ot'      => !empty($room['ot']),               // Einmal-Meeting (Gäste mit Link)
             'exp'     => !empty($room['tmp']) ? self::lastActive($room) + self::roomIdle($room) : 0,
             'members' => $members,
+            'pend'    => $room['o'] === $selfId ? self::pendingList($room) : [],   // Beitrittsanfragen (nur für den Besitzer)
             'iv'      => $open,                             // offene Einladungen
             'vc'      => self::voiceList($room),            // erster Sprachkanal (ältere Apps)
             'vcs'     => (object)self::voiceMap($room),     // alle: Kanal => wer drin ist
         ];
+    }
+
+    /** Offene Beitrittsanfragen: wer (Identität noch da) und bis wann. */
+    private static function pendingList(array $room)
+    {
+        $out = [];
+        $now = time();
+        foreach ((array)($room['pend'] ?? []) as $id => $p) {
+            $id = (string)$id;
+            if ((int)$p['x'] < $now || isset($room['mem'][$id]) || !is_file(self::idFile($id))) continue;
+            $out[] = ['id' => $id, 't' => (int)$p['t'], 'x' => (int)$p['x']];
+        }
+        return $out;
     }
 
     /**
@@ -2136,7 +2350,8 @@ class SecureCom
             foreach ($guests as $id => $created) {
                 $id = (string)$id;
                 $seen = isset($presence[$id]) ? (int)$presence[$id][0] : (int)$created;
-                $alone = $now - (int)$created > self::GUEST_GRACE && !self::roomsOf($id);
+                // Wartet noch auf den Gastgeber (Beitrittsanfrage): nicht allein.
+                $alone = $now - (int)$created > self::GUEST_GRACE && !self::roomsOf($id) && !self::waitingFor($id);
                 if ($now - $seen > self::GUEST_IDLE || $alone || !is_file(self::idFile($id))) self::purgeIdentity($id);
             }
 
