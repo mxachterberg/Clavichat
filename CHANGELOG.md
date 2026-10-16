@@ -4,6 +4,23 @@ Was sich von Version zu Version ändert. Beim Veröffentlichen wird der
 Abschnitt einer Version zum Text des GitHub-Releases
 (`.github/workflows/windows.yml`).
 
+## 1.6.4 – 16.10.2026
+
+Neues Logo und mehr Transparenz. Die Windows-App 1.6.3 holt sich diese
+Version von selbst.
+
+- **Neues Logo:** Das Funkgerät trägt jetzt einen Schlüssel als Antenne –
+  Clavichat kommt von lateinisch *clavis*, Schlüssel. Neu im App-Symbol,
+  in der Taskleiste, im Infobereich, im Favicon und oben links in der App.
+- **Open Source:** „So funktioniert Clavichat“ (das i oben) endet jetzt mit
+  einem Link zum Quellcode auf GitHub und „Ein Projekt von Max Achterberg“.
+  Links öffnen im normalen Browser.
+- **clavichat.de:** Auf der eigenen Domain gibt es oben einen Knopf für Hell
+  und Dunkel.
+- Anleitung: Den Server zu Hause ins Internet zu stellen, wird nicht mehr
+  empfohlen – alle Nutzer sähen sonst die IP-Adresse des Anschlusses. Im
+  Heimnetz bleibt es unproblematisch.
+
 ## 1.6.3 – 03.10.2026
 
 Feinschliff an der Oberfläche. Die Windows-App 1.6.2 holt sich diese
