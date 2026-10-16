@@ -6,6 +6,11 @@ const { contextBridge, ipcRenderer } = require('electron');
 contextBridge.exposeInMainWorld('securecomDesktop', {
   /** Fenster nach vorn holen (Klick auf eine Benachrichtigung). */
   focus: () => ipcRenderer.send('securecom:focus'),
+  /** Fenster: beim Schließen in den Infobereich statt beenden. */
+  window: {
+    get: () => ipcRenderer.invoke('securecom:window', 'get'),
+    setTray: (on) => ipcRenderer.invoke('securecom:window', 'tray', !!on)
+  },
   /** In der Taskleiste blinken (eingehender Anruf). */
   attention: () => ipcRenderer.send('securecom:attention'),
   /** Sekunden ohne Maus und Tastatur am ganzen Rechner (für „abwesend“). */

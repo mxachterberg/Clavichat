@@ -7538,6 +7538,17 @@ function showSettings() {
         body.append(el('p', { class: 'sc-note', text: 'In der Windows-App ist die gespeicherte Anmeldung außerdem an dein Windows-Konto gebunden: Auf einem anderen Rechner oder unter einem anderen Windows-Konto lässt sie sich nicht öffnen.' }));
       }
 
+      // Fenster (nur Windows-App): beim Schließen in den Infobereich
+      if (DESKTOP && DESKTOP.window) {
+        body.appendChild(sectionHead('FENSTER'));
+        const tray = el('input', { type: 'checkbox' });
+        tray.addEventListener('change', () => { DESKTOP.window.setTray(tray.checked).catch(() => {}); });
+        DESKTOP.window.get().then((w) => { tray.checked = !!(w && w.tray); }).catch(() => {});
+        body.append(
+          el('label', { class: 'sc-check' }, tray, el('span', { text: 'Beim Schließen in den Infobereich minimieren – Clavichat läuft weiter, Nachrichten und Anrufe kommen an' })),
+          el('p', { class: 'sc-note', text: 'Zurück per Klick auf das Clavichat-Symbol unten rechts bei der Uhr; beenden mit Rechtsklick darauf → „Beenden“.' }));
+      }
+
       // Updates (nur Windows-App)
       if (UPDATES) {
         body.appendChild(sectionHead('UPDATES'));

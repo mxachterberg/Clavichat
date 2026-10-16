@@ -4,6 +4,21 @@ Was sich von Version zu Version ändert. Beim Veröffentlichen wird der
 Abschnitt einer Version zum Text des GitHub-Releases
 (`.github/workflows/windows.yml`).
 
+## Unveröffentlicht
+
+- **Meetings im eigenen Design:** Knopf „MEET“ links in der Raumleiste,
+  Meetings stehen getrennt von den Räumen. Statt Kanälen gibt es eine
+  Meeting-Karte mit Teilnehmern (wer im Call ist), über dem Chat eine Lobby
+  („Noch kein Call“ / „Call läuft“) mit großem Knopf; im Call wird die
+  Kachelansicht größer.
+- **clavichat.de als Zuhause:** Die Windows-App spricht mit clavichat.de,
+  Einladungs- und Meeting-Links zeigen immer auf https://clavichat.de/, und
+  auch die Updates kommen von dort. Die Anmeldung mit dem Postfach gibt es nur
+  noch auf achterberg.dev.
+- **Beim Schließen in den Infobereich:** Neue Einstellung unter FENSTER –
+  das X versteckt das Fenster, Clavichat läuft weiter (Nachrichten und
+  Anrufe kommen an). Zurück per Klick auf das Symbol, beenden per Rechtsklick.
+
 ## 1.7.0 – 16.10.2026
 
 Meetings, kleinere Updates und mehr Durchblick. Die Windows-App 1.6.7 holt

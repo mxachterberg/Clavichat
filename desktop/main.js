@@ -19,7 +19,7 @@
    ========================================================================== */
 'use strict';
 
-const { app, BrowserWindow, Menu, desktopCapturer, ipcMain, net, powerMonitor, protocol, safeStorage, session, shell } = require('electron');
+const { app, BrowserWindow, Menu, Tray, desktopCapturer, ipcMain, net, powerMonitor, protocol, safeStorage, session, shell } = require('electron');
 const crypto = require('node:crypto');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -94,6 +94,41 @@ app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required');   /
 
 let win = null;
 let config = null;
+
+/* Beim Schließen in den Infobereich (Einstellung je Gerät): Das X versteckt
+   das Fenster, Clavichat läuft weiter – Nachrichten und Anrufe kommen an.
+   Zurück per Klick auf das Symbol, beenden über dessen Menü. */
+let tray = null;
+let quitting = false;
+const windowPrefs = { tray: false };
+function prefsFile() { return path.join(app.getPath('userData'), 'window.json'); }
+function loadWindowPrefs() {
+  try { windowPrefs.tray = JSON.parse(fs.readFileSync(prefsFile(), 'utf8')).tray === true; } catch (e) { /* Standard: aus */ }
+}
+function saveWindowPrefs() {
+  fs.promises.writeFile(prefsFile(), JSON.stringify(windowPrefs)).catch(() => { /* nächstes Mal */ });
+}
+function showWindow() {
+  if (!win) return;
+  if (win.isMinimized()) win.restore();
+  win.show();
+  win.focus();
+}
+function updateTray() {
+  if (windowPrefs.tray && !tray && !SMOKE) {
+    tray = new Tray(ICON);
+    tray.setToolTip('Clavichat');
+    tray.setContextMenu(Menu.buildFromTemplate([
+      { label: 'Clavichat öffnen', click: showWindow },
+      { type: 'separator' },
+      { label: 'Beenden', click: () => { quitting = true; app.quit(); } }
+    ]));
+    tray.on('click', showWindow);
+  } else if (!windowPrefs.tray && tray) {
+    tray.destroy();
+    tray = null;
+  }
+}
 
 /* ---------- Titelleiste in den Farben der Oberfläche ------------------------
    Die Leiste selbst ist Teil der Seite (window.css), Windows zeichnet nur
@@ -385,6 +420,11 @@ function createWindow() {
   // Beim Selbsttest ohne Fokus anzeigen – Bildschirmfotos brauchen ein gezeichnetes Fenster.
   win.once('ready-to-show', () => { if (SMOKE) win.showInactive(); else win.show(); });
   win.on('focus', () => win.flashFrame(false));
+  win.on('close', (event) => {
+    if (quitting || !windowPrefs.tray || SMOKE) return;
+    event.preventDefault();
+    win.hide();
+  });
   win.on('closed', () => { win = null; });
 
   // Links öffnen im Standardbrowser, nie in der App.
@@ -426,6 +466,17 @@ ipcMain.on('securecom:focus', (event) => {
   if (win.isMinimized()) win.restore();
   win.show();
   win.focus();
+});
+
+// Einstellung „Beim Schließen in den Infobereich“
+ipcMain.handle('securecom:window', (event, op, value) => {
+  if (!win || event.sender !== win.webContents) return null;
+  if (op === 'tray') {
+    windowPrefs.tray = !!value;
+    saveWindowPrefs();
+    updateTray();
+  }
+  return { tray: windowPrefs.tray };
 });
 
 ipcMain.on('securecom:attention', (event) => {
@@ -470,12 +521,9 @@ function lockWindow() {
 if (!app.requestSingleInstanceLock()) {
   app.quit();
 } else {
-  app.on('second-instance', () => {
-    if (!win) return;
-    if (win.isMinimized()) win.restore();
-    win.show();
-    win.focus();
-  });
+  app.on('second-instance', () => showWindow());
+  // Updates und „Beenden“ im Infobereich schließen wirklich.
+  app.on('before-quit', () => { quitting = true; });
 
   app.whenReady().then(() => {
     Menu.setApplicationMenu(null);
@@ -491,7 +539,9 @@ if (!app.requestSingleInstanceLock()) {
     setupSession();
     pinCertificate();
     loadChrome();
+    loadWindowPrefs();
     createWindow();
+    updateTray();
     updater.init({ getWindow: () => win, smoke: SMOKE });
     powerMonitor.on('lock-screen', lockWindow);
     powerMonitor.on('suspend', lockWindow);
