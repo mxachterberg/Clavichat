@@ -149,6 +149,16 @@ const ICONS = {
   file: '<path d="M6 3h8l5 5v13H6z"/><path d="M14 3v5h5"/>'
 };
 
+/** Das Clavichat-Logo ohne Hintergrund: Linien in Textfarbe, Schlüsselbart und Lämpchen orange. */
+const LOGO = '<path d="M27 26V8.5M38 26V21.5" fill="none" stroke="currentColor" stroke-width="3.4" stroke-linecap="round"/><path d="M28.6 8h6.6v4h-2.6v3h2.6v4h-6.6z" fill="#f97316"/><rect x="20" y="26" width="24" height="26" rx="4" fill="none" stroke="currentColor" stroke-width="3.4"/><path d="M26.5 33.5h11M26.5 39h11" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"/><circle cx="32" cy="46" r="2.6" fill="#f97316"/>';
+function logoMark(size) {
+  const span = document.createElement('span');
+  span.className = 'sc-ic sc-logo';
+  span.setAttribute('aria-hidden', 'true');
+  span.innerHTML = '<svg width="' + size + '" height="' + size + '" viewBox="7 5 50 50">' + LOGO + '</svg>';
+  return span;
+}
+
 function icon(name, size) {
   const s = size || 18;
   const span = document.createElement('span');
@@ -2725,7 +2735,7 @@ function renderMainHead() {
       iconBtn('users', 'Mitglieder', () => { S.membersOpen = !S.membersOpen; renderAll(); }, { 'aria-pressed': S.membersOpen ? 'true' : 'false' }));
   } else {
     head.append(el('span', { class: 'sc-head-text' },
-      el('span', { class: 'sc-head-title' }, icon('radio', 15), 'Clavichat'),
+      el('span', { class: 'sc-head-title' }, logoMark(18), 'Clavichat'),
       el('span', { class: 'sc-head-sub', text: 'Ende-zu-Ende verschlüsselt' })),
       el('span', { class: 'sc-head-spacer' }),
       iconBtn('info', 'So funktioniert Clavichat', showSecurityInfo));

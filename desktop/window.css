@@ -29,7 +29,7 @@
   -webkit-app-region: drag;           /* ziehen, Doppelklick maximiert */
   app-region: drag;
 }
-.sc-titlebar svg { flex: none; color: var(--accent); }
+.sc-titlebar svg { flex: none; color: var(--text); }
 .sc-window-blur .sc-titlebar { color: var(--muted); }
 .sc-window-blur .sc-titlebar svg { opacity: .55; }
 

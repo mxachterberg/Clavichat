@@ -4,7 +4,7 @@
      build/icon.ico   16 … 256 (Windows: Programmdatei, Fenster, Taskleiste,
                       Infobereich – Windows nimmt je Stelle die passende Größe)
    Gleiches Motiv wie server/assets/securecom-icon.svg: dunkles Quadrat,
-   orangefarbene Eckmarken, Funkgerät mit Schlüssel als Antenne. Ohne Grafikprogramm: Pixel per
+   Funkgerät mit Schlüssel als Antenne (seit 1.6.4 ohne Eckmarken). Ohne Grafikprogramm: Pixel per
    Hand, überabgetastet (glatte Kanten), PNG mit zlib.
    Aufruf: npm run icon
    ========================================================================== */
@@ -42,14 +42,6 @@ function onLine(x, y, x1, y1, x2, y2, r) {
 /** Farbe am Punkt (x, y) im 64er-Raster – oder null (durchsichtig). */
 function shade(x, y) {
   if (!inRoundRect(x, y, 0, 0, 64, 64, 10)) return null;
-  const t = 1.5;   // halbe Strichstärke der Eckmarken (3)
-  const ticks = [
-    [9 - t, 9 - t, 2 * t, 8 + t], [9 - t, 9 - t, 8 + t, 2 * t],
-    [55 - t, 9 - t, 2 * t, 8 + t], [47, 9 - t, 8 + t, 2 * t],
-    [55 - t, 47, 2 * t, 8 + t], [47, 55 - t, 8 + t, 2 * t],
-    [9 - t, 47, 2 * t, 8 + t], [9 - t, 55 - t, 8 + t, 2 * t]
-  ];
-  for (const r of ticks) if (inRect(x, y, r[0], r[1], r[2], r[3])) return ORANGE;
 
   // Lämpchen
   if (Math.hypot(x - 32, y - 46) <= 2.6) return ORANGE;

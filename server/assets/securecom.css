@@ -452,6 +452,7 @@
   color: var(--text);
 }
 .sc-head-title .sc-ic { color: var(--muted); }
+.sc-head-title .sc-logo { color: var(--text); }
 .sc-head-title .sc-ic + .sc-kind, .sc-head-title .sc-kind { margin-left: 2px; }
 .sc-head-sub {
   overflow: hidden;
