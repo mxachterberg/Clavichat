@@ -109,6 +109,7 @@
 /* Meeting starten: kräftiger als „+“, Kamera mit Beschriftung */
 .sc-rail-meet { flex-direction: column; gap: 1px; border-color: var(--accent); background: var(--accent-soft); color: var(--accent); }
 .sc-rail-meet:hover { background: var(--accent); color: #fff; }
+.sc-rail-meet.is-busy { cursor: progress; opacity: .6; pointer-events: none; }
 .sc-rail-meet-label { font-family: var(--mono); font-size: 8px; font-weight: 600; letter-spacing: .14em; line-height: 1; }
 .sc-rail-room.is-meeting { border-color: var(--accent); }
 .sc-rail-room.is-meeting .sc-rail-initials { color: var(--accent); }
@@ -1607,6 +1608,22 @@ html[data-theme="light"] .sc-modal { background: rgba(40, 40, 40, .3); }
   color: var(--muted);
 }
 .sc-gate-note--warn { color: var(--accent); }
+/* Startseite, Reiter „Temporär“: zweiter Weg – gleich ein Meeting erstellen */
+.sc-gate-or {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 18px 0 14px;
+  font-family: var(--mono);
+  font-size: 10.5px;
+  letter-spacing: .12em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.sc-gate-or::before, .sc-gate-or::after { content: ""; flex: 1; height: 1px; background: var(--border); }
+.sc-gate-meet { justify-content: center; gap: 8px; border-color: var(--accent); color: var(--accent); }
+.sc-gate-meet:hover, .sc-gate-meet:focus-visible { background: var(--accent-soft); }
+.sc-gate-meet + .sc-gate-note { margin-top: 10px; padding-top: 0; border-top: 0; }
 .sc-field-note { display: block; margin-top: 6px; font-size: 11.5px; line-height: 1.5; color: var(--muted); }
 
 /* App-Sperre: deckt alles ab (auch Dialoge und Meldungen), Hintergrund wie die Seite */
@@ -1859,53 +1876,17 @@ html[data-theme="light"] .sc-modal { background: rgba(40, 40, 40, .3); }
   .sc-meet-lobby-acts .btn { flex: 1; }
 }
 
-/* ---- Zwei Arten Meetings: schnell (einmalig) und fest ------------------- */
-.sc-meet-types { display: grid; gap: 10px; margin-bottom: 4px; }
-.sc-meet-type {
-  display: flex;
-  align-items: flex-start;
-  gap: 14px;
-  width: 100%;
-  padding: 16px;
-  border: 1px solid var(--border);
-  background: var(--panel);
-  color: var(--text-body);
-  font: inherit;
-  text-align: left;
-  cursor: pointer;
-  transition: border-color .15s ease, background .15s ease;
-}
-.sc-meet-type:hover, .sc-meet-type:focus-visible { border-color: var(--accent); outline: none; }
-.sc-meet-type.is-picked { border-color: var(--accent); background: var(--accent-soft); }
-.sc-meet-type:disabled { cursor: progress; opacity: .6; }
-.sc-meet-type.is-busy { opacity: 1; }
-.sc-meet-type-icon { flex: none; display: grid; place-items: center; width: 48px; height: 48px; border: 1px solid var(--accent); background: var(--accent-soft); color: var(--accent); }
-.sc-meet-type-text { display: flex; flex-direction: column; gap: 5px; min-width: 0; }
-.sc-meet-type-name { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; font-family: var(--mono); font-size: 12.5px; font-weight: 600; letter-spacing: .12em; text-transform: uppercase; color: var(--text); }
-.sc-meet-type-tag { padding: 1px 5px; border: 1px solid currentColor; font-size: 9px; letter-spacing: .14em; color: var(--accent); }
-.sc-meet-type-sub { font-size: 13px; line-height: 1.5; color: var(--muted); }
-.sc-meet-once { padding: 1px 6px; border: 1px solid var(--accent); font-family: var(--mono); font-size: 9.5px; letter-spacing: .14em; color: var(--accent); }
+/* ---- Meetings: Teilnehmer ----------------------------------------------- */
 .sc-meet-person .sc-kind, .sc-meet-person .sc-owner { flex: none; }
 .sc-kind--guest { border-color: var(--accent); color: var(--accent); }
-.sc-rail-room.is-once .sc-rail-initials::before {
-  content: "1×";
-  position: absolute;
-  left: -6px;
-  top: -6px;
-  padding: 0 3px;
-  background: var(--accent);
-  color: #fff;
-  font-size: 8px;
-  line-height: 13px;
-  letter-spacing: 0;
-}
 
-/* ---- Gäste eines Einmal-Meetings: nur das Meeting ----------------------- */
+/* ---- Meeting-Modus (Gäste und Gastgeber von der Startseite): nur das Meeting */
 .sc-gate-card.is-guest { max-width: 430px; }
 .sc-guest-emblem { display: grid; place-items: center; width: 62px; height: 62px; margin: 6px 0 14px; border: 1px solid var(--accent); background: var(--accent-soft); color: var(--accent); }
 .sc-guest-emblem.is-ended { border-color: var(--border); background: transparent; color: var(--muted); }
 .sc-guest-title { font-size: 26px; }
 .sc-gate-card.is-guest .btn + .btn { margin-top: 10px; }
+.sc-gate-card.is-guest .sc-gate-note + .btn { margin-top: 16px; }
 .sc-guest .sc-rail { display: none; }
 .sc-guest .sc { grid-template-columns: var(--sc-side) minmax(0, 1fr); }
 .sc-guest .sc.members-open { grid-template-columns: var(--sc-side) minmax(0, 1fr) var(--sc-members); }
