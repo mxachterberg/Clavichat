@@ -4,6 +4,27 @@ Was sich von Version zu Version ändert. Beim Veröffentlichen wird der
 Abschnitt einer Version zum Text des GitHub-Releases
 (`.github/workflows/windows.yml`).
 
+## 1.7.0 – 16.10.2026
+
+Meetings, kleinere Updates und mehr Durchblick. Die Windows-App 1.6.7 holt
+sich diese Version von selbst.
+
+- **Meetings:** Der neue Knopf oben rechts legt einen Meeting-Raum an und
+  zeigt einen Link. Wer ihn öffnet, ist mit einem Klick im Meeting – auch
+  ohne Konto, mit einer temporären Sitzung. Im Raum könnt ihr schreiben;
+  einen Call startet, wer will, oben mit dem Hörer: Ton, Kamera und
+  Bildschirm wie bei einem Anruf, bis zu 8 Personen. Ruhende Meetings löscht
+  der Server nach einer Woche.
+- **Kleine Updates:** Die installierte App lädt künftig nur noch das
+  Programmpaket (rund 1 MB statt über 100 MB), solange sich die eingebaute
+  Browser-Engine nicht ändert. Signiert und geprüft wie bisher. Die portable
+  Fassung bekommt weiter das volle Update.
+- **So funktioniert Clavichat:** Neuer Umschalter „Dieser Server | Selbst
+  betrieben“ – zeigt, wie es mit eigenem Server und eigenem Relay aussieht,
+  und wer dann was sieht.
+- **Titelleiste:** Ganz oben links steht nur noch „CLAVICHAT“.
+- **Sicherheit:** Electron 44.7.0 mit aktuellen Chromium-Korrekturen.
+
 ## 1.6.7 – 16.10.2026
 
 Aufgeräumte Titelleiste. Die Windows-App 1.6.6 holt sich diese Version von
