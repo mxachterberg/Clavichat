@@ -129,6 +129,8 @@ const ICONS = {
   crown: '<path d="M4 17l-1-10 5 4 4-6 4 6 5-4-1 10z"/>',
   more: '<circle cx="5" cy="12" r="1.3"/><circle cx="12" cy="12" r="1.3"/><circle cx="19" cy="12" r="1.3"/>',
   info: '<circle cx="12" cy="12" r="9"/><path d="M12 11v6M12 7.5v.5"/>',
+  sun: '<circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"/>',
+  moon: '<path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>',
   download: '<path d="M12 4v11M7 10l5 5 5-5M5 20h14"/>',
   refresh: '<path d="M20 11a8 8 0 0 0-14.3-4.9L4 8"/><path d="M4 4v4h4"/><path d="M4 13a8 8 0 0 0 14.3 4.9L20 16"/><path d="M20 20v-4h-4"/>',
   chevron: '<path d="M6 9l6 6 6-6"/>',
@@ -2727,6 +2729,14 @@ function renderMainHead() {
       el('span', { class: 'sc-head-sub', text: 'Ende-zu-Ende verschlüsselt' })),
       el('span', { class: 'sc-head-spacer' }),
       iconBtn('info', 'So funktioniert Clavichat', showSecurityInfo));
+  }
+  // Eigene Domain (clavichat.de) ohne Seitenleiste oben: Hell/Dunkel hier.
+  if (document.body.classList.contains('sc-standalone')) {
+    const dark = document.documentElement.getAttribute('data-theme') !== 'light';
+    head.appendChild(iconBtn(dark ? 'sun' : 'moon', dark ? 'Zu hell wechseln' : 'Zu dunkel wechseln', () => {
+      setTheme(dark ? 'light' : 'dark');
+      renderMainHead();
+    }));
   }
 }
 
