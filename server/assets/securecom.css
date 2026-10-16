@@ -713,6 +713,8 @@
 .sc-update-notes { margin: -6px 0 14px; padding-left: 18px; font-size: 13px; line-height: 1.55; color: var(--text-body); }
 .sc-update-notes li { margin-bottom: 4px; }
 .sc-update-link { color: var(--accent); text-underline-offset: 3px; }
+.sc-ibtn.is-live { color: var(--green); }
+.sc-rail-room.is-meeting .sc-rail-initials { color: var(--accent); }
 .sc-update-error { color: var(--sc-danger); }
 .sc-progress { height: 6px; margin: -6px 0 14px; overflow: hidden; background: var(--border); }
 .sc-progress > span { display: block; width: 0; height: 100%; background: var(--accent); transition: width .2s linear; }

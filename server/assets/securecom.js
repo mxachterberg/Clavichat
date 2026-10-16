@@ -102,6 +102,7 @@ const ICONS = {
   image: '<rect x="3" y="4" width="18" height="16" rx="1"/><circle cx="9" cy="10" r="2"/><path d="M21 16l-5-5L5 20"/>',
   phone: '<path d="M5 4h4l2 5-2.5 1.5a11 11 0 0 0 5 5L15 13l5 2v4a2 2 0 0 1-2 2A16 16 0 0 1 3 6a2 2 0 0 1 2-2z"/>',
   video: '<rect x="3" y="6" width="13" height="12" rx="1"/><path d="M16 10l5-3v10l-5-3z"/>',
+  meet: '<rect x="2" y="7" width="13" height="11" rx="1"/><path d="M15 11l5-3v9l-5-3z"/><path d="M8.5 10.5v4M6.5 12.5h4"/><path d="M5 4.5h7"/>',
   videoOff: '<rect x="3" y="6" width="13" height="12" rx="1"/><path d="M16 10l5-3v10l-5-3z"/><path d="M2 2l20 20"/>',
   mic: '<rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/>',
   micOff: '<rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/><path d="M3 3l18 18"/>',
@@ -1011,7 +1012,9 @@ function renderGate(tab, message) {
     el('p', { class: 'sc-gate-sub', text: 'Ende-zu-Ende verschlüsselt: Deine Schlüssel entstehen ' + (DESKTOP ? 'in dieser App' : 'in diesem Browser') + '. Der Server leitet nur Verschlüsseltes weiter – auch der Hoster kann nicht mitlesen oder mithören.' })
   );
   if (S.pendingJoin) {
-    card.appendChild(el('p', { class: 'sc-gate-invite' }, icon('link', 15), 'Du wurdest in einen Raum eingeladen. Melde dich an oder starte eine temporäre Sitzung – danach trittst du bei.'));
+    card.appendChild(el('p', { class: 'sc-gate-invite' }, icon(S.pendingJoin.meet ? 'meet' : 'link', 15), S.pendingJoin.meet
+      ? 'Du wurdest in einen Meeting-Raum eingeladen. Starte eine temporäre Sitzung (oder melde dich an) – danach bist du mit einem Klick drin.'
+      : 'Du wurdest in einen Raum eingeladen. Melde dich an oder starte eine temporäre Sitzung – danach trittst du bei.'));
   }
   const tabs = el('div', { class: 'sc-tabs', role: 'tablist' });
   const panel = el('div', { class: 'sc-gate-panel' });
@@ -2207,9 +2210,10 @@ async function enterApp() {
 }
 
 function parseJoinFragment() {
-  const m = /^#join=([A-Za-z0-9_-]{22})\.([A-Za-z0-9_-]{22})\.([A-Za-z0-9_-]{43})\.(\d{1,6})$/.exec(location.hash || '');
+  // #join= tritt einem Raum bei, #meet= einem Meeting (danach gleich in den Sprachkanal).
+  const m = /^#(join|meet)=([A-Za-z0-9_-]{22})\.([A-Za-z0-9_-]{22})\.([A-Za-z0-9_-]{43})\.(\d{1,6})$/.exec(location.hash || '');
   if (m) {
-    S.pendingJoin = { rid: m[1], code: m[2], key: m[3], epoch: parseInt(m[4], 10) };
+    S.pendingJoin = { rid: m[2], code: m[3], key: m[4], epoch: parseInt(m[5], 10), meet: m[1] === 'meet' };
     ssSet(JOIN_KEY, S.pendingJoin);
     // Den Schlüssel sofort aus der Adresszeile (und dem Verlauf) nehmen.
     history.replaceState(null, '', location.pathname + location.search);
@@ -2223,6 +2227,12 @@ async function offerPendingJoin() {
   if (!join) return;
   S.pendingJoin = null;
   ssSet(JOIN_KEY, null);
+  if (join.meet) {
+    if (S.rooms.has(join.rid)) { openRoom(join.rid); return; }
+    const ok = await confirmBox('MEETING', 'Du wurdest in einen Meeting-Raum eingeladen. Beitreten? Dort könnt ihr schreiben und bei Bedarf einen Call starten – die anderen sehen dich in der Mitgliederliste.', 'Meeting beitreten');
+    if (ok) joinRoom(join);
+    return;
+  }
   if (S.rooms.has(join.rid)) { openRoom(join.rid); return; }
   const ok = await confirmBox('Einladung', 'Du wurdest in einen Raum eingeladen. Beitreten? Alle Mitglieder sehen dich danach in der Mitgliederliste.', 'Beitreten');
   if (ok) joinRoom(join);
@@ -2381,13 +2391,15 @@ function renderRail() {
     for (const n of room.unread.values()) u += n;
     const b = el('button', {
       type: 'button',
-      class: 'sc-rail-btn sc-rail-room' + (u ? ' has-unread' : '') + (room.vc.length ? ' has-voice' : '') + (room.meta.img ? ' has-img' : ''),
+      class: 'sc-rail-btn sc-rail-room' + (u ? ' has-unread' : '') + (room.vc.length ? ' has-voice' : '') + (room.meta.img ? ' has-img' : '') + (room.meta.meet ? ' is-meeting' : ''),
       title: room.meta.name,
       'aria-current': S.view.kind === 'room' && S.view.rid === room.id ? 'true' : 'false',
       onclick: () => openRoom(room.id)
     }, room.meta.img
       ? el('span', { class: 'sc-rail-initials sc-rail-pic' }, el('img', { src: room.meta.img, alt: '', draggable: 'false' }))
-      : el('span', { class: 'sc-rail-initials', text: initials(room.meta.name) }));
+      : room.meta.meet
+        ? el('span', { class: 'sc-rail-initials' }, icon('meet', 20))
+        : el('span', { class: 'sc-rail-initials', text: initials(room.meta.name) }));
     b.style.setProperty('--hue', hueOf(C.toHex(C.unb64url(room.id)).slice(-6)));
     box.appendChild(b);
   }
@@ -2729,9 +2741,12 @@ function renderMainHead() {
         el('span', { class: 'sc-head-title' }, icon('hash', 16), ch ? ch.name : '—'),
         el('span', { class: 'sc-head-sub', text: room.meta.name + ' · ' + room.members.length + ' Mitglieder · bleibt ' + ttlLabel(roomTtl(room)) })),
       el('span', { class: 'sc-head-spacer' }),
-      iconBtn('speaker', S.voice && S.voice.rid === room.id ? 'Sprachkanal verlassen' : 'Sprachkanal „' + room.meta.vch[0].name + '“ betreten',
-        () => (S.voice && S.voice.rid === room.id ? leaveVoice() : joinVoice(room.id))),
-      iconBtn('userPlus', 'Einladen', () => inviteDialog(room)),
+      iconBtn(room.meta.meet ? 'phone' : 'speaker', S.voice && S.voice.rid === room.id
+        ? (room.meta.meet ? 'Call verlassen' : 'Sprachkanal verlassen')
+        : (room.meta.meet ? (room.vc.length ? 'Call beitreten (' + room.vc.length + ' drin)' : 'Call starten') : 'Sprachkanal „' + room.meta.vch[0].name + '“ betreten'),
+        () => (S.voice && S.voice.rid === room.id ? leaveVoice() : joinVoice(room.id)),
+        room.meta.meet && room.vc.length && !(S.voice && S.voice.rid === room.id) ? { class: 'sc-ibtn is-live' } : undefined),
+      room.meta.meet ? iconBtn('link', 'Meeting-Link teilen', () => meetingDialog(room)) : iconBtn('userPlus', 'Einladen', () => inviteDialog(room)),
       iconBtn('users', 'Mitglieder', () => { S.membersOpen = !S.membersOpen; renderAll(); }, { 'aria-pressed': S.membersOpen ? 'true' : 'false' }));
   } else {
     head.append(el('span', { class: 'sc-head-text' },
@@ -2740,6 +2755,8 @@ function renderMainHead() {
       el('span', { class: 'sc-head-spacer' }),
       iconBtn('info', 'So funktioniert Clavichat', showSecurityInfo));
   }
+  // Meeting starten – in jeder Ansicht oben rechts.
+  if (S.me) head.appendChild(iconBtn('meet', 'Meeting starten', startMeeting, { class: 'sc-ibtn sc-meet-btn' }));
   // Eigene Domain (clavichat.de) ohne Seitenleiste oben: Hell/Dunkel hier.
   if (document.body.classList.contains('sc-standalone')) {
     const dark = document.documentElement.getAttribute('data-theme') !== 'light';
@@ -4346,9 +4363,10 @@ function voiceMembers(room, ch) {
 
 /** Raumdaten zum Verschlüsseln: alles Bisherige, dazu die Änderungen. */
 function metaOf(room, changes) {
-  const m = Object.assign({ name: room.meta.name, ch: room.meta.ch, vch: room.meta.vch, img: room.meta.img || '', aq: room.meta.aq || '' }, changes || {});
+  const m = Object.assign({ name: room.meta.name, ch: room.meta.ch, vch: room.meta.vch, img: room.meta.img || '', aq: room.meta.aq || '', meet: room.meta.meet ? 1 : 0 }, changes || {});
   if (!m.img) delete m.img;
   if (!m.aq) delete m.aq;   // Sprachqualität des Raums (leer: jeder nach eigener Einstellung)
+  if (!m.meet) delete m.meet;   // Meeting: Link führt gleich in den Sprachkanal
   return m;
 }
 
@@ -4401,7 +4419,7 @@ async function decryptMeta(room) {
       && /^data:image\/(jpeg|png|webp);base64,[A-Za-z0-9+/]+=*$/.test(res.obj.img) ? res.obj.img : '';
     const aq = AUDIO_QUALITY.some((q) => q.id === res.obj.aq) ? res.obj.aq : '';
     const aqChanged = !!room.meta && (room.meta.aq || '') !== aq;
-    room.meta = { name: cleanName(res.obj.name) || 'Raum', ch: ch.length ? ch : [{ id: 'main', name: 'allgemein' }], vch: vch, img: img, aq: aq };
+    room.meta = { name: cleanName(res.obj.name) || 'Raum', ch: ch.length ? ch : [{ id: 'main', name: 'allgemein' }], vch: vch, img: img, aq: aq, meet: res.obj.meet === 1 ? 1 : 0 };
     for (const c of room.meta.ch) if (!room.msgs.has(c.id)) room.msgs.set(c.id, []);
     // Sprachqualität des Raums geändert, während man drin ist: sofort übernehmen.
     if (aqChanged && S.voice && S.voice.rid === room.id) applyAudioQuality();
@@ -4461,10 +4479,11 @@ function roomDialog() {
           const link = el('input', { type: 'text', placeholder: WEB_URL + '#join=…' });
           const go = el('button', { type: 'button', class: 'btn btn--primary btn--block', text: 'Beitreten' });
           go.addEventListener('click', () => {
-            const m = /#join=([A-Za-z0-9_-]{22})\.([A-Za-z0-9_-]{22})\.([A-Za-z0-9_-]{43})\.(\d{1,6})/.exec(link.value.trim());
+            const m = /#(join|meet)=([A-Za-z0-9_-]{22})\.([A-Za-z0-9_-]{22})\.([A-Za-z0-9_-]{43})\.(\d{1,6})/.exec(link.value.trim());
             if (!m) { toast('Das ist kein gültiger Einladungslink.', 'error'); return; }
             close();
-            joinRoom({ rid: m[1], code: m[2], key: m[3], epoch: parseInt(m[4], 10) });
+            const inv = { rid: m[2], code: m[3], key: m[4], epoch: parseInt(m[5], 10) };
+            joinRoom(inv);
           });
           panel.append(field('Einladungslink', link, 'Der Teil nach „#“ enthält den Raumschlüssel. Er wird nie an den Server geschickt.'), go);
         }
@@ -4474,18 +4493,70 @@ function roomDialog() {
   });
 }
 
-async function createRoom(name) {
+async function createRoom(name, opts) {
+  const meet = !!(opts && opts.meet);
   const rid = C.randomId();
   const raw = C.newRoomKey();
   const key = await C.importRoomKey(raw);
-  const ch = [{ id: C.randomId().slice(0, 10), name: 'allgemein' }];
-  const meta = await C.sealRoom({ v: 1, t: 'meta', room: rid, name: name, ch: ch, vch: [FIRST_VOICE], from: S.me.id, ts: Date.now() }, key, 1, rid, S.me.priv);
+  const ch = [{ id: C.randomId().slice(0, 10), name: meet ? 'chat' : 'allgemein' }];
+  const obj = { v: 1, t: 'meta', room: rid, name: name, ch: ch, vch: [FIRST_VOICE], from: S.me.id, ts: Date.now() };
+  if (meet) obj.meet = 1;
+  const meta = await C.sealRoom(obj, key, 1, rid, S.me.priv);
   // Schlüssel zuerst sichern – ohne ihn wäre der Raum unlesbar.
   storeRoomKey(rid, 1, raw);
   await saveVault(true);
-  await api('room.create', { id: rid, meta: meta });
+  // Meetings verfallen wie Räume aus temporären Sitzungen, wenn sie ruhen.
+  await api('room.create', meet ? { id: rid, meta: meta, tmp: 1 } : { id: rid, meta: meta });
   await loadRooms();
   openRoom(rid);
+  return rid;
+}
+
+/* ---------- Meetings ------------------------------------------------------------
+   Ein Meeting ist ein Raum mit Merkmal „meet“: Wer den Link (#meet=…) öffnet,
+   kommt in den Meeting-Raum mit Chat – ohne Zugang über eine temporäre
+   Sitzung, mit einem Klick. Einen Call startet dort, wer will (Sprachkanal:
+   Ton, Kamera und Bildschirm wie bei einem Anruf, bis zu cfg.limits.voice
+   Personen). Ruht das Meeting (tempRoomDays), löscht der Server es samt
+   Verlauf. */
+async function startMeeting() {
+  if (S.call || S.voice) { toast(S.call ? 'Beende zuerst den Anruf.' : 'Verlasse zuerst den Sprachkanal.', 'error'); return; }
+  const d = new Date();
+  const name = 'Meeting ' + String(d.getDate()).padStart(2, '0') + '.' + String(d.getMonth() + 1).padStart(2, '0') + '. ' +
+    String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0');
+  let rid;
+  try {
+    rid = await createRoom(name, { meet: true });
+  } catch (e) { toast(e.message, 'error'); return; }
+  meetingDialog(S.rooms.get(rid));
+}
+
+async function meetingLink(room) {
+  const r = await api('room.invite', { id: room.id, max: 100 });
+  const raw = roomKeyRaw(room.id, r.epoch);
+  if (!raw) throw new Error('Der aktuelle Raumschlüssel fehlt noch.');
+  return WEB_URL + '#meet=' + room.id + '.' + r.code + '.' + raw + '.' + r.epoch;
+}
+
+function meetingDialog(room) {
+  if (!room) return;
+  openModal({
+    title: 'MEETING',
+    build: (body) => {
+      const out = el('div', { class: 'sc-invite-out' }, el('p', { class: 'sc-note', text: 'Link wird erstellt …' }));
+      const max = (S.cfg && S.cfg.limits && S.cfg.limits.voice) || 8;
+      body.append(
+        el('p', { class: 'sc-p', text: 'Teile diesen Link. Wer ihn öffnet, ist mit einem Klick im Meeting-Raum – auch ohne Konto, mit einer temporären Sitzung. Dort könnt ihr schreiben; einen Call startet ihr oben mit dem Hörer. Alles ist Ende-zu-Ende verschlüsselt.' }),
+        out,
+        el('p', { class: 'sc-note', text: 'Im Call bis zu ' + max + ' Personen gleichzeitig, im Raum bis zu 50. Der Link gilt 7 Tage für bis zu 100 Beitritte; den Schlüssel enthält nur der Teil hinter „#“ – er geht nie an den Server. Ruht das Meeting ' + tempRoomDays() + ' Tage, wird es gelöscht.' }));
+      meetingLink(room).then((link) => {
+        const input = el('input', { type: 'text', readonly: true, value: link });
+        out.textContent = '';
+        out.append(input, el('button', { type: 'button', class: 'btn btn--primary', onclick: () => copyText(link, 'Meeting-Link') }, icon('copy', 14), 'Link kopieren'));
+        input.select();
+      }).catch((e) => { out.textContent = ''; out.append(el('p', { class: 'sc-note sc-update-error', text: e.message })); });
+    }
+  });
 }
 
 async function joinRoom(inv) {
@@ -6367,8 +6438,10 @@ function renderStage() {
           icon('lock', 13), code ? 'Ende-zu-Ende verschlüsselt · Code ' + code : 'Ende-zu-Ende verschlüsselt')));
   } else {
     const room = S.rooms.get(S.voice.rid);
-    top.append(el('span', { class: 'sc-stage-state', text: (room ? room.meta.name : '') + ' · Sprache' }),
+    const meet = !!(room && room.meta.meet);
+    top.append(el('span', { class: 'sc-stage-state', text: meet ? room.meta.name + ' · Call · ' + (S.voice.peers.size + 1) + ' Personen' : (room ? room.meta.name : '') + ' · Sprache' }),
       el('span', { class: 'sc-stage-right' }, netQualityBadge(),
+        meet ? el('button', { type: 'button', class: 'sc-code', title: 'Meeting-Link teilen', onclick: () => meetingDialog(room) }, icon('link', 13), 'Link teilen') : null,
         el('button', { type: 'button', class: 'sc-code', title: 'Sicherheitscodes vergleichen', onclick: showCodeInfo },
           icon('lock', 13), 'Ende-zu-Ende verschlüsselt · Codes an den Kacheln')));
   }
@@ -6651,7 +6724,7 @@ function renderControls() {
     canScreen ? ctl(M.screen ? 'screen' : 'screenOff', M.screen ? 'Teilen beenden' : 'Bildschirm teilen', !!M.screen, toggleScreen) : null,
     canScreen && M.screen ? ctl('sliders', 'Qualität: ' + q.name + ' (' + q.info + ')', true, showScreenQuality) : null,
     ctl(M.deaf ? 'headOff' : 'head', M.deaf ? 'Ton an' : 'Nichts hören', !M.deaf, toggleDeaf),
-    ctl('hangup', S.voice ? 'Sprachkanal verlassen' : 'Auflegen', true, () => (S.voice ? leaveVoice() : endCall()), 'sc-ctl--hangup'));
+    ctl('hangup', S.voice ? (S.rooms.get(S.voice.rid) && S.rooms.get(S.voice.rid).meta.meet ? 'Call verlassen' : 'Sprachkanal verlassen') : 'Auflegen', true, () => (S.voice ? leaveVoice() : endCall()), 'sc-ctl--hangup'));
 }
 
 setInterval(() => {
@@ -7953,7 +8026,7 @@ function bind() {
   // Einladungslink in einen schon offenen Clavichat-Tab eingefügt: Die Seite
   // lädt dann nicht neu, nur der Teil hinter "#" ändert sich.
   window.addEventListener('hashchange', () => {
-    if (!/^#join=/.test(location.hash)) return;
+    if (!/^#(join|meet)=/.test(location.hash)) return;
     parseJoinFragment();
     if (S.entered) offerPendingJoin();
     else if (!$('sc-gate').hidden) renderGate('temp');

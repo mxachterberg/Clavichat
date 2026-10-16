@@ -935,7 +935,8 @@ class SecureCom
             'mem' => [$me['id'] => time()],
             'inv' => [],
             'vc'  => [],
-            'tmp' => $me['k'] === 'temp' ? 1 : 0,   // aus einer temporären Sitzung: verfällt ohne Aktivität
+            // Aus einer temporären Sitzung oder ausdrücklich gewünscht (Meeting): verfällt ohne Aktivität.
+            'tmp' => ($me['k'] === 'temp' || !empty($b['tmp'])) ? 1 : 0,
             'la'  => time(),                         // letzte Aktivität
         ];
         self::writeJson($file, $room);
