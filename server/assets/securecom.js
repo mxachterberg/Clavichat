@@ -7113,7 +7113,7 @@ function updatePanel(s, later) {
   const latest = s.latest;
   const busy = ['checking', 'downloading', 'installing'].includes(s.status);
   const when = (ts) => (fmtDay(ts) === 'Heute' ? '' : fmtDay(ts) + ' ') + fmtTime(ts);
-  if (s.status === 'available') line('Clavichat ' + latest.version + ' ist da – du hast ' + s.version + '.');
+  if (s.status === 'available') line('Clavichat ' + latest.version + ' ist da – du hast ' + s.version + '.' + (latest.light ? ' Kleines Update: Nur das Programmpaket wird geladen.' : ''));
   else if (s.status === 'downloading') line('Clavichat ' + (latest ? latest.version + ' ' : '') + 'wird geladen … ' + Math.floor((s.progress || 0) * 100) + ' %');
   else if (s.status === 'installing') line('Wird installiert – Clavichat startet gleich neu.');
   else if (s.status === 'checking') line('Suche nach Updates …', 'sc-note');
@@ -7140,7 +7140,7 @@ function updatePanel(s, later) {
   const acts = el('div', { class: 'sc-card-actions' });
   if (latest && (s.status === 'available' || s.status === 'error')) {
     acts.appendChild(el('button', { type: 'button', class: 'btn btn--primary', onclick: () => UPDATES.install().catch((e) => toast(e.message, 'error')) },
-      icon('download', 14), 'Jetzt aktualisieren' + (latest.size ? ' (' + Math.round(latest.size / 1048576) + ' MB)' : '')));
+      icon('download', 14), 'Jetzt aktualisieren' + (latest.size ? ' (' + fmtSize(latest.size) + ')' : '')));
   }
   if (later) {
     if (!busy) acts.appendChild(el('button', { type: 'button', class: 'btn', text: 'Später', onclick: later }));

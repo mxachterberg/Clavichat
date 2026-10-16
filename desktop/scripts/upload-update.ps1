@@ -3,8 +3,9 @@
 
   Reihenfolge: zuerst die Programme, zuletzt die Update-Liste - so laedt keine
   App eine Liste, deren Dateien noch fehlen. Danach loescht es auf dem Server
-  aeltere Fassungen: jede Clavichat-*.exe im Download-Ordner, die die neue
-  Liste nicht mehr nennt. Andere Dateien fasst es nicht an.
+  aeltere Fassungen: jede Clavichat-*.exe und jedes Clavichat-*-app.asar.gz
+  (kleines Update) im Download-Ordner, die die neue Liste nicht mehr nennt.
+  Andere Dateien fasst es nicht an.
 
     powershell -ExecutionPolicy Bypass -File scripts\upload-update.ps1 -Dir "<Webroot>\downloads\clavichat"
 
@@ -51,10 +52,10 @@ Write-Output ("Clavichat " + $manifest.version + ": " + ($keep -join ', '))
 $listing = Invoke-WinScp @('option batch abort', 'option confirm off', "open $Session", "ls $Remote", 'exit')
 $onServer = @()
 foreach ($line in $listing) {
-  if ($line -match '\s(Clavichat-[A-Za-z0-9.\-]+\.exe)\s*$') { $onServer += $Matches[1] }
+  if ($line -match '\s(Clavichat-[A-Za-z0-9.\-]+\.(exe|asar\.gz))\s*$') { $onServer += $Matches[1] }
 }
 # Nur Fassungen mit Versionsnummer loeschen - nie etwas anderes.
-$old = @($onServer | Where-Object { ($keep -notcontains $_) -and ($_ -match '^Clavichat-(Setup-)?\d+\.\d+\.\d+(-portable)?\.exe$') })
+$old = @($onServer | Where-Object { ($keep -notcontains $_) -and ($_ -match '^Clavichat-((Setup-)?\d+\.\d+\.\d+(-portable)?\.exe|\d+\.\d+\.\d+-app\.asar\.gz)$') })
 
 if ($WhatIf) {
   Write-Output ('Hochladen (falls neuer): ' + ($keep -join ', ') + ', update.json')
@@ -69,5 +70,5 @@ $script += 'put -neweronly -permissions=644 "' + $listFile + '" ./'
 foreach ($name in $old) { $script += "rm `"$name`"" }
 $script += @('ls', 'exit')
 $out = Invoke-WinScp $script
-$out | Where-Object { $_ -match '\.exe|update\.json' } | ForEach-Object { Write-Output $_ }
+$out | Where-Object { $_ -match '\.exe|\.asar\.gz|update\.json' } | ForEach-Object { Write-Output $_ }
 Write-Output ('Geloescht: ' + $(if ($old.Count) { $old -join ', ' } else { '(nichts)' }))
