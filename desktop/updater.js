@@ -31,7 +31,7 @@ const { Transform } = require('node:stream');
 const { pipeline } = require('node:stream/promises');
 const zlib = require('node:zlib');
 
-const MANIFEST_URL = 'https://achterberg.dev/downloads/clavichat/update.json';
+const MANIFEST_URL = 'https://clavichat.de/downloads/clavichat/update.json';
 // Öffentlicher Schlüssel des Herausgebers (Ed25519, SPKI/DER, Base64).
 // Den privaten erzeugt und zeigt scripts/update-key.js.
 const PUBLIC_KEY = 'MCowBQYDK2VwAyEAlGx6CauvrfaZJAUtLpqsw19KVCrB2hk2vpfBkKCYnwI=';

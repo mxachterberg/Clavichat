@@ -26,7 +26,9 @@ const path = require('node:path');
 const updater = require('./updater');
 
 const ORIGIN = 'app://securecom';
-const DEFAULT_SERVER = 'https://achterberg.dev';
+// Offizieller Server. Einladungs- und Meeting-Links zeigen auf die Startseite
+// (https://clavichat.de/#…), die API liegt unter /app/clavichat/.
+const DEFAULT_SERVER = 'https://clavichat.de';
 const SMOKE = process.argv.includes('--smoke');
 
 // Der Selbsttest bekommt ein eigenes Profil: Er stört keine laufende App
@@ -143,7 +145,7 @@ function loadConfig() {
   } catch (e) { /* keine Datei: Standard */ }
   const server = String(process.env.SECURECOM_SERVER || file.server || DEFAULT_SERVER).replace(/\/+$/, '');
   const api = String(process.env.SECURECOM_API || file.api || server + '/app/clavichat/api.php');
-  const web = String(process.env.SECURECOM_WEB || file.web || server + '/app/clavichat/').replace(/\/?$/, '/');
+  const web = String(process.env.SECURECOM_WEB || file.web || (server === DEFAULT_SERVER ? server + '/' : server + '/app/clavichat/')).replace(/\/?$/, '/');
   for (const value of [api, web]) {
     const u = new URL(value);
     // Unverschlüsselt nur zum Testen auf dem eigenen Rechner.
