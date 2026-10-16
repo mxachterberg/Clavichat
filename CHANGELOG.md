@@ -4,6 +4,20 @@ Was sich von Version zu Version ändert. Beim Veröffentlichen wird der
 Abschnitt einer Version zum Text des GitHub-Releases
 (`.github/workflows/windows.yml`).
 
+## 1.8.2 – 16.10.2026
+
+Mehr Leute ins Meeting holen und die Kamera wechseln. Für installierte Apps
+ein kleines Update.
+
+- **Gäste laden ein:** Auch Gäste können den Meeting-Link teilen. Wer über
+  den Link eines Gastes kommt, wartet kurz – der Gastgeber bekommt ein
+  Fenster „… möchte dem Meeting beitreten“ mit Zulassen und Ablehnen (dazu
+  die Liste WARTET in der Meeting-Karte). Ohne Antwort verfällt die Anfrage
+  nach zehn Minuten. Der Link des Gastgebers führt weiter direkt hinein.
+- **Kamera wechseln:** Im Call neben dem Kamera-Knopf – auf Handys zwischen
+  Front- und Rückkamera, am PC durch alle Kameras. Ohne Unterbrechung; die
+  Wahl merkt sich das Gerät (auch unter Einstellungen → ANRUFE → Kamera).
+
 ## 1.8.1 – 16.10.2026
 
 Meetings vereinfacht. Für installierte Apps ein kleines Update.
