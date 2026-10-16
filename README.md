@@ -1,13 +1,24 @@
+<div align="center">
+
+<img src="server/assets/securecom-icon.svg" width="104" height="104" alt="Clavichat-Logo: Funkgerät mit Schlüssel als Antenne">
+
 # Clavichat
 
-Ende-zu-Ende verschlüsselt schreiben, telefonieren und den Bildschirm teilen –
-im Browser oder als Windows-App. Der Server speichert und verteilt nur
-Chiffretext, öffentliche Schlüssel und Signaturen.
+**Ende-zu-Ende verschlüsselt schreiben, telefonieren und den Bildschirm teilen –
+im Browser oder als Windows-App.**
 
-**Ausprobieren:** <https://achterberg.dev/app/clavichat/> ·
-**Windows-App:** [Releases](https://github.com/mxachterberg/clavichat/releases)
+[clavichat.de](https://clavichat.de) ·
+[Windows-App](https://github.com/mxachterberg/clavichat/releases) ·
+[Sicherheit](SECURITY.md) ·
+[Änderungen](CHANGELOG.md)
 
-Der Name kommt vom lateinischen *clavis*, „der Schlüssel“. Bis Oktober 2026
+</div>
+
+Der Server speichert und verteilt nur Chiffretext, öffentliche Schlüssel und
+Signaturen.
+
+Der Name kommt vom lateinischen *clavis*, „der Schlüssel“ – daher das Logo:
+ein Funkgerät, dessen Antenne ein Schlüssel ist. Bis Oktober 2026
 hieß das Projekt SecureCom; einige Dateien und Einstellungen tragen den alten
 Namen weiter (`securecom.js`, `SecureCom.php`, Umgebungsvariablen
 `SECURECOM_*`), damit bestehende Installationen, Konten und Daten
