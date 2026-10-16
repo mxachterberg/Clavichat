@@ -106,6 +106,12 @@
   background: var(--green);
 }
 .sc-rail-add { color: var(--accent); border-style: dashed; background: transparent; }
+/* Meeting starten: kräftiger als „+“, Kamera mit Beschriftung */
+.sc-rail-meet { flex-direction: column; gap: 1px; border-color: var(--accent); background: var(--accent-soft); color: var(--accent); }
+.sc-rail-meet:hover { background: var(--accent); color: #fff; }
+.sc-rail-meet-label { font-family: var(--mono); font-size: 8px; font-weight: 600; letter-spacing: .14em; line-height: 1; }
+.sc-rail-room.is-meeting { border-color: var(--accent); }
+.sc-rail-room.is-meeting .sc-rail-initials { color: var(--accent); }
 .sc-rail-badge {
   position: absolute;
   right: -7px;
@@ -1820,4 +1826,35 @@ html[data-theme="light"] .sc-modal { background: rgba(40, 40, 40, .3); }
 @media (prefers-reduced-motion: reduce) {
   .sc-rail, .sc-side, .sc-boot, .sc-boot-bar span { transition: none; }
   .sc-dots i, .sc-incoming-av, .sc-boot-sq { animation: none; }
+}
+
+/* ---- Meetings: eigene Ansicht statt Raum --------------------------------- */
+.sc-meet-title { display: inline-flex; align-items: center; gap: 8px; color: var(--accent); }
+.sc-meet-card { display: flex; flex-direction: column; align-items: center; gap: 8px; margin: 12px 12px 16px; padding: 18px 14px 14px; text-align: center; border: 1px solid var(--border); background: var(--panel); }
+.sc-meet-card .btn { margin-top: 2px; }
+.sc-meet-emblem { display: grid; place-items: center; width: 56px; height: 56px; border: 1px solid var(--accent); background: var(--accent-soft); color: var(--accent); }
+.sc-meet-card.is-live .sc-meet-emblem { border-color: var(--green); color: var(--green); background: color-mix(in srgb, var(--green) 12%, transparent); }
+.sc-meet-name { font-family: var(--mono); font-size: 12px; font-weight: 600; letter-spacing: .1em; text-transform: uppercase; color: var(--text); }
+.sc-meet-state { font-size: 12.5px; color: var(--muted); margin-bottom: 4px; }
+.sc-meet-card.is-live .sc-meet-state { color: var(--green); }
+.sc-meet-person { display: flex; align-items: center; gap: 9px; padding: 6px 12px; font-size: 13px; color: var(--text-body); }
+.sc-meet-person-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sc-meet-badge { font-family: var(--mono); font-size: 9.5px; letter-spacing: .12em; color: var(--green); border: 1px solid currentColor; padding: 1px 5px; }
+.sc-meet-lobby { display: flex; align-items: center; gap: 16px; flex: none; margin: 14px 18px 0; padding: 16px 18px; border: 1px solid var(--border); background: var(--panel); }
+.sc-meet-lobby.is-live { border-color: var(--green); }
+.sc-meet-lobby-emblem { flex: none; display: grid; place-items: center; width: 54px; height: 54px; border: 1px solid var(--accent); background: var(--accent-soft); color: var(--accent); }
+.sc-meet-lobby.is-live .sc-meet-lobby-emblem { border-color: var(--green); color: var(--green); background: color-mix(in srgb, var(--green) 12%, transparent); }
+.sc-meet-lobby-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+.sc-meet-lobby-title { font-family: var(--mono); font-size: 12px; font-weight: 600; letter-spacing: .14em; text-transform: uppercase; color: var(--text); }
+.sc-meet-lobby.is-live .sc-meet-lobby-title { color: var(--green); }
+.sc-meet-lobby-sub { font-size: 13px; line-height: 1.5; color: var(--muted); }
+.sc-meet-faces { display: flex; }
+.sc-meet-faces > * + * { margin-left: -6px; }
+.sc-meet-lobby-acts { display: flex; gap: 8px; flex: none; }
+.sc-meet-lobby-acts .btn { white-space: nowrap; }
+.sc-main.is-meeting .sc-stage { max-height: 78%; }
+@media (max-width: 760px) {
+  .sc-meet-lobby { flex-wrap: wrap; margin: 10px 10px 0; }
+  .sc-meet-lobby-acts { width: 100%; }
+  .sc-meet-lobby-acts .btn { flex: 1; }
 }

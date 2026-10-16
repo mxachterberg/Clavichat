@@ -2385,20 +2385,25 @@ function renderRail() {
 
   const box = $('sc-rail-rooms');
   box.textContent = '';
-  const rooms = [...S.rooms.values()].sort((a, b) => a.meta.name.localeCompare(b.meta.name, 'de'));
-  for (const room of rooms) {
+  const all = [...S.rooms.values()];
+  const rooms = all.filter((r) => !r.meta.meet).sort((a, b) => a.meta.name.localeCompare(b.meta.name, 'de'));
+  // Meetings unter einem Strich, das neueste zuerst
+  const meets = all.filter((r) => r.meta.meet).sort((a, b) => (b.created || 0) - (a.created || 0) || b.meta.name.localeCompare(a.meta.name, 'de'));
+  const list = meets.length ? rooms.concat([null], meets) : rooms;
+  for (const room of list) {
+    if (!room) { box.appendChild(el('span', { class: 'sc-rail-sep', 'aria-hidden': 'true' })); continue; }
     let u = 0;
     for (const n of room.unread.values()) u += n;
     const b = el('button', {
       type: 'button',
       class: 'sc-rail-btn sc-rail-room' + (u ? ' has-unread' : '') + (room.vc.length ? ' has-voice' : '') + (room.meta.img ? ' has-img' : '') + (room.meta.meet ? ' is-meeting' : ''),
-      title: room.meta.name,
+      title: room.meta.meet ? room.meta.name + (room.vc.length ? ' – Call läuft' : '') : room.meta.name,
       'aria-current': S.view.kind === 'room' && S.view.rid === room.id ? 'true' : 'false',
       onclick: () => openRoom(room.id)
     }, room.meta.img
       ? el('span', { class: 'sc-rail-initials sc-rail-pic' }, el('img', { src: room.meta.img, alt: '', draggable: 'false' }))
       : room.meta.meet
-        ? el('span', { class: 'sc-rail-initials' }, icon('meet', 20))
+        ? el('span', { class: 'sc-rail-initials' }, icon('video', 19))
         : el('span', { class: 'sc-rail-initials', text: initials(room.meta.name) }));
     b.style.setProperty('--hue', hueOf(C.toHex(C.unb64url(room.id)).slice(-6)));
     box.appendChild(b);
@@ -2423,7 +2428,8 @@ function renderSide() {
   const body = $('sc-side-body');
   head.textContent = '';
   body.textContent = '';
-  if (S.view.kind === 'room' && S.rooms.has(S.view.rid)) renderRoomSide(head, body, S.rooms.get(S.view.rid));
+  if (isMeetingView()) renderMeetingSide(head, body, S.rooms.get(S.view.rid));
+  else if (S.view.kind === 'room' && S.rooms.has(S.view.rid)) renderRoomSide(head, body, S.rooms.get(S.view.rid));
   else renderHomeSide(head, body);
 }
 
@@ -2676,7 +2682,7 @@ function renderVoicebar() {
   } else if (S.voice) {
     const room = S.rooms.get(S.voice.rid);
     const connected = [...S.voice.peers.values()].some((p) => p.pc.connectionState === 'connected');
-    title = connected || !S.voice.peers.size ? 'Sprache verbunden' : 'Verbindet …';
+    title = connected || !S.voice.peers.size ? (room && room.meta.meet ? 'Call verbunden' : 'Sprache verbunden') : 'Verbindet …';
     const vch = room && room.meta.vch.find((c) => c.id === S.voice.ch);
     sub = room ? room.meta.name + (vch && room.meta.vch.length > 1 ? ' · ' + vch.name : '') : '';
     stateClass = ' is-live';
@@ -2733,6 +2739,16 @@ function renderMainHead() {
       iconBtn('phone', 'Anrufen', () => startCall(S.view.peer, false)),
       iconBtn('video', 'Videoanruf', () => startCall(S.view.peer, true)),
       iconBtn('users', 'Profil', () => { S.membersOpen = !S.membersOpen; renderAll(); }, { 'aria-pressed': S.membersOpen ? 'true' : 'false' }));
+  } else if (isMeetingView()) {
+    const room = S.rooms.get(S.view.rid);
+    head.append(
+      el('span', { class: 'sc-head-text' },
+        el('span', { class: 'sc-head-title' }, icon('meet', 16), 'Meeting-Chat'),
+        el('span', { class: 'sc-head-sub', text: room.meta.name + ' · ' + room.members.length + ' Teilnehmer · Ende-zu-Ende verschlüsselt' })),
+      el('span', { class: 'sc-head-spacer' }),
+      meetingCallButton(room, 'icon'),
+      iconBtn('link', 'Meeting-Link teilen', () => meetingDialog(room)),
+      iconBtn('users', 'Teilnehmer', () => { S.membersOpen = !S.membersOpen; renderAll(); }, { 'aria-pressed': S.membersOpen ? 'true' : 'false' }));
   } else if (S.view.kind === 'room' && S.rooms.has(S.view.rid)) {
     const room = S.rooms.get(S.view.rid);
     const ch = room.meta.ch.find((c) => c.id === S.view.ch);
@@ -2755,8 +2771,8 @@ function renderMainHead() {
       el('span', { class: 'sc-head-spacer' }),
       iconBtn('info', 'So funktioniert Clavichat', showSecurityInfo));
   }
-  // Meeting starten – in jeder Ansicht oben rechts.
-  if (S.me) head.appendChild(iconBtn('meet', 'Meeting starten', startMeeting, { class: 'sc-ibtn sc-meet-btn' }));
+  $('sc-main').classList.toggle('is-meeting', isMeetingView());
+  renderMeetingLobby();
   // Eigene Domain (clavichat.de) ohne Seitenleiste oben: Hell/Dunkel hier.
   if (document.body.classList.contains('sc-standalone')) {
     const dark = document.documentElement.getAttribute('data-theme') !== 'light';
@@ -3346,7 +3362,7 @@ function renderCompose() {
     const room = S.rooms.get(S.view.rid);
     const ch = room.meta.ch.find((c) => c.id === S.view.ch);
     show = true;
-    placeholder = 'Nachricht in #' + (ch ? ch.name : '');
+    placeholder = room && room.meta.meet ? 'Nachricht an alle im Meeting' : 'Nachricht in #' + (ch ? ch.name : '');
     blocked = !roomKeyRaw(room.id, room.epoch);
   }
   form.hidden = !show;
@@ -4531,6 +4547,84 @@ async function startMeeting() {
   meetingDialog(S.rooms.get(rid));
 }
 
+function isMeetingView() {
+  if (S.view.kind !== 'room') return false;
+  const room = S.rooms.get(S.view.rid);
+  return !!(room && room.meta.meet);
+}
+
+/** Call im Meeting: starten, beitreten oder verlassen – als Symbol (Kopfzeile) oder großer Knopf. */
+function meetingCallButton(room, kind) {
+  const inCall = !!(S.voice && S.voice.rid === room.id);
+  const n = room.vc.length;
+  const label = inCall ? 'Call verlassen' : n ? 'Call beitreten' : 'Call starten';
+  const act = () => (inCall ? leaveVoice() : joinVoice(room.id));
+  if (kind === 'icon') {
+    return iconBtn(inCall ? 'leave' : 'phone', label + (n && !inCall ? ' (' + n + ' drin)' : ''), act,
+      { class: 'sc-ibtn' + (n && !inCall ? ' is-live' : '') });
+  }
+  return el('button', { type: 'button', class: 'btn btn--block ' + (inCall ? 'sc-btn--danger' : 'btn--primary'), onclick: act },
+    icon(inCall ? 'leave' : 'phone', 15), label + (n && !inCall ? ' · ' + n + ' drin' : ''));
+}
+
+async function copyMeetingLink(room) {
+  try { copyText(await meetingLink(room), 'Meeting-Link'); } catch (e) { toast(e.message, 'error'); }
+}
+
+function renderMeetingSide(head, body, room) {
+  appendAll(head, el('span', { class: 'sc-side-title sc-meet-title' }, icon('meet', 16), 'Meeting'),
+    iconBtn('more', 'Meeting-Menü', () => roomMenu(room)));
+  const inCall = !!(S.voice && S.voice.rid === room.id);
+  const n = room.vc.length;
+  body.appendChild(el('div', { class: 'sc-meet-card tickbox' + (n ? ' is-live' : '') },
+    el('span', { class: 'sc-meet-emblem' }, icon('video', 26)),
+    el('span', { class: 'sc-meet-name', text: room.meta.name }),
+    el('span', { class: 'sc-meet-state', text: inCall ? 'Du bist im Call' : n ? 'Call läuft · ' + n + (n === 1 ? ' Person' : ' Personen') : 'Noch kein Call' }),
+    meetingCallButton(room),
+    el('button', { type: 'button', class: 'btn btn--block', onclick: () => copyMeetingLink(room) }, icon('link', 14), 'Link kopieren')));
+
+  const ids = room.members.map((m) => m.id);
+  ids.sort((a, b) => (room.vc.includes(b) ? 1 : 0) - (room.vc.includes(a) ? 1 : 0));
+  body.appendChild(sectionHead('TEILNEHMER – ' + ids.length));
+  const list = el('div', { class: 'sc-list' });
+  for (const id of ids) {
+    const ident = S.ids.get(id);
+    const live = room.vc.includes(id);
+    list.appendChild(el('div', { class: 'sc-meet-person' + (live ? ' is-live' : '') },
+      avatar(ident, 'xs'),
+      el('span', { class: 'sc-meet-person-name', text: displayName(ident) + (id === S.me.id ? ' (du)' : '') }),
+      live ? el('span', { class: 'sc-meet-badge', text: 'IM CALL' }) : null));
+  }
+  body.appendChild(list);
+  if (room.tmp) body.appendChild(el('p', { class: 'sc-empty-note', text: 'Ruht das Meeting ' + tempRoomDays() + ' Tage, löscht der Server es samt Chat.' }));
+}
+
+/** Lobby über dem Chat: ob ein Call läuft, wer drin ist – und ein großer Knopf. */
+function renderMeetingLobby() {
+  let lobby = $('sc-meet-lobby');
+  const room = isMeetingView() ? S.rooms.get(S.view.rid) : null;
+  const inCall = !!(room && S.voice && S.voice.rid === room.id);
+  if (!room || inCall) { if (lobby) lobby.remove(); return; }
+  if (!lobby) {
+    lobby = el('div', { class: 'sc-meet-lobby', id: 'sc-meet-lobby' });
+    $('sc-main').insertBefore(lobby, $('sc-stage'));
+  }
+  lobby.textContent = '';
+  const n = room.vc.length;
+  const faces = el('span', { class: 'sc-meet-faces' });
+  for (const id of room.vc.slice(0, 5)) faces.appendChild(avatar(S.ids.get(id), 'sm'));
+  const names = room.vc.slice(0, 3).map((id) => displayName(S.ids.get(id))).join(', ') + (n > 3 ? ' und ' + (n - 3) + ' weitere' : '');
+  lobby.classList.toggle('is-live', n > 0);
+  appendAll(lobby,
+    el('span', { class: 'sc-meet-lobby-emblem' }, icon('video', 30)),
+    el('span', { class: 'sc-meet-lobby-text' },
+      el('span', { class: 'sc-meet-lobby-title', text: n ? 'Call läuft' : 'Noch kein Call' }),
+      el('span', { class: 'sc-meet-lobby-sub', text: n ? names + (n === 1 ? ' ist drin.' : ' sind drin.') : 'Schreibt hier im Chat – oder startet einen Call mit Ton, Kamera und Bildschirm. Alle im Meeting sehen es sofort.' })),
+    n ? faces : null,
+    el('span', { class: 'sc-meet-lobby-acts' }, meetingCallButton(room),
+      el('button', { type: 'button', class: 'btn', onclick: () => copyMeetingLink(room) }, icon('link', 14), 'Link kopieren')));
+}
+
 async function meetingLink(room) {
   const r = await api('room.invite', { id: room.id, max: 100 });
   const raw = roomKeyRaw(room.id, r.epoch);
@@ -4580,7 +4674,7 @@ function roomMenu(room) {
     build: (body, close) => {
       const item = (ic, label, fn, danger) => el('button', { type: 'button', class: 'sc-menu-item' + (danger ? ' is-danger' : ''), onclick: () => { close(); fn(); } }, icon(ic, 16), el('span', { text: label }));
       appendAll(body,
-        item('userPlus', 'Einladen', () => inviteDialog(room)),
+        room.meta.meet ? item('link', 'Meeting-Link teilen', () => meetingDialog(room)) : item('userPlus', 'Einladen', () => inviteDialog(room)),
         S.voice && S.voice.rid === room.id ? item('leave', 'Sprachkanal verlassen', () => leaveVoice()) : item('speaker', 'Sprachkanal betreten', () => joinVoice(room.id)),
         owner ? item('hash', 'Textkanal anlegen', () => addChannel(room)) : null,
         owner ? item('speaker', 'Sprachkanal anlegen', () => addVoiceChannel(room)) : null,
@@ -7954,6 +8048,10 @@ function showSecurityInfo() {
 function bind() {
   $('sc-home').addEventListener('click', () => setView({ kind: 'home' }));
   $('sc-add-room').addEventListener('click', roomDialog);
+  // Meeting starten: eigener Knopf unter „Raum erstellen“, deutlich als Meeting erkennbar.
+  const meetBtn = el('button', { type: 'button', class: 'sc-rail-btn sc-rail-meet', id: 'sc-add-meet', title: 'Meeting starten', 'aria-label': 'Meeting starten', onclick: () => startMeeting() },
+    icon('video', 19), el('span', { class: 'sc-rail-meet-label', text: 'MEET' }));
+  $('sc-add-room').insertAdjacentElement('afterend', meetBtn);
   $('sc-scrim').addEventListener('click', () => toggleSide(false));
   $('sc-modal').addEventListener('mousedown', (ev) => { if (ev.target === $('sc-modal')) closeModal(); });
 
