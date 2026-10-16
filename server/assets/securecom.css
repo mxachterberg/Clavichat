@@ -1321,6 +1321,8 @@ html[data-theme="light"] .sc-modal { background: rgba(40, 40, 40, .3); }
 .sc-sso-btn { justify-content: center; gap: 8px; }
 .sc-sso-notice { margin: 12px 0 0; }
 .sc-sso-notice a { color: var(--accent); }
+.sc-about a { color: var(--accent); text-underline-offset: 3px; }
+.sc-by { margin-top: 18px; font-family: var(--mono); font-size: 12px; letter-spacing: .06em; color: var(--muted); }
 .sc-sso-or {
   display: flex;
   align-items: center;
