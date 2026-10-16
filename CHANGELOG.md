@@ -4,6 +4,14 @@ Was sich von Version zu Version ändert. Beim Veröffentlichen wird der
 Abschnitt einer Version zum Text des GitHub-Releases
 (`.github/workflows/windows.yml`).
 
+## 1.6.7 – 16.10.2026
+
+Aufgeräumte Titelleiste. Die Windows-App 1.6.6 holt sich diese Version von
+selbst.
+
+- **Titelleiste:** Ganz oben links steht nur noch „CLAVICHAT“ – das Logo
+  sitzt direkt darunter im Knopf der Raumleiste, doppelt war es zu viel.
+
 ## 1.6.6 – 16.10.2026
 
 Das Logo, wie es bleiben soll. Die Windows-App 1.6.5 holt sich diese
