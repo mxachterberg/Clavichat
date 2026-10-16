@@ -4,10 +4,13 @@
 //   node tests/e2e.mjs
 //
 // Anderer Server: SECURECOM_API=https://example.com/securecom/api.php node tests/e2e.mjs
+// Server mit Zugangscode: zusätzlich SECURECOM_CODE=<code> (Gäste von
+// Einmal-Meetings kommen auch dann ohne Code hinein – das prüft der Test).
 // Achtung: Der Test legt Identitäten an und löscht sie am Ende wieder.
 import * as C from '../server/assets/securecom-core.js';
 
 const API = process.env.SECURECOM_API || 'http://127.0.0.1:8130/api.php';
+const ACCESS = process.env.SECURECOM_CODE || '';
 let failures = 0;
 function ok(cond, label) {
   if (cond) console.log('  ok   ' + label);
@@ -26,7 +29,16 @@ async function makeTemp(alias) {
   const idn = await C.generateIdentity();
   const id = C.randomId();
   const card = await C.signCard(idn.privateKey, { v: 1, id, kind: 'temp', name: alias, ts: Date.now() });
-  const r = await call('temp', { id, pub: idn.armoredPublic, fp: idn.fingerprint, card });
+  const r = await call('temp', { id, pub: idn.armoredPublic, fp: idn.fingerprint, card, code: ACCESS });
+  return Object.assign({ id, token: r.token, res: r }, idn);
+}
+
+// Gast eines Einmal-Meetings: statt Zugangscode die Einladung aus dem Link.
+async function makeGuest(alias, room, code) {
+  const idn = await C.generateIdentity();
+  const id = C.randomId();
+  const card = await C.signCard(idn.privateKey, { v: 1, id, kind: 'temp', guest: 1, name: alias, ts: Date.now() });
+  const r = await call('temp', { id, pub: idn.armoredPublic, fp: idn.fingerprint, card, guest: 1, room, code });
   return Object.assign({ id, token: r.token, res: r }, idn);
 }
 
@@ -150,9 +162,9 @@ const accId = C.randomId();
 const wkey = await C.importWrapKey(keys.wrapRaw);
 const accWrapped = await C.sealText(wkey, C.armorPrivate(acc.privateKey), 'sc-key|' + uname.toLowerCase());
 const accCard = await C.signCard(acc.privateKey, { v: 1, id: accId, kind: 'account', name: uname, ts: Date.now() });
-r = await call('register', { username: uname, auth: keys.auth, id: accId, pub: acc.armoredPublic, fp: acc.fingerprint, card: accCard, wrapped: accWrapped });
+r = await call('register', { username: uname, auth: keys.auth, id: accId, pub: acc.armoredPublic, fp: acc.fingerprint, card: accCard, wrapped: accWrapped, code: ACCESS });
 ok(r.ok && r.token && r.kind === 'account', 'Konto angelegt (ohne E-Mail)');
-r = await call('register', { username: uname.toUpperCase(), auth: keys.auth, id: C.randomId(), pub: acc.armoredPublic, fp: acc.fingerprint, card: accCard, wrapped: accWrapped });
+r = await call('register', { username: uname.toUpperCase(), auth: keys.auth, id: C.randomId(), pub: acc.armoredPublic, fp: acc.fingerprint, card: accCard, wrapped: accWrapped, code: ACCESS });
 ok(!r.ok && r._status === 409, 'Name doppelt (andere Schreibweise) wird abgelehnt');
 r = await call('login', { username: uname, auth: (await C.deriveAccountKeys(uname, 'falsch')).auth });
 ok(!r.ok && r._status === 401, 'falsches Passwort → 401');
@@ -389,6 +401,126 @@ r = await call('room.join', { id: roomId, code }, TB.token);
 ok(!r.ok && r._status === 403, 'alte Einladung ist nach dem Schlüsselwechsel ungültig');
 r = await call('rooms', {}, TA.token);
 ok(r.ok && r.rooms.find(x => x.id === roomId).iv === 0, 'nach dem Wechsel keine offenen Einladungen mehr');
+
+console.log('\n== Server: Meetings und Gäste');
+r = await call('config');
+const onceHours = r.once_hours;
+ok(onceHours === 12, 'config nennt die Ruhezeit von Einmal-Meetings: ' + onceHours + ' Stunden');
+if (ACCESS) {
+  const idn = await C.generateIdentity();
+  const nid = C.randomId();
+  r = await call('temp', { id: nid, pub: idn.armoredPublic, fp: idn.fingerprint, card: await C.signCard(idn.privateKey, { v: 1, id: nid, kind: 'temp', name: 'X', ts: Date.now() }) });
+  ok(!r.ok && r._status === 403, 'Server mit Zugangscode: temporäre Sitzung ohne Code → 403');
+}
+const onceId = C.randomId();
+const onceKey = await C.importRoomKey(C.newRoomKey());
+const onceMeta = await C.sealRoom({ t: 'meta', name: 'Schnell', ch: [{ id: 'c1', name: 'chat' }], meet: 1, once: 1 }, onceKey, 1, onceId, TA.privateKey);
+r = await call('room.create', { id: onceId, meta: onceMeta, once: 1 }, TA.token);
+ok(r.ok && r.room.ot === true && r.room.tmp === true, 'Anna startet ein schnelles Meeting (einmalig, verfällt)');
+ok(r.ok && Math.abs(r.room.exp - (Math.floor(Date.now() / 1000) + onceHours * 3600)) < 120, 'Einmal-Meeting verfällt nach ' + onceHours + ' Stunden ohne Aktivität');
+r = await call('room.invite', { id: onceId, max: 100, days: 1 }, TA.token);
+ok(r.ok && r.code, 'Meeting-Link (Einladung) erstellt');
+const onceCode = r.code;
+const plainId = C.randomId();
+const plainMeta = await C.sealRoom({ t: 'meta', name: 'Normal', ch: [{ id: 'c1', name: 'allgemein' }] }, onceKey, 1, plainId, TA.privateKey);
+r = await call('room.create', { id: plainId, meta: plainMeta }, TA.token);
+ok(r.ok && r.room.ot === false, 'normaler Raum ist kein Einmal-Meeting');
+r = await call('room.invite', { id: plainId }, TA.token);
+const plainCode = r.code;
+
+let G = await makeGuest('Gast', onceId, 'falsch' + onceCode.slice(6));
+ok(!G.res.ok && G.res._status === 403 && /ungültig oder abgelaufen/.test(G.res.error || ''), 'Gast mit falschem Code → 403 „Meeting-Link ungültig oder abgelaufen“');
+G = await makeGuest('Gast', plainId, plainCode);
+ok(!G.res.ok && G.res._status === 403, 'Gast mit gültiger Einladung eines normalen Raums → 403');
+G = await makeGuest('Gast', C.randomId(), onceCode);
+ok(!G.res.ok && G.res._status === 403, 'Gast für ein unbekanntes Meeting → 403');
+const TG = await makeGuest('Gast Gustav', onceId, onceCode);
+ok(TG.res.ok && TG.token && TG.res.guest === true && TG.res.kind === 'temp', 'Gast mit gültigem Meeting-Link' + (ACCESS ? ' (ohne Zugangscode)' : '') + ' bekommt eine Sitzung');
+r = await call('me', {}, TG.token);
+ok(r.ok && r.guest === true && r.vis === false, 'me: Gast, nicht sichtbar');
+r = await call('me', {}, TA.token);
+ok(r.ok && r.guest === false, 'me: normale temporäre Sitzung ist kein Gast');
+r = await call('room.join', { id: plainId, code: plainCode }, TG.token);
+ok(!r.ok && r._status === 403, 'Gast kann keinem normalen Raum beitreten');
+r = await call('room.join', { id: onceId, code: onceCode }, TG.token);
+ok(r.ok && r.room.members.length === 2 && r.room.ot === true, 'Gast tritt dem Einmal-Meeting bei');
+r = await call('room.create', { id: C.randomId(), meta: onceMeta }, TG.token);
+ok(!r.ok && r._status === 403, 'Gast kann keinen Raum anlegen');
+r = await call('room.create', { id: C.randomId(), meta: onceMeta, once: 1 }, TG.token);
+ok(!r.ok && r._status === 403, 'Gast kann kein Meeting anlegen');
+r = await call('room.invite', { id: onceId }, TG.token);
+ok(!r.ok && r._status === 403, 'Gast kann keine Einladungen erstellen');
+await call('poll', { i: { s: 0, o: 0, g: 0 } }, TG.token);   // jetzt ist der Gast online
+r = await call('online', {}, TA.token);
+ok(r.ok && !r.list.find(x => x.id === TG.id) && !!r.list.find(x => x.id === TB.id), 'Gast steht nicht in der Online-Liste');
+r = await call('card', { vis: true }, TG.token);
+ok(r.ok && r.vis === false, 'Gast kann sich nicht in die Online-Liste stellen');
+r = await call('online', {}, TG.token);
+ok(!r.ok && r._status === 403, 'Gast sieht keine Online-Liste');
+r = await call('find', { fp: TA.fingerprint }, TG.token);
+ok(!r.ok && r._status === 403, 'Gast kann nicht per Fingerabdruck suchen');
+r = await call('pres', { get: ['0'.repeat(64)] }, TG.token);
+ok(!r.ok && r._status === 403, 'Gast hat keine Freunde-Fächer');
+const gdm = await C.sealFor({ v: 1, t: 'msg', body: 'hi' }, [TA.publicKey, TG.publicKey], TG.privateKey);
+r = await call('send', { to: TA.id, k: 'dm', d: gdm }, TG.token);
+ok(!r.ok && r._status === 403, 'Gast kann keine Direktnachricht senden');
+r = await call('send', { to: TA.id, k: 'sig', d: gdm }, TG.token);
+ok(!r.ok && r._status === 403, 'Gast kann niemanden direkt anrufen');
+r = await call('send', { to: TG.id, k: 'dm', d: gdm }, TA.token);
+ok(!r.ok && r._status === 403, 'Direktnachrichten an Gäste gehen nicht');
+r = await call('ids', { ids: [TG.id, TA.id] }, TA.token);
+ok(r.ok && r.list.find(x => x.id === TG.id)?.g === true && !r.list.find(x => x.id === TA.id)?.g, 'Mitglieder sehen: Gast');
+const gmsg = await C.sealRoom({ t: 'msg', ch: 'c1', body: 'Hallo vom Gast', from: TG.id }, onceKey, 1, onceId, TG.privateKey);
+r = await call('room.post', { id: onceId, k: 'msg', d: gmsg }, TG.token);
+ok(r.ok, 'Gast schreibt im Meeting-Chat');
+r = await call('room.voice', { id: onceId, on: true }, TG.token);
+ok(r.ok && r.vc.includes(TG.id), 'Gast betritt den Call');
+r = await call('room.post', { id: onceId, k: 'sig', to: TA.id, d: gmsg }, TG.token);
+ok(r.ok, 'Gast schickt Call-Signale im Meeting');
+r = await call('ice', {}, TG.token);
+ok(r.ok, 'Gast bekommt die Verbindungsserver');
+r = await call('room.voice', { id: onceId, on: false }, TG.token);
+// Ein Konto kommt dazu; die Besitzerin geht: Das Konto übernimmt, nicht der Gast.
+r = await call('room.join', { id: onceId, code: onceCode }, accToken);
+ok(r.ok && r.room.members.length === 3, 'Konto tritt dem Einmal-Meeting mit demselben Link bei');
+r = await call('room.leave', { id: onceId }, TA.token);
+r = await call('rooms', {}, TG.token);
+ok(r.ok && r.rooms.length === 1 && r.rooms[0].owner === accId, 'Besitzerin geht: Das Konto übernimmt, nicht der Gast');
+r = await call('room.join', { id: onceId, code: onceCode }, TG.token);
+ok(r.ok, 'erneuter Beitritt ins eigene Meeting stört nicht');
+r = await call('room.leave', { id: onceId }, accToken);
+r = await call('rooms', {}, TG.token);
+ok(r.ok && r.rooms.length === 0, 'nur noch Gäste übrig: Das Meeting endet');
+r = await call('room.post', { id: onceId, k: 'msg', d: gmsg }, TG.token);
+ok(!r.ok && r._status === 404, 'beendetes Meeting: Schreiben geht nicht mehr');
+r = await call('end', {}, TG.token);
+ok(r.ok, 'Gast beendet seine Sitzung');
+r = await call('me', {}, TG.token);
+ok(!r.ok && r._status === 401, 'Gast-Token ist ungültig');
+// Die Besitzerin beendet ein Meeting für alle (room.delete).
+const once2 = C.randomId();
+r = await call('room.create', { id: once2, meta: await C.sealRoom({ t: 'meta', name: 'Zwei', ch: [], meet: 1, once: 1 }, onceKey, 1, once2, TA.privateKey), once: 1 }, TA.token);
+const once2Code = (await call('room.invite', { id: once2, max: 100, days: 1 }, TA.token)).code;
+const TG2 = await makeGuest('Gast Greta', once2, once2Code);
+r = await call('room.join', { id: once2, code: once2Code }, TG2.token);
+ok(r.ok, 'zweiter Gast in einem zweiten Meeting');
+r = await call('room.join', { id: onceId, code: onceCode }, TG2.token);
+ok(!r.ok && (r._status === 403 || r._status === 404), 'Gast ist höchstens in einem Meeting');
+r = await call('room.delete', { id: once2 }, TG2.token);
+ok(!r.ok && r._status === 403, 'Gast kann das Meeting nicht beenden');
+r = await call('room.delete', { id: once2 }, TA.token);
+ok(r.ok, 'Besitzerin beendet das Meeting');
+r = await call('rooms', {}, TG2.token);
+ok(r.ok && r.rooms.length === 0, 'der Gast sieht: Meeting weg');
+G = await makeGuest('Nachzügler', once2, once2Code);
+ok(!G.res.ok && G.res._status === 403, 'Link eines beendeten Meetings → 403');
+await call('end', {}, TG2.token);
+await call('room.delete', { id: plainId }, TA.token);
+// Ein festes Meeting eines Kontos verfällt nicht (die App schickt dafür kein tmp).
+const fixId = C.randomId();
+r = await call('room.create', { id: fixId, meta: await C.sealRoom({ t: 'meta', name: 'Fest', ch: [], meet: 1 }, onceKey, 1, fixId, acc.privateKey) }, accToken);
+ok(r.ok && r.room.tmp === false && r.room.ot === false && r.room.exp === 0, 'festes Meeting eines Kontos: bleibt bestehen');
+await call('room.delete', { id: fixId }, accToken);
 
 console.log('\n== Aufräumen');
 r = await call('end', {}, TB.token);

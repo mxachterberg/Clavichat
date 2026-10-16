@@ -29,6 +29,9 @@ const KEY_HOME = DESKTOP ? 'solange die App läuft' : 'in diesem Tab';
 const LOCAL    = DESKTOP ? 'in der App' : 'im Browser';
 const SS_KEY   = 'securecom.session';
 const JOIN_KEY = 'securecom.join';
+// Gäste eines Einmal-Meetings: ihr Link (für „Erneut beitreten“) und der Hinweis nach dem Ende.
+const GUEST_LINK_KEY = 'securecom.guest-link';
+const GUEST_END_KEY  = 'securecom.guest-end';
 const SLOTS    = ['mic', 'cam', 'screen', 'screenAudio'];
 const SLOT_KIND = { mic: 'audio', cam: 'video', screen: 'video', screenAudio: 'audio' };
 
@@ -40,6 +43,8 @@ const S = {
   token: null,
   me: null,            // { id, kind, name, fp, priv, pub, armored, vis }
   mode: null,          // 'temp' | 'account'
+  guest: false,        // Gast eines Einmal-Meetings (temporär): sieht nur sein Meeting
+  guestRid: null,      // … und das ist es
   wrapKey: null,       // Konten: packt Schlüssel und Tresor ein
   username: null,
   vault: null,
@@ -103,6 +108,7 @@ const ICONS = {
   phone: '<path d="M5 4h4l2 5-2.5 1.5a11 11 0 0 0 5 5L15 13l5 2v4a2 2 0 0 1-2 2A16 16 0 0 1 3 6a2 2 0 0 1 2-2z"/>',
   video: '<rect x="3" y="6" width="13" height="12" rx="1"/><path d="M16 10l5-3v10l-5-3z"/>',
   meet: '<rect x="2" y="7" width="13" height="11" rx="1"/><path d="M15 11l5-3v9l-5-3z"/><path d="M8.5 10.5v4M6.5 12.5h4"/><path d="M5 4.5h7"/>',
+  bolt: '<path d="M13 2.5L4.5 13.5h6.5l-1 8 8.5-11h-6.5z"/>',
   videoOff: '<rect x="3" y="6" width="13" height="12" rx="1"/><path d="M16 10l5-3v10l-5-3z"/><path d="M2 2l20 20"/>',
   mic: '<rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/>',
   micOff: '<rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/><path d="M3 3l18 18"/>',
@@ -177,6 +183,7 @@ function appendAll(parent) {
     const c = arguments[i];
     if (c !== null && c !== undefined && c !== false) parent.append(c);
   }
+  return parent;
 }
 
 function iconBtn(name, title, onclick, extra) {
@@ -685,6 +692,7 @@ async function resolveIdentity(raw) {
   const ident = {
     id: raw.id,
     kind: raw.k === 'account' ? 'account' : 'temp',
+    guest: raw.k !== 'account' && raw.g === true,   // Gast eines Meetings: keine DMs, keine Anrufe
     fp: raw.fp,
     key: key,
     armored: raw.pub,
@@ -988,6 +996,7 @@ async function applyOwnCard(raw) {
 
 function kindBadge(ident) {
   if (!ident) return null;
+  if (ident.guest) return el('span', { class: 'sc-kind sc-kind--guest', text: 'GAST', title: 'Gast eines Meetings – nur im Meeting erreichbar' });
   return el('span', { class: 'sc-kind', text: ident.kind === 'temp' ? 'TEMP' : 'KONTO', title: ident.kind === 'temp' ? 'Temporäre Sitzung' : 'Konto' });
 }
 
@@ -1006,6 +1015,7 @@ function showGate(message, tab) {
 function renderGate(tab, message) {
   const card = gateCard();
   card.textContent = '';
+  card.classList.remove('is-guest');
   card.append(
     el('p', { class: 'section-head' }, el('span', { class: 'sq' }), el('span', { class: 'label', text: 'CLAVICHAT' }), el('span', { class: 'rule' })),
     el('h1', { class: 'sc-gate-title', text: 'Sicher schreiben & telefonieren' }),
@@ -1335,6 +1345,136 @@ async function startTemp(alias, code) {
   ssSet(SS_KEY, { mode: 'temp', id: id, token: r.token, priv: C.armorPrivate(identity.privateKey), vault: S.vault });
   await enterApp();
   toast('Temporäre Sitzung läuft. Dein Schlüssel lebt nur ' + KEY_HOME + '.', 'ok');
+}
+
+/* ---------- Gäste eines Einmal-Meetings ------------------------------------
+   Wer einen Link #once=… ohne Sitzung öffnet, sieht statt der Anmeldung nur
+   die Frage nach dem Namen. Mit der Einladung aus dem Link legt der Server
+   eine Gast-Identität an – auch wenn er sonst einen Zugangscode verlangt:
+   temporär, nur in diesem einen Meeting, ohne Online-Liste,
+   Direktnachrichten und Freunde. Verlässt der Gast das Meeting oder endet
+   es, endet auch die Gast-Sitzung. */
+function guestCard() {
+  $('sc').hidden = true;
+  $('sc-gate').hidden = false;
+  const card = gateCard();
+  card.textContent = '';
+  card.classList.add('is-guest');
+  card.appendChild(el('p', { class: 'section-head' }, el('span', { class: 'sq' }), el('span', { class: 'label', text: 'CLAVICHAT' }), el('span', { class: 'rule' })));
+  return card;
+}
+
+function showGuestJoin(message) {
+  const join = S.pendingJoin;
+  if (!join || !join.once) { showGate(message); return; }
+  const card = guestCard();
+  const name = el('input', { type: 'text', maxlength: '40', required: true, autocomplete: 'nickname', spellcheck: 'false', placeholder: 'z. B. Alex' });
+  const go = el('button', { type: 'submit', class: 'btn btn--primary btn--block', text: 'Meeting beitreten' });
+  const error = el('p', { class: 'sc-error', text: message || '', hidden: !message });
+  const form = el('form', { class: 'sc-gate-form' }, field('Dein Name', name, 'So sehen dich die anderen im Meeting – höchstens 40 Zeichen.'), go);
+  form.addEventListener('submit', async (ev) => {
+    ev.preventDefault();
+    const n = cleanName(name.value);
+    if (!n) { name.value = ''; name.focus(); return; }
+    error.hidden = true;
+    gateBusy(go, 'Schlüssel wird ' + LOCAL + ' erzeugt …');
+    try {
+      await joinAsGuest(join, n);
+    } catch (e) {
+      gateIdle(go);
+      error.textContent = e.message;
+      error.hidden = false;
+    }
+  });
+  card.append(
+    el('span', { class: 'sc-guest-emblem' }, icon('video', 30)),
+    el('h1', { class: 'sc-gate-title sc-guest-title', text: 'Meeting beitreten' }),
+    el('p', { class: 'sc-gate-sub', text: 'Mit welchem Namen möchtest du dem Meeting beitreten?' }),
+    error, form,
+    el('p', { class: 'sc-gate-note', text: 'Kein Konto nötig. Ende-zu-Ende verschlüsselt: Dein Schlüssel entsteht jetzt ' + LOCAL + ' und lebt nur ' + KEY_HOME + '. Verlässt du das Meeting, löscht der Server deine Gast-Sitzung.' }));
+  bootDone();
+  setTimeout(() => name.focus(), 30);
+}
+
+async function joinAsGuest(join, name) {
+  const identity = await C.generateIdentity();
+  const id = C.randomId();
+  const card = await C.signCard(identity.privateKey, { v: 1, id: id, kind: 'temp', guest: 1, name: name, ts: Date.now() });
+  // Die Einladung aus dem Link ist der Zugang (statt eines Zugangscodes).
+  const r = await api('temp', { id: id, pub: identity.armoredPublic, fp: identity.fingerprint, card: card, guest: 1, room: join.rid, code: join.code });
+  S.token = r.token;
+  S.mode = 'temp';
+  S.guest = true;
+  S.guestRid = join.rid;
+  S.vault = emptyVault();
+  setMe(identity, id, 'temp', name, false);
+  S.me.published = identity.armoredPublic;
+  storeRoomKey(join.rid, join.epoch, join.key);
+  ssSet(SS_KEY, { mode: 'temp', guest: 1, room: join.rid, id: id, token: r.token, priv: C.armorPrivate(identity.privateKey), vault: S.vault });
+  try {
+    await api('room.join', { id: join.rid, code: join.code });
+  } catch (e) {
+    // Beitritt gescheitert (etwa gerade voll geworden): Gast-Sitzung gleich wieder löschen.
+    try { await api('end'); } catch (e2) { /* verfällt von selbst */ }
+    ssSet(SS_KEY, null);
+    S.token = null;
+    S.me = null;
+    S.guest = false;
+    throw e;
+  }
+  S.pendingJoin = null;
+  ssSet(JOIN_KEY, null);
+  ssSet(GUEST_LINK_KEY, join);   // für „Erneut beitreten“ nach dem Verlassen
+  await enterApp();
+}
+
+/** Nach dem Ende einer Gast-Sitzung (nach dem Neuladen): verlassen, beendet oder abgelaufen. */
+function showGuestEnd(note) {
+  const card = guestCard();
+  const kind = note.kind === 'left' || note.kind === 'expired' ? note.kind : 'ended';
+  const text = {
+    left: ['Du hast das Meeting verlassen.', 'Deine Gast-Sitzung ist beendet – der Server hat deinen Schlüssel und deine Teilnahme gelöscht.'],
+    ended: ['Das Meeting wurde beendet.', 'Das Meeting gibt es nicht mehr, oder du wurdest daraus entfernt. Deine Gast-Sitzung ist damit ebenfalls beendet und gelöscht.'],
+    expired: ['Deine Gast-Sitzung ist abgelaufen.', 'Nach längerer Pause löscht der Server Gast-Sitzungen. Mit dem Link kommst du wieder hinein, solange das Meeting läuft.']
+  }[kind];
+  const link = note.link && /^[A-Za-z0-9_-]{22}$/.test(note.link.rid || '') ? note.link : null;
+  appendAll(card,
+    el('span', { class: 'sc-guest-emblem' + (kind === 'left' ? '' : ' is-ended') }, icon(kind === 'left' ? 'leave' : 'meet', 30)),
+    el('h1', { class: 'sc-gate-title sc-guest-title', text: text[0] }),
+    el('p', { class: 'sc-gate-sub', text: text[1] }),
+    link ? el('button', { type: 'button', class: 'btn btn--primary btn--block', onclick: () => {
+      S.pendingJoin = Object.assign({}, link, { once: true, meet: true });
+      showGuestJoin();
+    } }, icon('meet', 15), 'Erneut beitreten') : null,
+    el('button', { type: 'button', class: 'btn btn--block sc-guest-more', onclick: () => showGate() }, 'Zu Clavichat'));
+  bootDone();
+}
+
+/**
+ * Gast-Sitzung beenden (Server löscht Identität, Mitgliedschaft und
+ * Dateien) und neu laden – danach steht der Hinweis da. kind: 'left'
+ * (selbst verlassen), 'ended' (Meeting weg), 'expired' (Sitzung weg).
+ */
+let guestEnding = false;
+async function guestEnded(kind) {
+  if (guestEnding) return;
+  guestEnding = true;
+  const link = kind !== 'ended' ? ssGet(GUEST_LINK_KEY) : null;
+  teardownMedia();
+  if (kind !== 'expired') {
+    try { await api('end'); } catch (e) { /* schon weg */ }
+  }
+  ssSet(GUEST_LINK_KEY, null);
+  ssSet(GUEST_END_KEY, { kind: kind, link: link });
+  await clearStoredSession();
+  S.token = null;
+  S.me = null;
+  location.reload();
+}
+
+async function guestLeave() {
+  const ok = await confirmBox('Meeting verlassen', 'Du verlässt das Meeting. Damit endet deine Gast-Sitzung: Der Server löscht deinen Schlüssel und deine Teilnahme. Zurück kommst du über den Link, solange er gilt.', 'Verlassen', true);
+  if (ok) guestEnded('left');
 }
 
 /**
@@ -2062,7 +2202,7 @@ function setMe(identity, id, kind, name, vis) {
     armored: identity.armoredPublic,
     vis: kind === 'temp' && vis !== false   // Konten stehen nie in der Online-Liste
   };
-  S.ids.set(id, { id: id, kind: kind, fp: identity.fingerprint, key: identity.publicKey, armored: identity.armoredPublic, cv: 0, name: S.me.name, on: true, changed: false });
+  S.ids.set(id, { id: id, kind: kind, guest: kind === 'temp' && !!S.guest, fp: identity.fingerprint, key: identity.publicKey, armored: identity.armoredPublic, cv: 0, name: S.me.name, on: true, changed: false });
   S.keyringCache = null;
 }
 
@@ -2075,8 +2215,10 @@ async function restoreSession() {
       const identity = await C.readPrivateIdentity(ss.priv);
       S.token = ss.token;
       S.mode = 'temp';
+      S.guest = !!ss.guest;
+      S.guestRid = typeof ss.room === 'string' ? ss.room : null;
       S.vault = mergeVault(emptyVault(), ss.vault || {});
-      setMe(identity, ss.id, 'temp', '', true);
+      setMe(identity, ss.id, 'temp', '', !S.guest);
     } else {
       saved = ss && ss.mode === 'account' ? ss : await loadSession();
       if (!saved || saved.mode !== 'account') return false;
@@ -2098,6 +2240,7 @@ async function restoreSession() {
   const loadOwn = async () => {
     const me = await api('me');
     S.me.vis = S.mode === 'temp' && me.vis !== false;
+    if (me.guest === true) S.guest = true;   // der Server weiß es sicher
     S.me.published = me.pub;
     S.deviceLabeled = me.dl === true;
     await applyOwnCard(me.card);
@@ -2123,6 +2266,7 @@ async function restoreSession() {
       await loadOwn();
     } catch (again) {
       if ([again, e].some((x) => x && x.data && x.data.revoked)) S.gateNote = REVOKED_NOTE;
+      if (S.guest) ssSet(GUEST_END_KEY, { kind: 'expired', link: ssGet(GUEST_LINK_KEY) });
       await clearStoredSession();
       S.token = null;
       S.me = null;
@@ -2149,6 +2293,8 @@ let lost = false;
 function sessionLost(data) {
   if (lost) return;
   lost = true;
+  // Gäste: Sitzung weg (lange Pause) – Hinweis statt Anmeldung.
+  if (S.guest) { guestEnded('expired'); return; }
   // Konten mit Wiederherstellungscode behalten das Gespeicherte: Beim
   // Neuladen meldet sich das Gerät still neu an (restoreSession). Klappt das
   // nicht – etwa weil der Code auf einem anderen Gerät erneuert wurde –,
@@ -2183,11 +2329,21 @@ async function logout() {
    ========================================================================== */
 async function enterApp() {
   S.entered = true;
+  // Gäste sehen nur ihr Meeting: keine Raumleiste, keine Startseite.
+  document.body.classList.toggle('sc-guest', !!S.guest);
   $('sc-gate').hidden = true;
   $('sc').hidden = false;
   S.convs.clear();
   const saved = ssGet('securecom.view');
   if (saved && saved.kind) S.view = saved;
+  if (S.guest) {
+    const loaded = await loadRooms().then(() => true, () => false);
+    if (!S.guestRid || !S.rooms.has(S.guestRid)) S.guestRid = [...S.rooms.keys()][0] || S.guestRid;
+    // Meeting inzwischen beendet (oder entfernt): Hinweis statt leerer Oberfläche.
+    if (loaded && !S.rooms.has(S.guestRid)) { guestEnded('ended'); return; }
+    const room = S.rooms.get(S.guestRid);
+    if (room) S.view = { kind: 'room', rid: room.id, ch: room.meta.ch[0].id };
+  }
   renderAll();
   bootDone();
   refreshOnline();
@@ -2210,10 +2366,11 @@ async function enterApp() {
 }
 
 function parseJoinFragment() {
-  // #join= tritt einem Raum bei, #meet= einem Meeting (danach gleich in den Sprachkanal).
-  const m = /^#(join|meet)=([A-Za-z0-9_-]{22})\.([A-Za-z0-9_-]{22})\.([A-Za-z0-9_-]{43})\.(\d{1,6})$/.exec(location.hash || '');
+  // #join= tritt einem Raum bei, #meet= einem (festen) Meeting, #once= einem
+  // Einmal-Meeting – dorthin auch ohne Sitzung, als Gast mit Namen.
+  const m = /^#(join|meet|once)=([A-Za-z0-9_-]{22})\.([A-Za-z0-9_-]{22})\.([A-Za-z0-9_-]{43})\.(\d{1,6})$/.exec(location.hash || '');
   if (m) {
-    S.pendingJoin = { rid: m[2], code: m[3], key: m[4], epoch: parseInt(m[5], 10), meet: m[1] === 'meet' };
+    S.pendingJoin = { rid: m[2], code: m[3], key: m[4], epoch: parseInt(m[5], 10), meet: m[1] !== 'join', once: m[1] === 'once' };
     ssSet(JOIN_KEY, S.pendingJoin);
     // Den Schlüssel sofort aus der Adresszeile (und dem Verlauf) nehmen.
     history.replaceState(null, '', location.pathname + location.search);
@@ -2227,9 +2384,17 @@ async function offerPendingJoin() {
   if (!join) return;
   S.pendingJoin = null;
   ssSet(JOIN_KEY, null);
+  if (S.guest) {
+    // Gäste sind nur in ihrem einen Meeting.
+    if (join.rid === S.guestRid) openRoom(join.rid);
+    else toast('Als Gast bist du nur in diesem Meeting. Verlasse es, um einem anderen beizutreten.', 'error', 7000);
+    return;
+  }
   if (join.meet) {
     if (S.rooms.has(join.rid)) { openRoom(join.rid); return; }
-    const ok = await confirmBox('MEETING', 'Du wurdest in einen Meeting-Raum eingeladen. Beitreten? Dort könnt ihr schreiben und bei Bedarf einen Call starten – die anderen sehen dich in der Mitgliederliste.', 'Meeting beitreten');
+    const ok = await confirmBox(join.once ? 'SCHNELLES MEETING' : 'MEETING', join.once
+      ? 'Du wurdest zu einem schnellen Meeting eingeladen. Mit ' + (S.mode === 'account' ? 'deinem Konto' : 'deiner Sitzung') + ' beitreten? Dort könnt ihr schreiben und bei Bedarf einen Call starten – die anderen sehen dich in der Teilnehmerliste.'
+      : 'Du wurdest in einen Meeting-Raum eingeladen. Beitreten? Dort könnt ihr schreiben und bei Bedarf einen Call starten – die anderen sehen dich in der Mitgliederliste.', 'Meeting beitreten');
     if (ok) joinRoom(join);
     return;
   }
@@ -2284,8 +2449,15 @@ async function boot() {
   const restored = await restoreSession();
   const gateNote = ssGet(GATE_NOTE_KEY) || S.gateNote;
   ssSet(GATE_NOTE_KEY, null);
+  const guestEnd = ssGet(GUEST_END_KEY);
+  ssSet(GUEST_END_KEY, null);
   if (restored) {
     await enterApp();
+  } else if (S.pendingJoin && S.pendingJoin.once) {
+    // Link zu einem Einmal-Meeting ohne Sitzung: nur nach dem Namen fragen.
+    showGuestJoin();
+  } else if (guestEnd && typeof guestEnd === 'object') {
+    showGuestEnd(guestEnd);
   } else {
     showGate(gateNote || undefined, gateNote ? 'login' : undefined);
   }
@@ -2337,6 +2509,9 @@ function toggleSide(force) {
 }
 
 function setView(view) {
+  // Gäste: immer ihr Meeting (Startseite und Direktnachrichten gibt es für sie nicht).
+  const gr = S.guest ? S.rooms.get(S.guestRid) : null;
+  if (gr && (view.kind !== 'room' || view.rid !== gr.id)) view = { kind: 'room', rid: gr.id, ch: gr.meta.ch[0].id };
   S.view = view;
   ssSet('securecom.view', view);
   toggleSide(false);
@@ -2351,6 +2526,10 @@ function setView(view) {
 
 function openDm(peerId) {
   const ident = S.ids.get(peerId);
+  if (S.guest || (ident && ident.guest)) {
+    toast(S.guest ? 'Als Gast schreibst du nur im Meeting.' : 'Gäste eines Meetings sind nur im Meeting erreichbar.', 'error');
+    return;
+  }
   if (ident) noteContact(ident);
   if (!S.convs.has(peerId)) S.convs.set(peerId, newConv(peerId));
   setView({ kind: 'dm', peer: peerId });
@@ -2396,8 +2575,8 @@ function renderRail() {
     for (const n of room.unread.values()) u += n;
     const b = el('button', {
       type: 'button',
-      class: 'sc-rail-btn sc-rail-room' + (u ? ' has-unread' : '') + (room.vc.length ? ' has-voice' : '') + (room.meta.img ? ' has-img' : '') + (room.meta.meet ? ' is-meeting' : ''),
-      title: room.meta.meet ? room.meta.name + (room.vc.length ? ' – Call läuft' : '') : room.meta.name,
+      class: 'sc-rail-btn sc-rail-room' + (u ? ' has-unread' : '') + (room.vc.length ? ' has-voice' : '') + (room.meta.img ? ' has-img' : '') + (room.meta.meet ? ' is-meeting' : '') + (isOnceMeeting(room) ? ' is-once' : ''),
+      title: room.meta.meet ? room.meta.name + (isOnceMeeting(room) ? ' (einmalig)' : '') + (room.vc.length ? ' – Call läuft' : '') : room.meta.name,
       'aria-current': S.view.kind === 'room' && S.view.rid === room.id ? 'true' : 'false',
       onclick: () => openRoom(room.id)
     }, room.meta.img
@@ -2429,6 +2608,7 @@ function renderSide() {
   head.textContent = '';
   body.textContent = '';
   if (isMeetingView()) renderMeetingSide(head, body, S.rooms.get(S.view.rid));
+  else if (S.guest) return;   // Gäste: nur ihr Meeting (gleich geladen)
   else if (S.view.kind === 'room' && S.rooms.has(S.view.rid)) renderRoomSide(head, body, S.rooms.get(S.view.rid));
   else renderHomeSide(head, body);
 }
@@ -2607,7 +2787,7 @@ function personRow(ident, onclick, opts) {
     el('span', { class: 'sc-row-text' },
       el('span', { class: 'sc-row-name' }, el('span', { class: 'sc-row-label', text: displayName(ident) }),
         isVerified(ident) ? icon('shieldCheck', 13) : null,
-        ident && ident.kind === 'temp' ? el('span', { class: 'sc-kind', text: 'TEMP' }) : null),
+        ident && ident.kind === 'temp' ? (ident.guest ? kindBadge(ident) : el('span', { class: 'sc-kind', text: 'TEMP' })) : null),
       el('span', { class: 'sc-row-sub', text: o.sub || (ident ? fpTail(ident.fp) : '') })),
     inCall ? icon('phone', 14) : null,
     o.unread ? el('span', { class: 'sc-count', text: o.unread > 99 ? '99+' : String(o.unread) }) : null);
@@ -2703,10 +2883,24 @@ function renderUser() {
   const box = $('sc-user');
   const me = S.ids.get(S.me.id);
   const st = myStatus();
-  const sig = [S.me.name, avatarUrl(me) || '', S.me.vis, S.mode, S.me.fp, S.offline, M.micOn, M.deaf, st, chosenStatus(), L.cfg ? 1 : 0].join('|');
+  const sig = [S.me.name, avatarUrl(me) || '', S.me.vis, S.mode, S.guest ? 1 : 0, S.me.fp, S.offline, M.micOn, M.deaf, st, chosenStatus(), L.cfg ? 1 : 0].join('|');
   if (box.dataset.sig === sig && box.firstChild) return;
   box.dataset.sig = sig;
   box.textContent = '';
+  const micBtn = iconBtn(M.micOn ? 'mic' : 'micOff', M.micOn ? 'Stummschalten' : 'Mikrofon an', toggleMic, { class: 'sc-ibtn' + (M.micOn ? '' : ' is-off') });
+  const deafBtn = iconBtn(M.deaf ? 'headOff' : 'head', M.deaf ? 'Ton an' : 'Nichts hören', toggleDeaf, { class: 'sc-ibtn' + (M.deaf ? ' is-off' : '') });
+  if (S.guest) {
+    // Gast: Name, Mikrofon, Kopfhörer, Einstellungen – kein Status (Freunde gibt es nicht).
+    appendAll(box,
+      el('button', { type: 'button', class: 'sc-user-info', title: 'Einstellungen', onclick: showSettings },
+        el('span', { class: 'sc-row-av' }, avatar(me)),
+        el('span', { class: 'sc-row-text' },
+          el('span', { class: 'sc-row-name' }, el('span', { class: 'sc-row-label', text: S.me.name || 'Gast' })),
+          el('span', { class: 'sc-row-sub', text: 'GAST · im Meeting' + (S.offline ? ' · keine Verbindung' : '') }))),
+      micBtn, deafBtn,
+      iconBtn('settings', 'Einstellungen', showSettings));
+    return;
+  }
   const label = chosenStatus() === 'off' ? 'Unsichtbar' : st === 'away' && chosenStatus() === 'on' ? 'Abwesend (inaktiv)' : STATUS[st].label;
   appendAll(box,
     el('button', { type: 'button', class: 'sc-user-info', title: 'Status und Profil', 'aria-haspopup': 'menu', onclick: (ev) => openStatusMenu(ev.currentTarget) },
@@ -2714,8 +2908,7 @@ function renderUser() {
       el('span', { class: 'sc-row-text' },
         el('span', { class: 'sc-row-name' }, el('span', { class: 'sc-row-label', text: S.me.name || (S.mode === 'temp' ? 'Temporär' : 'Ich') })),
         el('span', { class: 'sc-row-sub', text: (S.mode === 'temp' ? 'TEMP · ' : '') + label + (S.offline ? ' · keine Verbindung' : '') }))),
-    iconBtn(M.micOn ? 'mic' : 'micOff', M.micOn ? 'Stummschalten' : 'Mikrofon an', toggleMic, { class: 'sc-ibtn' + (M.micOn ? '' : ' is-off') }),
-    iconBtn(M.deaf ? 'headOff' : 'head', M.deaf ? 'Ton an' : 'Nichts hören', toggleDeaf, { class: 'sc-ibtn' + (M.deaf ? ' is-off' : '') }),
+    micBtn, deafBtn,
     L.cfg ? iconBtn('lock', 'Sperren (Strg+L)', lockNow) : null,
     iconBtn('settings', 'Einstellungen', showSettings));
 }
@@ -2741,13 +2934,13 @@ function renderMainHead() {
       iconBtn('users', 'Profil', () => { S.membersOpen = !S.membersOpen; renderAll(); }, { 'aria-pressed': S.membersOpen ? 'true' : 'false' }));
   } else if (isMeetingView()) {
     const room = S.rooms.get(S.view.rid);
-    head.append(
+    appendAll(head,
       el('span', { class: 'sc-head-text' },
         el('span', { class: 'sc-head-title' }, icon('meet', 16), 'Meeting-Chat'),
-        el('span', { class: 'sc-head-sub', text: room.meta.name + ' · ' + room.members.length + ' Teilnehmer · Ende-zu-Ende verschlüsselt' })),
+        el('span', { class: 'sc-head-sub', text: room.meta.name + (isOnceMeeting(room) ? ' · einmalig' : '') + ' · ' + room.members.length + ' Teilnehmer · Ende-zu-Ende verschlüsselt' })),
       el('span', { class: 'sc-head-spacer' }),
       meetingCallButton(room, 'icon'),
-      iconBtn('link', 'Meeting-Link teilen', () => meetingDialog(room)),
+      S.guest ? null : iconBtn('link', 'Meeting-Link teilen', () => meetingDialog(room)),
       iconBtn('users', 'Teilnehmer', () => { S.membersOpen = !S.membersOpen; renderAll(); }, { 'aria-pressed': S.membersOpen ? 'true' : 'false' }));
   } else if (S.view.kind === 'room' && S.rooms.has(S.view.rid)) {
     const room = S.rooms.get(S.view.rid);
@@ -3438,21 +3631,26 @@ function profileCard(ident, inPanel) {
   card.append(
     avatar(ident, 'lg'),
     el('h3', { class: 'sc-profile-name' }, displayName(ident), isVerified(ident) ? icon('shieldCheck', 16) : null),
-    el('p', { class: 'sc-profile-kind', text: (ident.kind === 'temp' ? 'Temporäre Sitzung' : 'Konto') + (p ? ' · ' + STATUS[p].label : '') + rel }),
+    el('p', { class: 'sc-profile-kind', text: (ident.guest || (me && S.guest) ? 'Gast im Meeting' : ident.kind === 'temp' ? 'Temporäre Sitzung' : 'Konto') + (p ? ' · ' + STATUS[p].label : '') + rel }),
     el('p', { class: 'field-label', text: 'Fingerabdruck' }),
     el('p', { class: 'sc-fp', text: C.formatFingerprint(ident.fp) }));
   if (!me) {
     card.appendChild(el('p', { class: 'sc-note', text: isVerified(ident)
       ? 'Verifiziert: Du hast diesen Fingerabdruck bestätigt.'
       : 'Nicht verifiziert. Vergleiche den Fingerabdruck über einen zweiten Weg (persönlich, Telefon, Signal …). Stimmt er, bist du sicher, dass niemand dazwischensitzt.' }));
+    if (ident.guest && !S.guest) card.appendChild(el('p', { class: 'sc-note', text: 'Gast eines Meetings: nur hier im Meeting erreichbar – keine Direktnachrichten, Anrufe oder Freundschaftsanfragen.' }));
   }
+  // Gäste (auf beiden Seiten): nur Chat und Call im Meeting.
+  const direct = !me && !S.guest && !ident.guest;
   const actions = el('div', { class: 'sc-profile-actions' });
   if (!me) {
-    if (!inPanel) actions.appendChild(el('button', { type: 'button', class: 'btn btn--primary', onclick: () => { closeModal(); openDm(ident.id); } }, 'Nachricht'));
-    actions.appendChild(friendButton(ident));
+    if (!inPanel && direct) actions.appendChild(el('button', { type: 'button', class: 'btn btn--primary', onclick: () => { closeModal(); openDm(ident.id); } }, 'Nachricht'));
+    if (direct) {
+      actions.append(friendButton(ident),
+        el('button', { type: 'button', class: 'btn', onclick: () => { closeModal(); startCall(ident.id, false); } }, icon('phone', 14), 'Anrufen'),
+        el('button', { type: 'button', class: 'btn', onclick: () => { closeModal(); startCall(ident.id, true); } }, icon('video', 14), 'Video'));
+    }
     actions.append(
-      el('button', { type: 'button', class: 'btn', onclick: () => { closeModal(); startCall(ident.id, false); } }, icon('phone', 14), 'Anrufen'),
-      el('button', { type: 'button', class: 'btn', onclick: () => { closeModal(); startCall(ident.id, true); } }, icon('video', 14), 'Video'),
       el('button', { type: 'button', class: 'btn', onclick: () => toggleVerified(ident) }, icon(isVerified(ident) ? 'x' : 'shieldCheck', 14), isVerified(ident) ? 'Verifizierung aufheben' : 'Als verifiziert markieren'));
   }
   actions.appendChild(el('button', { type: 'button', class: 'btn', onclick: () => copyText(ident.armored, 'Öffentlicher Schlüssel') }, icon('copy', 14), 'Schlüssel kopieren'));
@@ -4236,7 +4434,7 @@ async function setStatus(s) {
 
 /** Temporäre Sitzungen: in der Online-Liste nur, wenn gewünscht und nicht „offline“. */
 async function syncListed() {
-  if (S.mode !== 'temp') return;
+  if (S.mode !== 'temp' || S.guest) return;
   const want = S.vault.settings.listed !== false && chosenStatus() !== 'off';
   if (want === !!S.me.vis) return;
   try {
@@ -4379,10 +4577,11 @@ function voiceMembers(room, ch) {
 
 /** Raumdaten zum Verschlüsseln: alles Bisherige, dazu die Änderungen. */
 function metaOf(room, changes) {
-  const m = Object.assign({ name: room.meta.name, ch: room.meta.ch, vch: room.meta.vch, img: room.meta.img || '', aq: room.meta.aq || '', meet: room.meta.meet ? 1 : 0 }, changes || {});
+  const m = Object.assign({ name: room.meta.name, ch: room.meta.ch, vch: room.meta.vch, img: room.meta.img || '', aq: room.meta.aq || '', meet: room.meta.meet ? 1 : 0, once: room.meta.once ? 1 : 0 }, changes || {});
   if (!m.img) delete m.img;
   if (!m.aq) delete m.aq;   // Sprachqualität des Raums (leer: jeder nach eigener Einstellung)
-  if (!m.meet) delete m.meet;   // Meeting: Link führt gleich in den Sprachkanal
+  if (!m.meet) delete m.meet;   // Meeting: Link führt gleich in den Meeting-Raum
+  if (!m.once || !m.meet) delete m.once;   // Einmal-Meeting: Gäste nur mit Namen
   return m;
 }
 
@@ -4399,6 +4598,7 @@ async function loadRooms() {
     room.ttl = Number(raw.ttl) || 0;   // Aufbewahrung (Sekunden), legt der Besitzer fest
     room.tmp = !!raw.tmp;              // aus einer temporären Sitzung: verfällt ohne Aktivität
     room.exp = Number(raw.exp) || 0;   // dann weg (Unix-Zeit), wenn bis dahin nichts passiert
+    room.ot = !!raw.ot;                // Einmal-Meeting (der Server lässt Gäste mit Link hinein)
     room.iv = typeof raw.iv === 'number' ? raw.iv : null;   // offene Einladungen (ältere Server: unbekannt)
     setVoiceState(room, raw.vcs, raw.vc);
     room.rev = raw.rev;
@@ -4435,7 +4635,8 @@ async function decryptMeta(room) {
       && /^data:image\/(jpeg|png|webp);base64,[A-Za-z0-9+/]+=*$/.test(res.obj.img) ? res.obj.img : '';
     const aq = AUDIO_QUALITY.some((q) => q.id === res.obj.aq) ? res.obj.aq : '';
     const aqChanged = !!room.meta && (room.meta.aq || '') !== aq;
-    room.meta = { name: cleanName(res.obj.name) || 'Raum', ch: ch.length ? ch : [{ id: 'main', name: 'allgemein' }], vch: vch, img: img, aq: aq, meet: res.obj.meet === 1 ? 1 : 0 };
+    room.meta = { name: cleanName(res.obj.name) || 'Raum', ch: ch.length ? ch : [{ id: 'main', name: 'allgemein' }], vch: vch, img: img, aq: aq, meet: res.obj.meet === 1 ? 1 : 0,
+      once: res.obj.meet === 1 && res.obj.once === 1 ? 1 : 0 };
     for (const c of room.meta.ch) if (!room.msgs.has(c.id)) room.msgs.set(c.id, []);
     // Sprachqualität des Raums geändert, während man drin ist: sofort übernehmen.
     if (aqChanged && S.voice && S.voice.rid === room.id) applyAudioQuality();
@@ -4456,6 +4657,8 @@ function tempRoomNote(room) {
 }
 
 function dropRoomLocal(rid) {
+  // Gäste: Ihr Meeting ist weg (beendet, abgelaufen, entfernt) – damit endet die Gast-Sitzung.
+  if (S.guest && rid === S.guestRid) { guestEnded('ended'); return; }
   if (S.voice && S.voice.rid === rid) leaveVoice(true);
   S.rooms.delete(rid);
   if (S.view.kind === 'room' && S.view.rid === rid) setView({ kind: 'home' });
@@ -4495,7 +4698,7 @@ function roomDialog() {
           const link = el('input', { type: 'text', placeholder: WEB_URL + '#join=…' });
           const go = el('button', { type: 'button', class: 'btn btn--primary btn--block', text: 'Beitreten' });
           go.addEventListener('click', () => {
-            const m = /#(join|meet)=([A-Za-z0-9_-]{22})\.([A-Za-z0-9_-]{22})\.([A-Za-z0-9_-]{43})\.(\d{1,6})/.exec(link.value.trim());
+            const m = /#(join|meet|once)=([A-Za-z0-9_-]{22})\.([A-Za-z0-9_-]{22})\.([A-Za-z0-9_-]{43})\.(\d{1,6})/.exec(link.value.trim());
             if (!m) { toast('Das ist kein gültiger Einladungslink.', 'error'); return; }
             close();
             const inv = { rid: m[2], code: m[3], key: m[4], epoch: parseInt(m[5], 10) };
@@ -4511,40 +4714,106 @@ function roomDialog() {
 
 async function createRoom(name, opts) {
   const meet = !!(opts && opts.meet);
+  const once = meet && !!opts.once;
   const rid = C.randomId();
   const raw = C.newRoomKey();
   const key = await C.importRoomKey(raw);
   const ch = [{ id: C.randomId().slice(0, 10), name: meet ? 'chat' : 'allgemein' }];
   const obj = { v: 1, t: 'meta', room: rid, name: name, ch: ch, vch: [FIRST_VOICE], from: S.me.id, ts: Date.now() };
   if (meet) obj.meet = 1;
+  if (once) obj.once = 1;
   const meta = await C.sealRoom(obj, key, 1, rid, S.me.priv);
   // Schlüssel zuerst sichern – ohne ihn wäre der Raum unlesbar.
   storeRoomKey(rid, 1, raw);
   await saveVault(true);
-  // Meetings verfallen wie Räume aus temporären Sitzungen, wenn sie ruhen.
-  await api('room.create', meet ? { id: rid, meta: meta, tmp: 1 } : { id: rid, meta: meta });
+  // Einmal-Meetings verfallen nach onceHours() Ruhe. Feste Meetings und Räume
+  // von Konten bleiben; aus temporären Sitzungen verfallen sie (setzt der Server).
+  await api('room.create', once ? { id: rid, meta: meta, once: 1 } : { id: rid, meta: meta });
   await loadRooms();
   openRoom(rid);
   return rid;
 }
 
 /* ---------- Meetings ------------------------------------------------------------
-   Ein Meeting ist ein Raum mit Merkmal „meet“: Wer den Link (#meet=…) öffnet,
-   kommt in den Meeting-Raum mit Chat – ohne Zugang über eine temporäre
-   Sitzung, mit einem Klick. Einen Call startet dort, wer will (Sprachkanal:
+   Ein Meeting ist ein Raum mit Merkmal „meet“: Wer den Link öffnet, kommt in
+   den Meeting-Raum mit Chat. Einen Call startet dort, wer will (Sprachkanal:
    Ton, Kamera und Bildschirm wie bei einem Anruf, bis zu cfg.limits.voice
-   Personen). Ruht das Meeting (tempRoomDays), löscht der Server es samt
-   Verlauf. */
-async function startMeeting() {
+   Personen). Zwei Arten:
+   - Schnelles Meeting (Einmal-Meeting, zusätzlich „once“, beim Server „ot“):
+     Link #once=…, Gäste brauchen nur einen Namen (keine Sitzung, kein
+     Konto). Endet, wenn der Besitzer es beendet oder es onceHours() ruht.
+   - Festes Meeting: Link #meet=…, Teilnehmer kommen mit temporärer Sitzung
+     oder Konto. Bleibt bestehen (aus einer temporären Sitzung angelegt:
+     weg nach tempRoomDays() ohne Aktivität). */
+function onceHours() {
+  const h = S.cfg && Number(S.cfg.once_hours);
+  return h > 0 ? h : 12;
+}
+
+function isOnceMeeting(room) {
+  return !!(room && room.meta && room.meta.meet && (room.ot || room.meta.once));
+}
+
+/** Wann verschwindet das Meeting? (für Hinweise) */
+function meetingExpiryNote(room) {
+  if (isOnceMeeting(room)) {
+    return 'Einmalig: Das Meeting endet, wenn der Besitzer es beendet – oder nach ' + onceHours() + ' Stunden ohne Aktivität. Dann löscht der Server es samt Chat.';
+  }
+  return room.tmp ? 'Ruht das Meeting ' + tempRoomDays() + ' Tage, löscht der Server es samt Chat.' : '';
+}
+
+/** Knopf „MEET“: Art wählen – schnell (einmalig, Gäste mit Namen) oder fest. */
+function startMeeting() {
+  if (S.guest) return;
   if (S.call || S.voice) { toast(S.call ? 'Beende zuerst den Anruf.' : 'Verlasse zuerst den Sprachkanal.', 'error'); return; }
+  // Temporäre Sitzungen: das schnelle Meeting ist die naheliegende Wahl.
+  const quick = S.mode === 'temp';
+  const d = tempRoomDays();
+  openModal({
+    title: 'MEETING STARTEN',
+    build: (body, close) => {
+      const list = el('div', { class: 'sc-meet-types', role: 'list' });
+      const choice = (once) => {
+        const picked = once && quick;
+        const b = el('button', { type: 'button', role: 'listitem', class: 'sc-meet-type' + (picked ? ' is-picked' : '') },
+          el('span', { class: 'sc-meet-type-icon' }, icon(once ? 'bolt' : 'meet', 24)),
+          el('span', { class: 'sc-meet-type-text' },
+            el('span', { class: 'sc-meet-type-name' }, once ? 'Schnelles Meeting' : 'Festes Meeting',
+              picked ? el('span', { class: 'sc-meet-type-tag', text: 'EMPFOHLEN' }) : null),
+            el('span', { class: 'sc-meet-type-sub', text: once
+              ? 'Einmalig: Gäste brauchen nur einen Namen. Endet, wenn du es beendest oder es ' + onceHours() + ' Stunden ruht.'
+              : 'Bleibt bestehen; Teilnehmer kommen mit Konto oder temporärer Sitzung.' +
+                (S.mode === 'temp' ? ' Weil du temporär angemeldet bist: weg nach ' + (d === 1 ? '1 Tag' : d + ' Tagen') + ' ohne Aktivität.' : '') })));
+        b.addEventListener('click', async () => {
+          for (const x of list.children) x.disabled = true;
+          b.classList.add('is-busy');
+          try {
+            const rid = await createMeeting(once);
+            close();
+            meetingDialog(S.rooms.get(rid));
+          } catch (e) {
+            for (const x of list.children) x.disabled = false;
+            b.classList.remove('is-busy');
+            toast(e.message, 'error');
+          }
+        });
+        return b;
+      };
+      const quickBtn = choice(true);
+      list.append(quickBtn, choice(false));
+      body.append(list,
+        el('p', { class: 'sc-note', text: 'Beides ist Ende-zu-Ende verschlüsselt, mit Chat und Call (Ton, Kamera, Bildschirm). Danach bekommst du den Link zum Teilen.' }));
+      // Vorausgewählt: Enter startet gleich das schnelle Meeting.
+      if (quick) setTimeout(() => quickBtn.focus(), 40);
+    }
+  });
+}
+
+async function createMeeting(once) {
   const d = new Date();
   const name = 'Meeting ' + String(d.getDate()).padStart(2, '0') + '.' + String(d.getMonth() + 1).padStart(2, '0') + '. ' +
     String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0');
-  let rid;
-  try {
-    rid = await createRoom(name, { meet: true });
-  } catch (e) { toast(e.message, 'error'); return; }
-  meetingDialog(S.rooms.get(rid));
+  return createRoom(name, { meet: true, once: once });
 }
 
 function isMeetingView() {
@@ -4572,16 +4841,24 @@ async function copyMeetingLink(room) {
 }
 
 function renderMeetingSide(head, body, room) {
-  appendAll(head, el('span', { class: 'sc-side-title sc-meet-title' }, icon('meet', 16), 'Meeting'),
-    iconBtn('more', 'Meeting-Menü', () => roomMenu(room)));
+  const once = isOnceMeeting(room);
+  const owner = room.owner === S.me.id;
+  appendAll(head, el('span', { class: 'sc-side-title sc-meet-title' }, icon(once ? 'bolt' : 'meet', 16), once ? 'Schnelles Meeting' : 'Meeting'),
+    S.guest ? null : iconBtn('more', 'Meeting-Menü', () => roomMenu(room)));
   const inCall = !!(S.voice && S.voice.rid === room.id);
   const n = room.vc.length;
-  body.appendChild(el('div', { class: 'sc-meet-card tickbox' + (n ? ' is-live' : '') },
+  const card = el('div', { class: 'sc-meet-card tickbox' + (n ? ' is-live' : '') });
+  appendAll(card,
     el('span', { class: 'sc-meet-emblem' }, icon('video', 26)),
     el('span', { class: 'sc-meet-name', text: room.meta.name }),
+    once ? el('span', { class: 'sc-meet-once', text: 'EINMALIG', title: meetingExpiryNote(room) }) : null,
     el('span', { class: 'sc-meet-state', text: inCall ? 'Du bist im Call' : n ? 'Call läuft · ' + n + (n === 1 ? ' Person' : ' Personen') : 'Noch kein Call' }),
     meetingCallButton(room),
-    el('button', { type: 'button', class: 'btn btn--block', onclick: () => copyMeetingLink(room) }, icon('link', 14), 'Link kopieren')));
+    // Gäste teilen keinen Link (den haben sie schon) – sie können nur gehen.
+    S.guest ? null : el('button', { type: 'button', class: 'btn btn--block', onclick: () => copyMeetingLink(room) }, icon('link', 14), 'Link kopieren'),
+    S.guest ? el('button', { type: 'button', class: 'btn btn--block', onclick: guestLeave }, icon('leave', 14), 'Meeting verlassen') : null,
+    once && owner ? el('button', { type: 'button', class: 'btn btn--block sc-btn--danger', onclick: () => deleteRoom(room) }, icon('x', 14), 'Meeting beenden') : null);
+  body.appendChild(card);
 
   const ids = room.members.map((m) => m.id);
   ids.sort((a, b) => (room.vc.includes(b) ? 1 : 0) - (room.vc.includes(a) ? 1 : 0));
@@ -4593,10 +4870,14 @@ function renderMeetingSide(head, body, room) {
     list.appendChild(el('div', { class: 'sc-meet-person' + (live ? ' is-live' : '') },
       avatar(ident, 'xs'),
       el('span', { class: 'sc-meet-person-name', text: displayName(ident) + (id === S.me.id ? ' (du)' : '') }),
+      ident && ident.guest ? kindBadge(ident) : null,
+      id === room.owner ? el('span', { class: 'sc-owner', title: 'Startet und beendet das Meeting' }, icon('crown', 12)) : null,
       live ? el('span', { class: 'sc-meet-badge', text: 'IM CALL' }) : null));
   }
   body.appendChild(list);
-  if (room.tmp) body.appendChild(el('p', { class: 'sc-empty-note', text: 'Ruht das Meeting ' + tempRoomDays() + ' Tage, löscht der Server es samt Chat.' }));
+  if (S.guest) body.appendChild(el('p', { class: 'sc-empty-note', text: 'Du bist als Gast hier – ohne Konto, nur in diesem Meeting. Verlässt du es, endet deine Gast-Sitzung.' }));
+  const note = meetingExpiryNote(room);
+  if (note) body.appendChild(el('p', { class: 'sc-empty-note', text: note }));
 }
 
 /** Lobby über dem Chat: ob ein Call läuft, wer drin ist – und ein großer Knopf. */
@@ -4621,28 +4902,38 @@ function renderMeetingLobby() {
       el('span', { class: 'sc-meet-lobby-title', text: n ? 'Call läuft' : 'Noch kein Call' }),
       el('span', { class: 'sc-meet-lobby-sub', text: n ? names + (n === 1 ? ' ist drin.' : ' sind drin.') : 'Schreibt hier im Chat – oder startet einen Call mit Ton, Kamera und Bildschirm. Alle im Meeting sehen es sofort.' })),
     n ? faces : null,
-    el('span', { class: 'sc-meet-lobby-acts' }, meetingCallButton(room),
-      el('button', { type: 'button', class: 'btn', onclick: () => copyMeetingLink(room) }, icon('link', 14), 'Link kopieren')));
+    appendAll(el('span', { class: 'sc-meet-lobby-acts' }), meetingCallButton(room),
+      S.guest ? null : el('button', { type: 'button', class: 'btn', onclick: () => copyMeetingLink(room) }, icon('link', 14), 'Link kopieren')));
 }
 
+/** Neuer Link (Einladung für bis zu 100 Beitritte): schnelles Meeting 1 Tag, festes 7 Tage. */
 async function meetingLink(room) {
-  const r = await api('room.invite', { id: room.id, max: 100 });
+  const once = isOnceMeeting(room);
+  const r = await api('room.invite', { id: room.id, max: 100, days: once ? 1 : 7 });
   const raw = roomKeyRaw(room.id, r.epoch);
   if (!raw) throw new Error('Der aktuelle Raumschlüssel fehlt noch.');
-  return WEB_URL + '#meet=' + room.id + '.' + r.code + '.' + raw + '.' + r.epoch;
+  return WEB_URL + (once ? '#once=' : '#meet=') + room.id + '.' + r.code + '.' + raw + '.' + r.epoch;
 }
 
 function meetingDialog(room) {
-  if (!room) return;
+  if (!room || S.guest) return;
+  const once = isOnceMeeting(room);
   openModal({
-    title: 'MEETING',
+    title: once ? 'SCHNELLES MEETING' : 'MEETING',
     build: (body) => {
       const out = el('div', { class: 'sc-invite-out' }, el('p', { class: 'sc-note', text: 'Link wird erstellt …' }));
       const max = (S.cfg && S.cfg.limits && S.cfg.limits.voice) || 8;
+      const keyNote = 'den Schlüssel enthält nur der Teil hinter „#“ – er geht nie an den Server.';
       body.append(
-        el('p', { class: 'sc-p', text: 'Teile diesen Link. Wer ihn öffnet, ist mit einem Klick im Meeting-Raum – auch ohne Konto, mit einer temporären Sitzung. Dort könnt ihr schreiben; einen Call startet ihr oben mit dem Hörer. Alles ist Ende-zu-Ende verschlüsselt.' }),
+        el('p', { class: 'sc-p', text: once
+          ? 'Teile diesen Link. Wer ihn öffnet, gibt nur einen Namen ein und ist im Meeting – ohne Konto, ohne Anmeldung. Gäste sehen nur dieses Meeting: Chat, Teilnehmer und Call. Alles ist Ende-zu-Ende verschlüsselt.'
+          : 'Teile diesen Link. Wer ihn öffnet, ist mit einem Klick im Meeting-Raum – auch ohne Konto, mit einer temporären Sitzung. Dort könnt ihr schreiben; einen Call startet ihr oben mit dem Hörer. Alles ist Ende-zu-Ende verschlüsselt.' }),
         out,
-        el('p', { class: 'sc-note', text: 'Im Call bis zu ' + max + ' Personen gleichzeitig, im Raum bis zu 50. Der Link gilt 7 Tage für bis zu 100 Beitritte; den Schlüssel enthält nur der Teil hinter „#“ – er geht nie an den Server. Ruht das Meeting ' + tempRoomDays() + ' Tage, wird es gelöscht.' }));
+        el('p', { class: 'sc-note', text: once
+          ? 'Im Call bis zu ' + max + ' Personen gleichzeitig, im Meeting bis zu 50. Der Link gilt 24 Stunden für bis zu 100 Beitritte; ' + keyNote +
+            ' Das Meeting endet, wenn du es beendest (Knopf „Meeting beenden“) oder es ' + onceHours() + ' Stunden ruht.'
+          : 'Im Call bis zu ' + max + ' Personen gleichzeitig, im Raum bis zu 50. Der Link gilt 7 Tage für bis zu 100 Beitritte; ' + keyNote +
+            (room.tmp ? ' Ruht das Meeting ' + tempRoomDays() + ' Tage, wird es gelöscht.' : '') }));
       meetingLink(room).then((link) => {
         const input = el('input', { type: 'text', readonly: true, value: link });
         out.textContent = '';
@@ -4668,7 +4959,10 @@ async function joinRoom(inv) {
 }
 
 function roomMenu(room) {
+  if (S.guest) return;   // Gäste: nur Call und „Meeting verlassen“ in der Meeting-Karte
   const owner = room.owner === S.me.id;
+  const meet = !!room.meta.meet;
+  const once = isOnceMeeting(room);
   openModal({
     title: room.meta.name.toUpperCase(),
     build: (body, close) => {
@@ -4683,10 +4977,11 @@ function roomMenu(room) {
         owner ? item('clock', 'Nachrichten aufbewahren: ' + ttlLabel(roomTtl(room)), () => roomTtlDialog(room)) : null,
         owner ? item('sliders', 'Sprachqualität im Raum: ' + ((AUDIO_QUALITY.find((q) => q.id === room.meta.aq) || { name: 'jeder nach Wahl' }).name), () => roomAudioDialog(room)) : null,
         owner ? item('key', 'Raumschlüssel erneuern', () => rotateRoom(room.id, true)) : null,
-        item('leave', 'Raum verlassen', () => leaveRoom(room), true),
-        owner ? item('trash', 'Raum löschen', () => deleteRoom(room), true) : null,
+        item('leave', meet ? 'Meeting verlassen' : 'Raum verlassen', () => leaveRoom(room), true),
+        owner ? item(once ? 'x' : 'trash', once ? 'Meeting beenden' : meet ? 'Meeting löschen' : 'Raum löschen', () => deleteRoom(room), true) : null,
         el('p', { class: 'sc-note', text: 'Schlüsselgeneration ' + room.epoch + ' · ' + room.members.length + ' Mitglieder · Besitzer: ' + displayName(S.ids.get(room.owner)) }),
-        room.tmp ? el('p', { class: 'sc-note', text: tempRoomNote(room) }) : null);
+        meet && meetingExpiryNote(room) ? el('p', { class: 'sc-note', text: meetingExpiryNote(room) })
+          : room.tmp ? el('p', { class: 'sc-note', text: tempRoomNote(room) }) : null);
     }
   });
 }
@@ -4936,7 +5231,10 @@ function renameRoom(room) {
 }
 
 async function leaveRoom(room) {
-  const ok = await confirmBox('Raum verlassen', 'Du verlässt „' + room.meta.name + '“. Zurück kommst du nur mit einer neuen Einladung.', 'Verlassen', true);
+  const meet = !!room.meta.meet;
+  const handOver = isOnceMeeting(room) && room.owner === S.me.id
+    ? ' Ein anderer Teilnehmer mit Konto oder Sitzung übernimmt das Meeting; sind nur noch Gäste da, endet es für alle.' : '';
+  const ok = await confirmBox(meet ? 'Meeting verlassen' : 'Raum verlassen', 'Du verlässt „' + room.meta.name + '“. Zurück kommst du nur mit einer neuen Einladung.' + handOver, 'Verlassen', true);
   if (!ok) return;
   try {
     if (S.voice && S.voice.rid === room.id) await leaveVoice();
@@ -4948,7 +5246,12 @@ async function leaveRoom(room) {
 }
 
 async function deleteRoom(room) {
-  const ok = await confirmBox('Raum löschen', 'Der Raum und sein gesamter Verlauf werden für alle gelöscht.', 'Löschen', true);
+  const once = isOnceMeeting(room);
+  const meet = !!room.meta.meet;
+  const ok = await confirmBox(once ? 'Meeting beenden' : meet ? 'Meeting löschen' : 'Raum löschen', once
+    ? 'Das Meeting endet für alle: Chat und Teilnehmerliste werden gelöscht, Gäste verlassen es automatisch, der Link gilt nicht mehr.'
+    : meet ? 'Das Meeting und sein Chat werden für alle gelöscht. Der Link gilt danach nicht mehr.'
+      : 'Der Raum und sein gesamter Verlauf werden für alle gelöscht.', once ? 'Beenden' : 'Löschen', true);
   if (!ok) return;
   try {
     if (S.voice && S.voice.rid === room.id) await leaveVoice();
@@ -4965,7 +5268,7 @@ async function kickMember(room, ident) {
   try {
     await api('room.kick', { id: room.id, member: ident.id });
     await rotateRoom(room.id);
-    toast(displayName(ident) + ' entfernt, Raumschlüssel erneuert.', 'ok');
+    toast(displayName(ident) + ' entfernt, Raumschlüssel erneuert.' + (room.meta.meet ? ' Bisherige Meeting-Links gelten nicht mehr – teile bei Bedarf einen neuen.' : ''), 'ok', room.meta.meet ? 7000 : undefined);
   } catch (e) { toast(e.message, 'error'); }
 }
 
@@ -5110,9 +5413,10 @@ function roomSys(room, e) {
   const ts = e.t * 1000;
   const ident = S.ids.get(e.id);
   const who = displayName(ident);
-  const text = e.ev === 'join' ? who + ' ist dem Raum beigetreten.'
-    : e.ev === 'kick' ? who + ' wurde aus dem Raum entfernt.'
-      : who + ' hat den Raum verlassen.';
+  const where = room.meta.meet ? 'Meeting' : 'Raum';
+  const text = e.ev === 'join' ? who + ' ist dem ' + where + ' beigetreten.'
+    : e.ev === 'kick' ? who + ' wurde aus dem ' + where + ' entfernt.'
+      : who + (room.meta.meet ? ' hat das Meeting verlassen.' : ' hat den Raum verlassen.');
   const ch = room.meta.ch[0].id;
   const list = room.msgs.get(ch) || [];
   room.msgs.set(ch, list);
@@ -5120,7 +5424,12 @@ function roomSys(room, e) {
   if (e.ev === 'join') ensureIds([e.id]).then(scheduleRender);
   // Wer geht, soll spätere Nachrichten nicht mehr lesen können: Der
   // Besitzer erneuert den Schlüssel (einmal je Ereignis).
-  if ((e.ev === 'leave' || e.ev === 'kick') && room.owner === S.me.id && e.id !== S.me.id) {
+  // Ausnahme Meetings: Wer selbst geht, hat den Link und damit den Schlüssel
+  // – solange Links offen sind, käme er damit ohnehin wieder hinein. Ein
+  // neuer Schlüssel machte nur alle geteilten Links ungültig (Gäste kämen
+  // nicht mehr hinein). Entfernen erneuert ihn weiterhin.
+  const keepLinks = e.ev === 'leave' && room.meta.meet && room.iv;
+  if ((e.ev === 'leave' || e.ev === 'kick') && room.owner === S.me.id && e.id !== S.me.id && !keepLinks) {
     const rot = (S.vault.rooms[room.id] && S.vault.rooms[room.id].rot) || 0;
     if (ts > rot) setTimeout(() => rotateRoom(room.id), 1200);
   }
@@ -5233,6 +5542,7 @@ async function pollOnce() {
 }
 
 async function refreshOnline() {
+  if (S.guest) return;   // Gäste sehen keine Online-Liste
   try {
     const r = await api('online');
     const ids = [];
@@ -6100,6 +6410,7 @@ async function startCall(peerId, video) {
   if (!ident) return;
   if (ident.changed) { toast('Erst den geänderten Schlüssel prüfen.', 'error'); return; }
   if (isBlocked(ident)) { toast('Diese Person ist blockiert.', 'error'); return; }
+  if (S.guest || ident.guest) { toast('Gäste telefonieren nur im Call des Meetings.', 'error'); return; }
   audioCtx();
   if (!(await relayReady()) || S.call || S.voice) return;
   const call = S.call = { id: C.randomId(), peerId: peerId, dir: 'out', state: 'ringing', video: !!video, started: 0, peer: null, bye: null };
@@ -6535,7 +6846,7 @@ function renderStage() {
     const meet = !!(room && room.meta.meet);
     top.append(el('span', { class: 'sc-stage-state', text: meet ? room.meta.name + ' · Call · ' + (S.voice.peers.size + 1) + ' Personen' : (room ? room.meta.name : '') + ' · Sprache' }),
       el('span', { class: 'sc-stage-right' }, netQualityBadge(),
-        meet ? el('button', { type: 'button', class: 'sc-code', title: 'Meeting-Link teilen', onclick: () => meetingDialog(room) }, icon('link', 13), 'Link teilen') : null,
+        meet && !S.guest ? el('button', { type: 'button', class: 'sc-code', title: 'Meeting-Link teilen', onclick: () => meetingDialog(room) }, icon('link', 13), 'Link teilen') : null,
         el('button', { type: 'button', class: 'sc-code', title: 'Sicherheitscodes vergleichen', onclick: showCodeInfo },
           icon('lock', 13), 'Ende-zu-Ende verschlüsselt · Codes an den Kacheln')));
   }
@@ -7407,7 +7718,7 @@ function showSettings() {
         await syncListed();
         renderAll();
       });
-      const picRow = S.mode === 'account'
+      const picRow = S.guest ? null : S.mode === 'account'
         ? el('div', { class: 'sc-set-row' },
           avatar(S.ids.get(S.me.id), 'sm'),
           el('span', { class: 'sc-set-text' }, el('strong', { text: 'Profilbild' }),
@@ -7415,21 +7726,26 @@ function showSettings() {
           el('button', { type: 'button', class: 'btn', text: S.me.av ? 'Ändern' : 'Wählen', onclick: async () => { if (await setProfilePicture(false)) { close(); showSettings(); } } }),
           S.me.av ? el('button', { type: 'button', class: 'btn sc-btn--danger', text: 'Entfernen', onclick: async () => { if (await setProfilePicture(true)) { close(); showSettings(); } } }) : null)
         : el('p', { class: 'sc-note', text: 'Profilbilder gibt es für Konten.' });
-      body.append(
+      appendAll(body,
         el('div', { class: 'sc-set-row' },
-          el('span', { class: 'sc-set-text' }, el('strong', { text: S.mode === 'temp' ? 'Alias' : 'Name' }),
+          el('span', { class: 'sc-set-text' }, el('strong', { text: S.mode === 'temp' && !S.guest ? 'Alias' : 'Name' }),
             el('span', { text: S.me.name || '(kein Alias)' })),
           S.mode === 'temp' ? el('button', { type: 'button', class: 'btn', text: 'Ändern', onclick: () => { close(); editAlias(); } }) : null),
         picRow,
-        // Konten stehen nie in der Online-Liste (mehr Anonymität), nur temporäre Sitzungen.
-        S.mode === 'temp'
+        // Konten stehen nie in der Online-Liste (mehr Anonymität), nur temporäre Sitzungen – Gäste auch nicht.
+        S.guest
+          ? el('p', { class: 'sc-note', text: 'Als Gast stehst du in keiner Online-Liste und bist nur in diesem Meeting zu sehen – für die anderen Teilnehmer, mit Namen und Fingerabdruck.' })
+          : S.mode === 'temp'
           ? el('label', { class: 'sc-check' }, vis, el('span', { text: 'In der Online-Liste sichtbar sein. Aus: Nur wer deinen Schlüssel oder Fingerabdruck hat, erreicht dich.' +
             (chosenStatus() === 'off' ? ' Solange du als offline angezeigt wirst, stehst du ohnehin nicht darin.' : '') }))
           : el('p', { class: 'sc-note', text: 'Konten stehen nicht in der Online-Liste. Ob du online bist, sehen nur deine Freunde – den Status stellst du unten links mit einem Klick auf dein Profil ein. Erreichbar bist du über deinen Schlüssel, deinen Fingerabdruck, gemeinsame Räume und bestehende Unterhaltungen.' }));
 
-      // Schlüssel
+      // Schlüssel (Gäste: nur der Fingerabdruck – sichern lohnt sich für eine Gast-Sitzung nicht)
       body.appendChild(sectionHead('SCHLÜSSEL'));
-      body.append(
+      if (S.guest) {
+        body.append(el('p', { class: 'sc-fp', text: C.formatFingerprint(S.me.fp) }),
+          el('p', { class: 'sc-note', text: 'Dein Schlüssel lebt nur ' + KEY_HOME + ' und verschwindet mit deiner Gast-Sitzung.' }));
+      } else body.append(
         el('p', { class: 'sc-fp', text: C.formatFingerprint(S.me.fp) }),
         el('p', { class: 'sc-note', text: 'Forward Secrecy: Der Schlüssel für Nachrichten an dich wechselt jede Woche (der jetzige ist vom ' +
           new Date(C.newestEncryptionSubkey(S.me.priv)).toLocaleDateString('de-DE') + '), alte werden nach ' + Math.round(keyKeep() / 86400000) + ' Tagen gelöscht – dann sind auch mitgeschnittene ältere Nachrichten nicht mehr zu entschlüsseln. Räume: Der Besitzer wechselt den Raumschlüssel wöchentlich.' }),
@@ -7466,7 +7782,7 @@ function showSettings() {
       const roomAq = roomAudioQuality();
       const roomAqName = roomAq && S.voice ? (S.rooms.get(S.voice.rid) || { meta: { name: '' } }).meta.name : '';
       const screenPick = choice(SCREEN_QUALITY, screenQuality().id, setScreenQuality);
-      body.append(
+      appendAll(body,
         relayStatusRow(),
         pickField('Mikrofon', mic, 'Namen erscheinen, sobald du einmal das Mikrofon erlaubt hast.'),
         pickField('Tonqualität', audio, 'Gilt für dieses Gerät, Datenrate und Filter sofort, Stereo ab dem nächsten Anruf.' +
@@ -7476,7 +7792,7 @@ function showSettings() {
           ? 'IP-Adresse verbergen: Anrufe laufen nur über den Relay-Server. Dein Gegenüber sieht deine IP nicht – auch nicht beim Klingeln –, der Betreiber des Relays schon. ' +
             (S.mode === 'temp' ? 'Bei temporären Sitzungen von Haus aus an, gilt für dieses Gerät.' : 'Gilt auf all deinen Geräten.') + ' Ab dem nächsten Anruf.'
           : 'IP-Adresse verbergen – braucht einen Relay-Server (TURN), der auf diesem Server noch nicht eingerichtet ist.' })),
-        el('label', { class: 'sc-check' }, unknown, el('span', { text:
+        S.guest ? null : el('label', { class: 'sc-check' }, unknown, el('span', { text:
           'Anrufe von Unbekannten klingeln lassen. Sonst landen sie still unter Nachrichtenanfragen. Bekannt sind Kontakte, Freunde und Mitglieder gemeinsamer Räume. ' +
           (S.mode === 'temp' ? 'Bei temporären Sitzungen von Haus aus an, gilt für dieses Gerät.' : 'Bei Konten von Haus aus aus; gilt auf all deinen Geräten.') })),
         el('label', { class: 'sc-check' }, sound, el('span', { text: 'Töne (Klingeln, neue Nachricht)' })));
@@ -7515,27 +7831,29 @@ function showSettings() {
           'Bildschirmfotos und Aufnahmen verhindern: Andere Programme, Screenshots und Bildschirmübertragungen sehen dieses Fenster schwarz. Gilt für dieses Gerät.' })));
       }
 
-      // App-Sperre (je Gerät)
-      body.appendChild(sectionHead('APP-SPERRE'));
-      if (!L.cfg) {
-        body.append(
-          el('p', { class: 'sc-note', text: 'Sperrt Clavichat mit einer PIN – beim Start, nach Leerlauf' + (DESKTOP ? ', beim Sperren von Windows' : '') +
-            ' und auf Knopfdruck. Die gespeicherte Anmeldung liegt dann nur mit der PIN verschlüsselt auf diesem Gerät.' }),
-          el('div', { class: 'sc-card-actions' },
-            el('button', { type: 'button', class: 'btn', onclick: () => { close(); pinDialog('set'); } }, icon('lock', 14), 'PIN festlegen')));
-      } else {
-        const idlePick = choice(LOCK_IDLE, String(L.cfg.idle || 0), (id) => { L.cfg.idle = parseInt(id, 10) || 0; saveLockCfg(L.cfg); });
-        body.append(
-          pickField('Automatisch sperren', idlePick, 'Gilt für dieses Gerät. Während eines Gesprächs sperrt Clavichat nicht von selbst' +
-            (DESKTOP ? ', beim Sperren von Windows dagegen immer.' : '.')),
-          el('div', { class: 'sc-card-actions' },
-            el('button', { type: 'button', class: 'btn', onclick: () => { close(); lockNow(); } }, icon('lock', 14), 'Jetzt sperren'),
-            el('button', { type: 'button', class: 'btn', text: 'PIN ändern', onclick: () => { close(); pinDialog('change'); } }),
-            el('button', { type: 'button', class: 'btn sc-btn--danger', text: 'Sperre entfernen', onclick: () => { close(); pinDialog('remove'); } })),
-          el('p', { class: 'sc-note', text: 'Sperren geht auch mit Strg+L oder dem Schloss unten links. PIN vergessen? Auf dem Sperrbildschirm zurücksetzen – danach meldest du dich neu an.' }));
-      }
-      if (DESKTOP && DESKTOP.secure) {
-        body.append(el('p', { class: 'sc-note', text: 'In der Windows-App ist die gespeicherte Anmeldung außerdem an dein Windows-Konto gebunden: Auf einem anderen Rechner oder unter einem anderen Windows-Konto lässt sie sich nicht öffnen.' }));
+      // App-Sperre (je Gerät) – nicht für Gäste: Sie haben keine gespeicherte Anmeldung.
+      if (!S.guest) {
+        body.appendChild(sectionHead('APP-SPERRE'));
+        if (!L.cfg) {
+          body.append(
+            el('p', { class: 'sc-note', text: 'Sperrt Clavichat mit einer PIN – beim Start, nach Leerlauf' + (DESKTOP ? ', beim Sperren von Windows' : '') +
+              ' und auf Knopfdruck. Die gespeicherte Anmeldung liegt dann nur mit der PIN verschlüsselt auf diesem Gerät.' }),
+            el('div', { class: 'sc-card-actions' },
+              el('button', { type: 'button', class: 'btn', onclick: () => { close(); pinDialog('set'); } }, icon('lock', 14), 'PIN festlegen')));
+        } else {
+          const idlePick = choice(LOCK_IDLE, String(L.cfg.idle || 0), (id) => { L.cfg.idle = parseInt(id, 10) || 0; saveLockCfg(L.cfg); });
+          body.append(
+            pickField('Automatisch sperren', idlePick, 'Gilt für dieses Gerät. Während eines Gesprächs sperrt Clavichat nicht von selbst' +
+              (DESKTOP ? ', beim Sperren von Windows dagegen immer.' : '.')),
+            el('div', { class: 'sc-card-actions' },
+              el('button', { type: 'button', class: 'btn', onclick: () => { close(); lockNow(); } }, icon('lock', 14), 'Jetzt sperren'),
+              el('button', { type: 'button', class: 'btn', text: 'PIN ändern', onclick: () => { close(); pinDialog('change'); } }),
+              el('button', { type: 'button', class: 'btn sc-btn--danger', text: 'Sperre entfernen', onclick: () => { close(); pinDialog('remove'); } })),
+            el('p', { class: 'sc-note', text: 'Sperren geht auch mit Strg+L oder dem Schloss unten links. PIN vergessen? Auf dem Sperrbildschirm zurücksetzen – danach meldest du dich neu an.' }));
+        }
+        if (DESKTOP && DESKTOP.secure) {
+          body.append(el('p', { class: 'sc-note', text: 'In der Windows-App ist die gespeicherte Anmeldung außerdem an dein Windows-Konto gebunden: Auf einem anderen Rechner oder unter einem anderen Windows-Konto lässt sie sich nicht öffnen.' }));
+        }
       }
 
       // Fenster (nur Windows-App): beim Schließen in den Infobereich
@@ -7583,7 +7901,9 @@ function showSettings() {
       // Sitzung / Konto
       body.appendChild(sectionHead(S.mode === 'temp' ? 'SITZUNG' : 'KONTO'));
       const acts = el('div', { class: 'sc-card-actions' });
-      if (S.mode === 'account') {
+      if (S.guest) {
+        acts.append(el('button', { type: 'button', class: 'btn sc-btn--danger', onclick: () => { close(); guestLeave(); } }, icon('leave', 14), 'Meeting verlassen & Sitzung beenden'));
+      } else if (S.mode === 'account') {
         // Konto mit Wiederherstellungscode: neuen erzeugen, falls der alte weg ist.
         if (S.codeAccount) acts.appendChild(el('button', { type: 'button', class: 'btn', onclick: () => { close(); renewRecoveryCode(); } }, icon('key', 14), 'Neuer Wiederherstellungscode'));
         acts.append(
@@ -7655,7 +7975,7 @@ function pinDialog(mode) {
 
 function editAlias() {
   openModal({
-    title: 'ALIAS',
+    title: S.guest ? 'NAME' : 'ALIAS',
     build: (body, close) => {
       const suggestion = randomAlias();
       const input = el('input', { type: 'text', maxlength: '40', value: S.me.name || '', placeholder: suggestion });
@@ -7664,7 +7984,9 @@ function editAlias() {
         const name = cleanName(input.value) || suggestion;
         go.disabled = true;
         try {
-          const card = await C.signCard(S.me.priv, { v: 1, id: S.me.id, kind: 'temp', name: name, ts: Date.now() });
+          const obj = { v: 1, id: S.me.id, kind: 'temp', name: name, ts: Date.now() };
+          if (S.guest) obj.guest = 1;
+          const card = await C.signCard(S.me.priv, obj);
           await api('card', { card: card });
           S.me.name = name;
           S.ids.get(S.me.id).name = name;
@@ -8135,10 +8457,13 @@ function bind() {
   // Einladungslink in einen schon offenen Clavichat-Tab eingefügt: Die Seite
   // lädt dann nicht neu, nur der Teil hinter "#" ändert sich.
   window.addEventListener('hashchange', () => {
-    if (!/^#(join|meet)=/.test(location.hash)) return;
+    if (!/^#(join|meet|once)=/.test(location.hash)) return;
     parseJoinFragment();
     if (S.entered) offerPendingJoin();
-    else if (!$('sc-gate').hidden) renderGate('temp');
+    else if (!$('sc-gate').hidden) {
+      if (S.pendingJoin && S.pendingJoin.once) showGuestJoin();
+      else renderGate('temp');
+    }
   });
   document.addEventListener('visibilitychange', () => {
     if (!document.hidden) { markRead(); scheduleRender(); if (S.wake) S.wake(); return; }

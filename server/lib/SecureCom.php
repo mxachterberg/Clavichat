@@ -36,7 +36,8 @@
  *    rooms/<rid>.json        Raum: Mitglieder, Einladungen, wer in welchem
  *                            Sprachkanal ist (Namen der Kanäle: verschlüsselt),
  *                            letzte Aktivität; von einer temporären Sitzung
- *                            angelegt: nach tempRoomDays() ohne Aktivität weg
+ *                            angelegt: nach tempRoomDays() ohne Aktivität weg;
+ *                            Einmal-Meeting (ot): nach ONCE_IDLE weg
  *    feeds/<rid>.jsonl|.n    Verlauf eines Raums
  *    avatars/<id>.json       Profilbild eines Kontos (öffentlich wie der Name)
  *    mem/<id>.json           Räume einer Identität
@@ -44,6 +45,13 @@
  *    pres/<fach>             Status eines Freundes (verschlüsselt, nur der
  *                            jüngste Stand, nach PRES_TTL Sekunden weg)
  *    temp.json               temporäre Identitäten (für das Aufräumen)
+ *    guests.json             Gäste von Einmal-Meetings (für das Aufräumen)
+ *
+ *  Gäste: Wer einen Link zu einem Einmal-Meeting (#once=…) hat, bekommt mit
+ *  der gültigen Einladung eine temporäre Identität mit Merkmal "g" – ohne
+ *  Zugangscode. Gäste sind nur im Meeting: keine Online-Liste, keine Suche,
+ *  keine Direktnachrichten, keine Freunde, keine eigenen Räume oder
+ *  Einladungen, höchstens ein Raum (und nur ein Einmal-Meeting).
  * ----------------------------------------------------------------------------
  */
 
@@ -72,6 +80,9 @@ class SecureCom
     const MAX_PRES      = 512;       // verschlüsselter Status (Base64)
     const MAX_SLOTS     = 200;       // Fächer je Aufruf (schreiben, lesen, löschen)
     const ACTIVE_EVERY  = 3600;      // letzte Aktivität eines Raums höchstens stündlich schreiben
+    const ONCE_IDLE     = 43200;     // Einmal-Meeting: 12 Stunden ohne Aktivität, dann weg
+    const GUEST_IDLE    = 7200;      // Gäste: zwei Stunden ohne Abruf, dann weg (Tab zu)
+    const GUEST_GRACE   = 600;       // Gäste ohne Meeting (verlassen, beendet): nach zehn Minuten weg
 
     const MAX_ENTRY     = 98304;     // verschlüsselter Eintrag (Base64)
     const MAX_SIGNAL    = 49152;
@@ -159,7 +170,8 @@ class SecureCom
             'default_ttl'    => min(self::DEFAULT_TTL, self::retentionDays() * 86400),
             'temp_hours'     => self::tempHours(),
             'temp_room_days' => self::tempRoomDays(),
-            'access'         => self::accessCode() !== '' ? 'code' : 'open',
+            'once_hours'     => self::ONCE_IDLE / 3600,      // Einmal-Meetings: Ruhezeit bis zum Löschen
+            'access'       => self::accessCode() !== '' ? 'code' : 'open',
             // Anmelden mit dem Postfach: Adresse, unter der das Dashboard von
             // achterberg.dev Tickets ausstellt (siehe ssoTicket). Sonst leer.
             'sso'            => defined('CLAVICHAT_SSO') ? (string)CLAVICHAT_SSO : '',
@@ -402,22 +414,62 @@ class SecureCom
         ];
     }
 
+    /**
+     * Temporäre Sitzung. Mit "guest" (dazu "room" und "code") als Gast eines
+     * Einmal-Meetings: Die gültige Einladung ersetzt den Zugangscode – der
+     * Gast kommt damit aber nur in dieses eine Meeting (siehe guestOnly()).
+     */
     public static function startTemp(array $b)
     {
-        self::checkAccess($b);
+        $guest = !empty($b['guest']);
+        if ($guest) self::checkGuestInvite(self::str($b, 'room'), self::str($b, 'code'));
+        else self::checkAccess($b);
         $id   = self::idOf(self::str($b, 'id'));
         $pub  = self::pubKey(self::str($b, 'pub'));
         $fp   = self::fingerprint(self::str($b, 'fp'));
         $card = self::b64(self::str($b, 'card'), self::MAX_CARD, 'Karte');
         self::checkCapacity();
 
-        self::createIdentity($id, 'temp', $pub, $fp, $card, null);
+        self::createIdentity($id, 'temp', $pub, $fp, $card, null, $guest ? ['g' => 1, 'vis' => false] : []);
         self::mutate(self::dir() . '/temp.json', function (&$t) use ($id) {
             if (!is_array($t)) $t = [];
             $t[$id] = time();
         });
+        if ($guest) {
+            self::mutate(self::dir() . '/guests.json', function (&$g) use ($id) {
+                if (!is_array($g)) $g = [];
+                $g[$id] = time();
+            });
+        }
         $token = self::issueToken($id);
-        return ['token' => $token, 'id' => $id, 'kind' => 'temp', 'exp' => time() + self::tempHours() * 3600];
+        return ['token' => $token, 'id' => $id, 'kind' => 'temp', 'guest' => $guest, 'exp' => time() + self::tempHours() * 3600];
+    }
+
+    /** Gast: Gibt es das Einmal-Meeting, und gilt die Einladung noch? */
+    private static function checkGuestInvite($rid, $code)
+    {
+        $bad = new SecureComException('Dieser Meeting-Link ist ungültig oder abgelaufen.', 403);
+        if (!preg_match('/^[A-Za-z0-9_-]{22}$/', $rid) || !preg_match('/^[A-Za-z0-9_-]{22}$/', $code)) throw $bad;
+        $room = self::readJson(self::roomFile($rid), true);
+        if (!$room || empty($room['ot']) || !self::inviteValid($room, $code)) throw $bad;
+        if (count((array)$room['mem']) >= self::MAX_MEMBERS) throw new SecureComException('Das Meeting ist voll.', 409);
+    }
+
+    private static function inviteValid(array $room, $code)
+    {
+        $inv = is_string($code) ? ($room['inv'][$code] ?? null) : null;
+        return is_array($inv) && (int)$inv['x'] >= time() && (int)$inv['n'] < (int)$inv['max'];
+    }
+
+    private static function isGuest(array $ident)
+    {
+        return !empty($ident['g']);
+    }
+
+    /** Gäste eines Einmal-Meetings dürfen das nicht (Antwort 403). */
+    private static function guestOnly(array $me, $message)
+    {
+        if (self::isGuest($me)) throw new SecureComException($message, 403);
     }
 
     /* ======================================================================
@@ -553,6 +605,7 @@ class SecureCom
     {
         $out = self::publicIdentity($me, true);
         $out['kind'] = $me['k'];
+        $out['guest'] = self::isGuest($me);
         if ($me['k'] === 'temp') $out['exp'] = self::lastSeen($me['id']) + self::tempHours() * 3600;
         if ($me['k'] === 'account') {
             // Hat diese Sitzung schon einen (verschlüsselten) Gerätenamen?
@@ -724,6 +777,7 @@ class SecureCom
        ====================================================================== */
     public static function online(array $me)
     {
+        self::guestOnly($me, 'Gäste eines Meetings sehen keine Online-Liste.');
         $presence = self::readJson(self::dir() . '/presence.json', true) ?: [];
         $now  = time();
         $list = [];
@@ -754,7 +808,8 @@ class SecureCom
     /** Anrufen oder anschreiben per PGP-Schlüssel: Suche nach Fingerabdruck. */
     public static function find(array $me, array $b)
     {
-        $fp = self::fingerprint(self::str($b, 'fp'));
+        self::guestOnly($me, 'Gäste eines Meetings können niemanden suchen.');
+        $fp =self::fingerprint(self::str($b, 'fp'));
         $index = self::readJson(self::dir() . '/fp.json', true) ?: [];
         $presence = self::readJson(self::dir() . '/presence.json', true) ?: [];
         $out = [];
@@ -777,7 +832,8 @@ class SecureCom
        ====================================================================== */
     public static function presence(array $me, array $b)
     {
-        $put = isset($b['put']) && is_array($b['put']) ? $b['put'] : [];
+        self::guestOnly($me, 'Gäste eines Meetings haben keine Freunde-Liste.');
+        $put =isset($b['put']) && is_array($b['put']) ? $b['put'] : [];
         $del = isset($b['del']) && is_array($b['del']) ? $b['del'] : [];
         $get = isset($b['get']) && is_array($b['get']) ? $b['get'] : [];
         if (count($put) > self::MAX_SLOTS || count($del) > self::MAX_SLOTS || count($get) > self::MAX_SLOTS) {
@@ -825,12 +881,20 @@ class SecureCom
        ====================================================================== */
     public static function send(array $me, array $b)
     {
+        // Gäste schreiben und telefonieren nur im Meeting (room.post) –
+        // Direktnachrichten, Anrufe und Freundschaftsanfragen gehen in beide
+        // Richtungen nicht.
+        self::guestOnly($me, 'Gäste eines Meetings können keine Direktnachrichten senden oder direkt anrufen.');
         $to   = self::idOf(self::str($b, 'to'));
         $kind = self::str($b, 'k');
         if (!in_array($kind, ['dm', 'sig'], true)) throw new SecureComException('Unbekannte Art.', 422);
         $max  = $kind === 'sig' ? self::MAX_SIGNAL : self::MAX_ENTRY;
         $data = self::b64(self::str($b, 'd'), $max, 'Nachricht');
-        if (!self::identity($to)) throw new SecureComException('Diese Identität gibt es nicht (mehr).', 404);
+        $target = self::identity($to);
+        if (!$target) throw new SecureComException('Diese Identität gibt es nicht (mehr).', 404);
+        if (self::isGuest($target)) {
+            throw new SecureComException('Gäste eines Meetings sind nur im Meeting erreichbar – schreib ihnen dort.', 403);
+        }
 
         // Aufbewahrung: wählt die Unterhaltung (Standard 7 Tage), höchstens
         // die Grenze des Servers. Signale verfallen nach zwei Minuten.
@@ -914,6 +978,8 @@ class SecureCom
 
     public static function createRoom(array $me, array $b)
     {
+        self::guestOnly($me, 'Gäste eines Meetings können keine Räume oder Meetings anlegen.');
+        $once = !empty($b['once']);   // Einmal-Meeting: Gäste mit Link, nach ONCE_IDLE Ruhe weg
         $rid  = self::idOf(self::str($b, 'id'));
         $meta = self::b64(self::str($b, 'meta'), self::MAX_META, 'Raumdaten');
         if (count(self::roomsOf($me['id'])) >= self::MAX_ROOMS) {
@@ -935,10 +1001,11 @@ class SecureCom
             'mem' => [$me['id'] => time()],
             'inv' => [],
             'vc'  => [],
-            // Aus einer temporären Sitzung oder ausdrücklich gewünscht (Meeting): verfällt ohne Aktivität.
-            'tmp' => ($me['k'] === 'temp' || !empty($b['tmp'])) ? 1 : 0,
+            // Aus einer temporären Sitzung oder ausdrücklich gewünscht: verfällt ohne Aktivität.
+            'tmp' => ($me['k'] === 'temp' || !empty($b['tmp']) || $once) ? 1 : 0,
             'la'  => time(),                         // letzte Aktivität
         ];
+        if ($once) $room['ot'] = 1;
         self::writeJson($file, $room);
         self::addMembership($me['id'], $rid);
         return self::publicRoom($room, $me['id']);
@@ -962,6 +1029,8 @@ class SecureCom
 
     public static function createInvite(array $me, array $b)
     {
+        // Den Link haben Gäste schon – neue Einladungen gibt, wer eine eigene Sitzung oder ein Konto hat.
+        self::guestOnly($me, 'Gäste eines Meetings können keine Einladungen erstellen.');
         $rid  = self::idOf(self::str($b, 'id'));
         $days = max(1, min(30, (int)($b['days'] ?? 7)));
         $max  = max(1, min(100, (int)($b['max'] ?? 25)));
@@ -983,13 +1052,20 @@ class SecureCom
     {
         $rid  = self::idOf(self::str($b, 'id'));
         $code = self::str($b, 'code');
-        if (count(self::roomsOf($me['id'])) >= self::MAX_ROOMS) {
+        $mine  = self::roomsOf($me['id']);
+        $guest = self::isGuest($me);
+        if (count($mine) >= self::MAX_ROOMS) {
             throw new SecureComException('Du bist schon in ' . self::MAX_ROOMS . ' Räumen.', 409);
         }
-        $room = self::roomMutate($rid, function (&$room) use ($me, $code) {
+        if ($guest && $mine && !in_array($rid, $mine, true)) {
+            throw new SecureComException('Als Gast bist du nur in einem Meeting. Verlasse es zuerst.', 403);
+        }
+        $room = self::roomMutate($rid, function (&$room) use ($me, $code, $guest) {
             if (isset($room['mem'][$me['id']])) return $room;
-            $inv = $room['inv'][$code] ?? null;
-            if (!$inv || !is_string($code) || (int)$inv['x'] < time() || (int)$inv['n'] >= (int)$inv['max']) {
+            if ($guest && empty($room['ot'])) {
+                throw new SecureComException('Gäste können nur dem Meeting beitreten, zu dem ihr Link gehört.', 403);
+            }
+            if (!self::inviteValid($room, $code)) {
                 throw new SecureComException('Die Einladung ist ungültig oder abgelaufen.', 403);
             }
             if (count($room['mem']) >= self::MAX_MEMBERS) {
@@ -1233,7 +1309,7 @@ class SecureCom
     /* ======================================================================
        Interna: Identitäten
        ====================================================================== */
-    private static function createIdentity($id, $kind, $pub, $fp, $card, $username)
+    private static function createIdentity($id, $kind, $pub, $fp, $card, $username, array $extra = [])
     {
         $file = self::idFile($id);
         $h = @fopen($file, 'x');
@@ -1250,6 +1326,7 @@ class SecureCom
             'c'    => time(),
             'tok'  => [],
         ];
+        $ident = $extra + $ident;   // etwa Gast: g = 1, nicht sichtbar
         if ($username !== null) $ident['u'] = $username;
         self::writeJson($file, $ident);
 
@@ -1279,6 +1356,7 @@ class SecureCom
             'card' => $ident['card'],
             'cv'   => (int)($ident['cv'] ?? 1),
         ];
+        if (self::isGuest($ident)) $out['g'] = true;   // Gast eines Meetings: nur dort erreichbar
         if ($withVis) $out['vis'] = self::listed($ident);
         return $out;
     }
@@ -1286,11 +1364,12 @@ class SecureCom
     /**
      * Online-Liste und Online-Status gibt es nur für temporäre Sitzungen, die
      * sichtbar sein wollen. Konten zeigen niemandem, ob sie online sind –
-     * sonst ließe sich ein dauerhafter Name mit Uhrzeiten verknüpfen.
+     * sonst ließe sich ein dauerhafter Name mit Uhrzeiten verknüpfen. Gäste
+     * eines Meetings stehen nie darin.
      */
     private static function listed(array $ident)
     {
-        return ($ident['k'] ?? '') === 'temp' && !empty($ident['vis']);
+        return ($ident['k'] ?? '') === 'temp' && !empty($ident['vis']) && !self::isGuest($ident);
     }
 
     private static function accountFor(array $me)
@@ -1596,6 +1675,11 @@ class SecureCom
         self::mutate(self::dir() . '/temp.json', function (&$t) use ($id) {
             if (is_array($t)) unset($t[$id]);
         });
+        if (!$ident || self::isGuest($ident)) {
+            self::mutate(self::dir() . '/guests.json', function (&$g) use ($id) {
+                if (is_array($g)) unset($g[$id]);
+            });
+        }
     }
 
     /* ======================================================================
@@ -1670,8 +1754,9 @@ class SecureCom
             'me'      => (int)$room['me'],
             'rev'     => (int)$room['rev'],
             'ttl'     => self::roomTtl($room),              // Aufbewahrung der Nachrichten (Sekunden)
-            'tmp'     => !empty($room['tmp']),              // aus einer temporären Sitzung angelegt
-            'exp'     => !empty($room['tmp']) ? self::lastActive($room) + self::tempRoomDays() * 86400 : 0,
+            'tmp'     => !empty($room['tmp']),              // verfällt ohne Aktivität
+            'ot'      => !empty($room['ot']),               // Einmal-Meeting (Gäste mit Link)
+            'exp'     => !empty($room['tmp']) ? self::lastActive($room) + self::roomIdle($room) : 0,
             'members' => $members,
             'iv'      => $open,                             // offene Einladungen
             'vc'      => self::voiceList($room),            // erster Sprachkanal (ältere Apps)
@@ -1686,6 +1771,12 @@ class SecureCom
     private static function lastActive(array $room)
     {
         return (int)($room['la'] ?? $room['c'] ?? 0);
+    }
+
+    /** So lange darf ein verfallender Raum ruhen (Sekunden): Einmal-Meeting 12 Stunden, sonst tempRoomDays(). */
+    private static function roomIdle(array $room)
+    {
+        return !empty($room['ot']) ? self::ONCE_IDLE : self::tempRoomDays() * 86400;
     }
 
     /** Wer gerade in einem Sprachkanal ist ("" = der erste). */
@@ -1741,7 +1832,11 @@ class SecureCom
         if ($room['o'] !== $id) throw new SecureComException('Das darf nur der Besitzer des Raums.', 403);
     }
 
-    /** Mitglied entfernen; geht der Besitzer, übernimmt das älteste Mitglied. */
+    /**
+     * Mitglied entfernen; geht der Besitzer, übernimmt das älteste Mitglied,
+     * das kein Gast ist. Sind nur noch Gäste da, endet der Raum (Gäste können
+     * weder Schlüssel verteilen noch einladen).
+     */
     private static function removeMember($rid, $member, $reason)
     {
         $destroy = false;
@@ -1751,7 +1846,13 @@ class SecureCom
             if (!$room['mem']) { $destroy = true; return $room; }
             if ($room['o'] === $member) {
                 asort($room['mem']);
-                $room['o'] = (string)array_key_first($room['mem']);
+                $next = null;
+                foreach (array_keys($room['mem']) as $id) {
+                    $ident = self::identity((string)$id);
+                    if ($ident && !self::isGuest($ident)) { $next = (string)$id; break; }
+                }
+                if ($next === null) { $destroy = true; return $room; }
+                $room['o'] = $next;
             }
             $room['rev']++;
             return $room;
@@ -2029,6 +2130,16 @@ class SecureCom
                 if ($now - $seen > $idle) self::purgeIdentity($id);
             }
 
+            // Gäste: kürzer. Tab zu (kein Abruf mehr) oder kein Meeting mehr
+            // (verlassen, beendet, entfernt) – dann gibt es für sie nichts zu tun.
+            $guests = self::readJson(self::dir() . '/guests.json', true) ?: [];
+            foreach ($guests as $id => $created) {
+                $id = (string)$id;
+                $seen = isset($presence[$id]) ? (int)$presence[$id][0] : (int)$created;
+                $alone = $now - (int)$created > self::GUEST_GRACE && !self::roomsOf($id);
+                if ($now - $seen > self::GUEST_IDLE || $alone || !is_file(self::idFile($id))) self::purgeIdentity($id);
+            }
+
             // Einmal am Tag: vergessene Konto-Sitzungen.
             if ($now - (int)($state['d'] ?? 0) > 86400) {
                 foreach (glob(self::dir('tokens') . '/*.json') ?: [] as $tf) {
@@ -2063,10 +2174,10 @@ class SecureCom
      * drin sind. Räume von vor dieser Regel bekommen die Angaben hier
      * einmalig: temporär, wenn der Besitzer den Raum selbst angelegt hat und
      * eine temporäre Sitzung ist. Ihre Frist beginnt dann jetzt.
+     * Einmal-Meetings (ot) verfallen schon nach ONCE_IDLE (roomIdle()).
      */
     private static function expireTempRooms($now)
     {
-        $limit = self::tempRoomDays() * 86400;
         foreach (glob(self::dir('rooms') . '/*.json') ?: [] as $file) {
             $rid  = basename($file, '.json');
             $room = self::readJson($file, true);
@@ -2084,11 +2195,11 @@ class SecureCom
                         return $r;
                     }, true);
                 }
-                if (empty($room['tmp']) || $now - self::lastActive($room) <= $limit) continue;
+                if (empty($room['tmp']) || $now - self::lastActive($room) <= self::roomIdle($room)) continue;
                 // Unter der Sperre nochmal prüfen – vielleicht schreibt gerade jemand.
                 $expired = false;
-                $room = self::roomMutate($rid, function (&$r) use ($now, $limit, &$expired) {
-                    $expired = !empty($r['tmp']) && $now - self::lastActive($r) > $limit;
+                $room = self::roomMutate($rid, function (&$r) use ($now, &$expired) {
+                    $expired = !empty($r['tmp']) && $now - self::lastActive($r) > self::roomIdle($r);
                     return $r;
                 }, true);
                 if ($expired) self::destroyRoom($rid, $room);
