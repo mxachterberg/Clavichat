@@ -17,12 +17,17 @@ im Browser oder als Windows-App.**
 Der Server speichert und verteilt nur Chiffretext, öffentliche Schlüssel und
 Signaturen.
 
-Der Name kommt vom lateinischen *clavis*, „der Schlüssel“ – daher das Logo:
-ein Funkgerät, dessen Antenne ein Schlüssel ist. Bis Oktober 2026
-hieß das Projekt SecureCom; einige Dateien und Einstellungen tragen den alten
-Namen weiter (`securecom.js`, `SecureCom.php`, Umgebungsvariablen
-`SECURECOM_*`), damit bestehende Installationen, Konten und Daten
-unverändert weiterlaufen.
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/screenshot-chat-dunkel.png">
+  <img src="docs/screenshot-chat-hell.png" alt="Clavichat: Raum „Projekt Nordlicht“ mit Textkanal, Nachrichten von zwei Mitgliedern und Mitgliederliste">
+</picture>
+
+<details>
+<summary>Startseite</summary>
+
+<img src="docs/screenshot-start.png" alt="Clavichat-Startseite: temporäre Sitzung starten, anmelden oder Konto erstellen">
+
+</details>
 
 > **English:** Clavichat is an end-to-end encrypted messenger with voice and
 > video calls and screen sharing, built on OpenPGP.js, WebCrypto and WebRTC.
@@ -267,9 +272,6 @@ Unterschiede zur Web-Fassung:
   und fragt per Popup. Unter „UPDATES“ in den Einstellungen lässt sich das
   abschalten oder von Hand anstoßen. Installiert wird nur, was mit dem
   Schlüssel des Herausgebers signiert ist.
-
-Wer noch SecureCom installiert hat: Der Clavichat-Installer ersetzt es,
-statt daneben zu installieren. Anmeldung und Einstellungen bleiben erhalten.
 
 Die App verbindet sich mit `https://achterberg.dev`. Für einen eigenen Server
 `%APPDATA%\Clavichat\config.json` anlegen:
