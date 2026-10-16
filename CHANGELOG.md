@@ -4,7 +4,10 @@ Was sich von Version zu Version ändert. Beim Veröffentlichen wird der
 Abschnitt einer Version zum Text des GitHub-Releases
 (`.github/workflows/windows.yml`).
 
-## Unveröffentlicht
+## 1.7.1 – 16.10.2026
+
+Meetings im eigenen Design und clavichat.de als Zuhause. Für installierte
+Apps das erste kleine Update (rund 1 MB).
 
 - **Meetings im eigenen Design:** Knopf „MEET“ links in der Raumleiste,
   Meetings stehen getrennt von den Räumen. Statt Kanälen gibt es eine
