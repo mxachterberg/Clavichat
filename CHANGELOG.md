@@ -4,6 +4,19 @@ Was sich von Version zu Version ändert. Beim Veröffentlichen wird der
 Abschnitt einer Version zum Text des GitHub-Releases
 (`.github/workflows/windows.yml`).
 
+## 1.6.6 – 16.10.2026
+
+Das Logo, wie es bleiben soll. Die Windows-App 1.6.5 holt sich diese
+Version von selbst.
+
+- **Logo ohne Kachel:** Das App-Symbol in Taskleiste und Infobereich ist
+  jetzt durchsichtig – nur noch das Funkgerät, innen dunkel, die hellen
+  Linien mit schmalem dunklem Rand. So ist es auf heller wie dunkler
+  Taskleiste gut zu erkennen und füllt die Fläche fast ganz aus.
+- **Überall dasselbe Logo:** im Favicon (größer als bisher), oben links in
+  der Titelleiste, im Kopf der App und im Knopf oben links in der
+  Raumleiste (dort stand noch das alte Funkgerät).
+
 ## 1.6.5 – 16.10.2026
 
 Besser erkennbares App-Symbol. Die Windows-App 1.6.4 holt sich diese
