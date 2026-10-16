@@ -97,7 +97,7 @@ function el(tag, attrs) {
 
 const ICONS = {
   lock: '<rect x="5" y="10.5" width="14" height="10" rx="1"/><path d="M8 10.5V7a4 4 0 0 1 8 0v3.5"/>',
-  radio: '<path d="M9 8V3M15 8V6"/><rect x="6" y="8" width="12" height="14" rx="2"/><path d="M9.5 12h5M9.5 15h5M12 18.5h.01"/>',
+  radio: '<path d="M9.5 9V2.5M15 9V7"/><path d="M9.5 3h3M9.5 6h2.2"/><rect x="6" y="9" width="12" height="13" rx="2"/><path d="M9.5 13h5M9.5 16h5M12 19h.01"/>',
   sliders: '<path d="M4 7h10M18 7h2M4 17h4M12 17h8"/><circle cx="16" cy="7" r="2"/><circle cx="10" cy="17" r="2"/>',
   image: '<rect x="3" y="4" width="18" height="16" rx="1"/><circle cx="9" cy="10" r="2"/><path d="M21 16l-5-5L5 20"/>',
   phone: '<path d="M5 4h4l2 5-2.5 1.5a11 11 0 0 0 5 5L15 13l5 2v4a2 2 0 0 1-2 2A16 16 0 0 1 3 6a2 2 0 0 1 2-2z"/>',

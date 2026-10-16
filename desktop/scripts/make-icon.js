@@ -4,7 +4,7 @@
      build/icon.ico   16 … 256 (Windows: Programmdatei, Fenster, Taskleiste,
                       Infobereich – Windows nimmt je Stelle die passende Größe)
    Gleiches Motiv wie server/assets/securecom-icon.svg: dunkles Quadrat,
-   orangefarbene Eckmarken, Funkgerät. Ohne Grafikprogramm: Pixel per
+   orangefarbene Eckmarken, Funkgerät mit Schlüssel als Antenne. Ohne Grafikprogramm: Pixel per
    Hand, überabgetastet (glatte Kanten), PNG mit zlib.
    Aufruf: npm run icon
    ========================================================================== */
@@ -52,17 +52,19 @@ function shade(x, y) {
   for (const r of ticks) if (inRect(x, y, r[0], r[1], r[2], r[3])) return ORANGE;
 
   // Lämpchen
-  if (Math.hypot(x - 32, y - 43.5) <= 2.6) return ORANGE;
+  if (Math.hypot(x - 32, y - 46) <= 2.6) return ORANGE;
+  // Schlüsselbart an der Antenne: Block mit Kerbe (zwei Zähne)
+  if (inRect(x, y, 28.6, 8, 6.6, 11) && !inRect(x, y, 32.6, 12, 2.6, 3)) return ORANGE;
 
   const s = 1.7;   // halbe Strichstärke des Funkgeräts (3,4)
-  // Antenne und Drehknopf
-  if (onLine(x, y, 26, 12.5, 26, 22.5, s) || onLine(x, y, 38, 18, 38, 22.5, s)) return WHITE;
-  // Gehäuse: Rahmen eines abgerundeten Rechtecks (24 × 29, Radius 4)
-  const outer = inRoundRect(x, y, 20 - s, 22.5 - s, 24 + 2 * s, 29 + 2 * s, 4 + s);
-  const inner = inRoundRect(x, y, 20 + s, 22.5 + s, 24 - 2 * s, 29 - 2 * s, 4 - s);
+  // Antenne (Schlüsselschaft) und Drehknopf
+  if (onLine(x, y, 27, 8.5, 27, 26, s) || onLine(x, y, 38, 21.5, 38, 26, s)) return WHITE;
+  // Gehäuse: Rahmen eines abgerundeten Rechtecks (24 × 26, Radius 4)
+  const outer = inRoundRect(x, y, 20 - s, 26 - s, 24 + 2 * s, 26 + 2 * s, 4 + s);
+  const inner = inRoundRect(x, y, 20 + s, 26 + s, 24 - 2 * s, 26 - 2 * s, 4 - s);
   if (outer && !inner) return WHITE;
   // Lautsprecher: zwei Striche
-  if (onLine(x, y, 26.5, 30.5, 37.5, 30.5, 1.5) || onLine(x, y, 26.5, 36, 37.5, 36, 1.5)) return WHITE;
+  if (onLine(x, y, 26.5, 33.5, 37.5, 33.5, 1.5) || onLine(x, y, 26.5, 39, 37.5, 39, 1.5)) return WHITE;
 
   return BG;
 }
