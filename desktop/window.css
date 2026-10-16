@@ -16,7 +16,7 @@
   align-items: center;
   gap: 9px;
   height: var(--nav-h);
-  padding: 0 16px 0 26px;             /* Symbol mittig über der Raumleiste */
+  padding: 0 16px;
   border-bottom: 1px solid var(--border);
   background: var(--bg);
   color: var(--text-body);
@@ -29,9 +29,7 @@
   -webkit-app-region: drag;           /* ziehen, Doppelklick maximiert */
   app-region: drag;
 }
-.sc-titlebar svg { flex: none; color: var(--text); }
 .sc-window-blur .sc-titlebar { color: var(--muted); }
-.sc-window-blur .sc-titlebar svg { opacity: .55; }
 
 /* Dialoge beginnen unter der Leiste – sie bleibt sichtbar und greifbar. */
 .sc-modal { inset: var(--nav-h) 0 0 0; }
