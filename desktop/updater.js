@@ -46,6 +46,7 @@ const state = {
   auto: true,
   status: 'idle',                   // idle checking current available downloading installing error unsupported
   latest: null,                     // { version, notes, size }
+  release: null,                    // { version, notes } der laufenden Fassung – für „Neu in …“ nach einem Update
   progress: 0,
   error: '',
   checked: 0,
@@ -117,7 +118,10 @@ async function handle(event, action, value) {
 }
 
 function snapshot() {
-  return Object.assign({}, state, { latest: state.latest && Object.assign({}, state.latest) });
+  return Object.assign({}, state, {
+    latest: state.latest && Object.assign({}, state.latest),
+    release: state.release && Object.assign({}, state.release)
+  });
 }
 
 function set(changes) {
@@ -149,6 +153,7 @@ function check(auto) {
       set({
         status: available ? 'available' : 'current',
         latest: available ? { version: manifest.version, notes: manifest.notes, size: manifest.file.size } : null,
+        release: manifest.version === state.version ? { version: manifest.version, notes: manifest.notes } : state.release,
         prompt: available && (auto || state.prompt),
         checked: Date.now()
       });

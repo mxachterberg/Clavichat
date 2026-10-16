@@ -6985,7 +6985,22 @@ function connectByKey() {
    sind. Hier: das Popup beim Start und der Bereich in den Einstellungen.
    ========================================================================== */
 const UPDATES = DESKTOP && DESKTOP.updates ? DESKTOP.updates : null;
-const UPD = { state: null, watchers: new Set(), prompted: false, timer: null };
+const UPD = { state: null, watchers: new Set(), prompted: false, timer: null, news: false, newsTimer: null };
+const REPO_URL = 'https://github.com/mxachterberg/Clavichat';
+const SEEN_VERSION = 'sc-app-version';
+
+function newerVersion(a, b) {
+  const x = String(a).split('.').map(Number);
+  const y = String(b).split('.').map(Number);
+  for (let i = 0; i < 3; i++) if ((x[i] || 0) !== (y[i] || 0)) return (x[i] || 0) > (y[i] || 0);
+  return false;
+}
+
+/** Link zu den Code-Änderungen zwischen zwei Fassungen (ohne alte Fassung: das Release). */
+function changesLink(from, to, text) {
+  const href = from ? REPO_URL + '/compare/v' + from + '...v' + to : REPO_URL + '/releases/tag/v' + to;
+  return el('a', { class: 'sc-update-link', href, target: '_blank', rel: 'noopener noreferrer', text: text || 'Code-Änderungen auf GitHub ansehen ↗' });
+}
 
 function initUpdates() {
   if (!UPDATES) return;
@@ -6993,11 +7008,60 @@ function initUpdates() {
     UPD.state = s;
     for (const fn of UPD.watchers) fn(s);
     promptUpdate();
+    showWhatsNew();
   });
   UPDATES.get().then((s) => {
     if (!UPD.state) UPD.state = s;
     promptUpdate();
+    showWhatsNew();
   }).catch(() => {});
+}
+
+/**
+ * Nach einem Update einmal zeigen, was neu ist: die Stichpunkte dieser Fassung
+ * (aus der signierten Update-Liste) und der Link zu den Code-Änderungen.
+ * Die zuletzt gesehene Fassung steht je Gerät in localStorage.
+ */
+function showWhatsNew() {
+  const s = UPD.state;
+  if (!s || !s.version || UPD.news) return;
+  let last = null;
+  try { last = localStorage.getItem(SEEN_VERSION); } catch (e) { return; }
+  const remember = () => { try { localStorage.setItem(SEEN_VERSION, s.version); } catch (e) { /* egal */ } };
+  if (last === s.version) return;
+  // Erste Fassung mit dieser Anzeige: Wer die App schon benutzt hat, kommt von einer älteren.
+  let used = false;
+  try { used = !!localStorage.getItem('sc-device'); } catch (e) { /* egal */ }
+  if (last ? !newerVersion(s.version, last) : !used) { remember(); return; }
+  // Die Stichpunkte kommen mit der ersten Suche nach Updates (8 s nach dem
+  // Start). Bis zu 30 s darauf warten, sonst nur mit dem Link zeigen.
+  if (!UPD.newsSince) UPD.newsSince = Date.now();
+  const haveNotes = !!(s.release && s.release.version === s.version);
+  const notesComing = !haveNotes && s.mode && s.auto !== false && ['idle', 'checking'].includes(s.status);
+  const boot = $('sc-boot');
+  if ((notesComing && Date.now() - UPD.newsSince < 30000) ||
+      (boot && !boot.classList.contains('is-done')) || !$('sc-modal').hidden) {
+    clearTimeout(UPD.newsTimer);
+    UPD.newsTimer = setTimeout(showWhatsNew, 2500);
+    return;
+  }
+  clearTimeout(UPD.newsTimer);
+  UPD.news = true;
+  remember();
+  const notes = haveNotes ? s.release.notes || [] : [];
+  openModal({
+    title: 'NEU IN ' + s.version,
+    build: (body, close) => {
+      body.appendChild(el('p', { class: 'sc-p', text: last ? 'Clavichat ist von ' + last + ' auf ' + s.version + ' aktualisiert.' : 'Clavichat ist auf ' + s.version + ' aktualisiert.' }));
+      if (notes.length) {
+        const list = el('ul', { class: 'sc-update-notes' });
+        for (const n of notes) list.appendChild(el('li', { text: n }));
+        body.appendChild(list);
+      }
+      body.appendChild(el('p', { class: 'sc-p' }, changesLink(last, s.version)));
+      body.appendChild(el('div', { class: 'sc-card-actions' }, el('button', { type: 'button', class: 'btn btn--primary', text: 'OK', onclick: close })));
+    }
+  });
 }
 
 function watchUpdates(fn) {
@@ -7057,6 +7121,9 @@ function updatePanel(s, later) {
     const fill = el('span');
     fill.style.width = Math.round((s.status === 'installing' ? 1 : s.progress || 0) * 100) + '%';
     wrap.appendChild(el('div', { class: 'sc-progress' }, fill));
+  }
+  if (latest && ['available', 'downloading', 'error'].includes(s.status)) {
+    wrap.appendChild(el('p', { class: 'sc-note' }, changesLink(s.version, latest.version)));
   }
   if (s.status === 'available' && (S.call || S.voice)) line('Ein laufendes Gespräch endet dabei.', 'sc-note');
 

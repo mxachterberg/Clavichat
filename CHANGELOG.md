@@ -15,6 +15,9 @@ Version von selbst.
 - **Open Source:** „So funktioniert Clavichat“ (das i oben) endet jetzt mit
   einem Link zum Quellcode auf GitHub und „Ein Projekt von Max Achterberg“.
   Links öffnen im normalen Browser.
+- **Was ist neu?** Nach einem Update zeigt die Windows-App einmal, was sich
+  zur Vorgängerversion geändert hat – mit Link zu den Code-Änderungen auf
+  GitHub. Auch das Update-Fenster verlinkt sie vor dem Installieren.
 - **clavichat.de:** Auf der eigenen Domain gibt es oben einen Knopf für Hell
   und Dunkel.
 - Anleitung: Den Server zu Hause ins Internet zu stellen, wird nicht mehr
