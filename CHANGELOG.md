@@ -4,7 +4,9 @@ Was sich von Version zu Version ändert. Beim Veröffentlichen wird der
 Abschnitt einer Version zum Text des GitHub-Releases
 (`.github/workflows/windows.yml`).
 
-## Unveröffentlicht
+## 1.8.3 – 22.10.2026
+
+Updates künftig über GitHub. Für installierte Apps ein kleines Update.
 
 - **Updates über GitHub:** Die Windows-App holt neue Fassungen vom neuesten
   veröffentlichten GitHub-Release; clavichat.de bleibt als Ersatz. Die
