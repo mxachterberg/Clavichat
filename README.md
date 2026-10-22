@@ -275,8 +275,10 @@ Unterschiede zur Web-Fassung:
   Fenster in der Taskleiste blinken.
 - Updates: Beim Start sucht die App im Hintergrund nach einer neuen Fassung
   und fragt per Popup. Unter „UPDATES“ in den Einstellungen lässt sich das
-  abschalten oder von Hand anstoßen. Installiert wird nur, was mit dem
-  Schlüssel des Herausgebers signiert ist.
+  abschalten oder von Hand anstoßen. Die Updates kommen vom neuesten
+  GitHub-Release, ersatzweise von clavichat.de. Installiert wird nur, was mit
+  einem der Schlüssel des Herausgebers signiert ist (siehe
+  [Updates veröffentlichen](#updates-veröffentlichen)).
 
 Die App verbindet sich standardmäßig mit dem offiziellen Server
 (clavichat.de). Für einen eigenen Server
@@ -322,6 +324,46 @@ Ein Tag wie `v1.3.0` baut über GitHub Actions App und Server und legt beide als
 Entwurf unter Releases ab; der Text kommt aus dem passenden Abschnitt von
 [CHANGELOG.md](CHANGELOG.md). Dasselbe Tag baut das Docker-Image
 (`.github/workflows/`).
+
+### Updates veröffentlichen
+
+Die App fragt zwei Quellen nach der signierten Update-Liste (`update.json`)
+und nimmt die höchste Fassung, deren Signatur stimmt
+(`desktop/updater.js`):
+
+1. das neueste **veröffentlichte** GitHub-Release
+   (`releases/latest/download/update.json`, Dateien vom Tag `vX.Y.Z`),
+2. clavichat.de (`/downloads/clavichat/update.json`) – der Spiegel für Apps
+   bis 1.8.2, die nur diese Quelle und nur den ersten Schlüssel kennen.
+
+Ablauf einer Version:
+
+1. `version` in `desktop/package.json` erhöhen, Abschnitt in `CHANGELOG.md`,
+   Commit, Tag `vX.Y.Z` pushen.
+2. GitHub Actions baut App und Server, signiert die Update-Liste mit dem
+   Secret `CLAVICHAT_UPDATE_KEY` (`scripts/publish-update.js release`) und
+   legt einen **Entwurf** an: `update.json`, `Clavichat-Setup-X.Y.Z.exe`,
+   `Clavichat-X.Y.Z-portable.exe`, `Clavichat-X.Y.Z-app.asar.gz` und den
+   Server. Fehlt das Secret, gibt es keine `update.json` (Hinweis im Lauf).
+3. Entwurf prüfen und veröffentlichen – erst dann ist er `releases/latest`
+   und damit das Update für alle Apps. Entwürfe sieht die App nie.
+4. Für ältere Apps zusätzlich wie bisher lokal bauen, mit dem eigenen
+   Schlüssel signieren und auf clavichat.de hochladen:
+   `npm run build`, `node scripts/publish-update.js <Ordner>`,
+   `scripts\upload-update.ps1 -Dir <Ordner>`.
+
+Schlüssel (Ed25519; die öffentlichen stehen in `PUBLIC_KEYS` in
+`desktop/updater.js`, die privaten nie im Repository):
+`%USERPROFILE%\.securecom\update-key.pem` signiert lokal für clavichat.de,
+`%USERPROFILE%\.securecom\update-key-github.pem` ist als Secret
+`CLAVICHAT_UPDATE_KEY` in GitHub hinterlegt. Den öffentlichen Schlüssel zeigt
+`node scripts/update-key.js` (anderer Ort: `SECURECOM_UPDATE_KEY=<Datei>`).
+`publish-update.js` nimmt den PEM-Text auch aus der Umgebungsvariablen
+`CLAVICHAT_UPDATE_KEY`. Zum Testen zeigt `SECURECOM_UPDATE_URL` die App auf
+eine einzige eigene Quelle.
+
+Solange das Repository privat ist, antwortet GitHub mit 404 und die App
+nimmt clavichat.de – ohne Fehlermeldung.
 
 ## Lizenz
 

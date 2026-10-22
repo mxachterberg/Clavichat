@@ -11,6 +11,14 @@
    stimmen und die Fassung neuer ist. Ein übernommener Webserver kann so kein
    Programm unterschieben (nur Updates zurückhalten).
 
+   Quellen: zuerst das neueste veröffentlichte GitHub-Release (die Liste
+   signiert dort GitHub Actions mit eigenem Schlüssel, Secret
+   CLAVICHAT_UPDATE_KEY), daneben clavichat.de (signiert beim Herausgeber;
+   Spiegel für Apps bis 1.8.2, die nur diese Quelle kennen). Beide werden
+   gefragt; es gilt die höchste Fassung, deren Signatur stimmt. Solange das
+   Repository privat ist, antwortet GitHub mit 404 – dann zählt nur
+   clavichat.de.
+
      installiert  neuen Installer still ausführen; er startet die App neu
      klein        installiert und gleiche Electron-Fassung: nur das neue
                   Programmpaket (resources/app.asar, gepackt rund 1 MB statt
@@ -31,13 +39,30 @@ const { Transform } = require('node:stream');
 const { pipeline } = require('node:stream/promises');
 const zlib = require('node:zlib');
 
-const MANIFEST_URL = 'https://clavichat.de/downloads/clavichat/update.json';
-// Öffentlicher Schlüssel des Herausgebers (Ed25519, SPKI/DER, Base64).
-// Den privaten erzeugt und zeigt scripts/update-key.js.
-const PUBLIC_KEY = 'MCowBQYDK2VwAyEAlGx6CauvrfaZJAUtLpqsw19KVCrB2hk2vpfBkKCYnwI=';
+// Quellen der Update-Liste. `files` liefert den Ordner der Dateien zur
+// geprüften Liste; ohne Angabe liegen sie neben update.json. Bei GitHub
+// direkt beim Tag der Fassung (vX.Y.Z) – so passt der Download auch dann
+// noch, wenn zwischen Suchen und Installieren ein neueres Release erscheint.
+// GitHub leitet zweimal weiter (Tag, dann *.githubusercontent.com); die
+// eigene Sitzung folgt dem, die Echtheit sichern Signatur und SHA-256.
+const GITHUB = 'https://github.com/mxachterberg/Clavichat/releases';
+const SOURCES = [
+  { name: 'GitHub', url: GITHUB + '/latest/download/update.json', files: (m) => GITHUB + '/download/v' + m.version + '/', github: true },
+  { name: 'clavichat.de', url: 'https://clavichat.de/downloads/clavichat/update.json' }
+];
+// Öffentliche Schlüssel (Ed25519, SPKI/DER, Base64) – eine Liste gilt, wenn
+// einer davon passt. Die privaten erzeugt und zeigt scripts/update-key.js.
+const PUBLIC_KEYS = [
+  // Herausgeber, lokal (%USERPROFILE%\.securecom\update-key.pem) – clavichat.de
+  'MCowBQYDK2VwAyEAlGx6CauvrfaZJAUtLpqsw19KVCrB2hk2vpfBkKCYnwI=',
+  // GitHub Actions (Secret CLAVICHAT_UPDATE_KEY; Kopie beim Herausgeber in
+  // %USERPROFILE%\.securecom\update-key-github.pem) – GitHub-Releases
+  'MCowBQYDK2VwAyEArs/re0kPWxd1AtgeeTp3FlNNVLOIUh4xz4BqGrS2f28='
+];
 const VERSION = /^\d{1,4}\.\d{1,4}\.\d{1,6}$/;
 const START_DELAY = 8000;           // erst einmal in Ruhe starten lassen
 const STALL = 60000;                // so lange ohne Daten: Download abbrechen
+const LIST_TIMEOUT = 20000;         // so lange darf eine Quelle für die Liste brauchen
 
 let getWindow = () => null;
 let ses = null;
@@ -83,12 +108,13 @@ function detectMode() {
   return fs.existsSync(uninstaller) ? 'installed' : '';
 }
 
-function manifestUrl() {
+function sources() {
   const custom = process.env.SECURECOM_UPDATE_URL || '';
-  // Nur zum Testen: eigene Quelle, unverschlüsselt nur auf diesem Rechner.
-  // Die Signatur gilt trotzdem – fremde Fassungen installiert die App nie.
-  if (custom && /^(https:\/\/|http:\/\/(127\.0\.0\.1|localhost)[:/])/i.test(custom)) return custom;
-  return MANIFEST_URL;
+  // Nur zum Testen: eigene Quelle (statt aller anderen), unverschlüsselt nur
+  // auf diesem Rechner. Die Signatur gilt trotzdem – fremde Fassungen
+  // installiert die App nie.
+  if (custom && /^(https:\/\/|http:\/\/(127\.0\.0\.1|localhost)[:/])/i.test(custom)) return [{ name: 'Test', url: custom }];
+  return SOURCES;
 }
 
 function readSettings() {
@@ -175,13 +201,59 @@ function check(auto) {
   return job;
 }
 
+/**
+ * Alle Quellen gleichzeitig fragen und die höchste geprüfte Fassung nehmen;
+ * bei gleicher Nummer gewinnt die frühere Quelle (GitHub). Scheitern alle,
+ * zählt der aussagekräftigste Fehler – ein 404 (z. B. GitHub, solange das
+ * Repository privat ist) nur, wenn es nichts anderes gibt.
+ */
 async function fetchManifest() {
-  const res = await ses.fetch(manifestUrl() + '?t=' + Date.now(), { cache: 'no-store' });
-  if (res.status === 404) throw new Error('Auf dem Server liegt noch keine Update-Liste.');
-  if (!res.ok) throw new Error('Der Update-Server antwortet mit ' + res.status + '.');
-  const text = await res.text();
-  if (text.length > 65536) throw new Error('Die Update-Liste ist ungültig.');
-  return verifyManifest(text);
+  const list = sources();
+  const results = await Promise.allSettled(list.map(fetchFrom));
+  let best = null;
+  const errors = [];
+  results.forEach((r, i) => {
+    if (r.status === 'rejected') {
+      errors.push(r.reason);
+      if (!(r.reason && r.reason.notFound)) writeLog('Update-Liste von ' + list[i].name + ': ' + messageOf(r.reason));
+      return;
+    }
+    if (!best || newer(r.value.version, best.version)) best = r.value;
+  });
+  if (best) return best;
+  throw errors.find((e) => !(e && e.notFound)) || errors[0] || new Error('Keine Update-Quelle.');
+}
+
+async function fetchFrom(src) {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), LIST_TIMEOUT);
+  try {
+    // Bei GitHub ohne angehängte Zeit: Die Weiterleitung führt auf signierte
+    // Adressen, und dort ist nichts zwischengespeichert.
+    const url = src.github ? src.url : src.url + '?t=' + Date.now();
+    const res = await ses.fetch(url, { cache: 'no-store', redirect: 'follow', signal: ctrl.signal });
+    if (res.status === 404) throw Object.assign(new Error('Auf dem Server liegt noch keine Update-Liste.'), { notFound: true });
+    if (!res.ok) throw new Error('Der Update-Server antwortet mit ' + res.status + '.');
+    const text = await res.text();
+    if (text.length > 65536) throw new Error('Die Update-Liste ist ungültig.');
+    const m = verifyManifest(text);
+    m.base = src.files ? src.files(m) : src.url;
+    m.cacheBust = !src.github;
+    m.source = src.name;
+    return m;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/** Passt die Signatur zu einem der öffentlichen Schlüssel? */
+function signedByUs(data, sig) {
+  return PUBLIC_KEYS.some((k) => {
+    try {
+      const key = crypto.createPublicKey({ key: Buffer.from(k, 'base64'), format: 'der', type: 'spki' });
+      return crypto.verify(null, Buffer.from(data, 'utf8'), key, Buffer.from(sig, 'base64'));
+    } catch (e) { return false; }
+  });
 }
 
 /** Signatur prüfen, dann die Angaben – erst danach wird irgendetwas davon benutzt. */
@@ -189,12 +261,7 @@ function verifyManifest(text) {
   let env = null;
   try { env = JSON.parse(text); } catch (e) { /* unten */ }
   if (!env || typeof env.data !== 'string' || typeof env.sig !== 'string') throw new Error('Die Update-Liste ist ungültig.');
-  let valid = false;
-  try {
-    const key = crypto.createPublicKey({ key: Buffer.from(PUBLIC_KEY, 'base64'), format: 'der', type: 'spki' });
-    valid = crypto.verify(null, Buffer.from(env.data, 'utf8'), key, Buffer.from(env.sig, 'base64'));
-  } catch (e) { valid = false; }
-  if (!valid) throw new Error('Die Signatur der Update-Liste stimmt nicht – es wird nichts installiert.');
+  if (!signedByUs(env.data, env.sig)) throw new Error('Die Signatur der Update-Liste stimmt nicht – es wird nichts installiert.');
 
   const m = JSON.parse(env.data);
   if (!m || m.app !== 'clavichat' || !VERSION.test(String(m.version))) throw new Error('Die Update-Liste gehört nicht zu Clavichat.');
@@ -284,7 +351,8 @@ async function download(f) {
   let got = 0;
   let fh = null;
   try {
-    const res = await ses.fetch(new URL(f.name, manifestUrl()).href + '?t=' + Date.now(), { cache: 'no-store', signal: ctrl.signal });
+    const url = new URL(f.name, manifest.base).href + (manifest.cacheBust ? '?t=' + Date.now() : '');
+    const res = await ses.fetch(url, { cache: 'no-store', redirect: 'follow', signal: ctrl.signal });
     if (!res.ok || !res.body) throw new Error('Die neue Fassung ließ sich nicht laden (' + res.status + ').');
     fh = await fs.promises.open(part, 'w');
     const reader = res.body.getReader();

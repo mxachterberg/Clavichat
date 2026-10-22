@@ -15,6 +15,10 @@
    Danach hochladen – zuerst die .exe-Dateien, zuletzt update.json; ältere
    Fassungen auf dem Server löscht es gleich mit:
      powershell -ExecutionPolicy Bypass -File scripts\upload-update.ps1 -Dir "<Webroot>\downloads\clavichat"
+
+   GitHub Actions ruft dasselbe Skript mit dem Schlüssel aus dem Secret
+   CLAVICHAT_UPDATE_KEY (PEM-Text statt Datei) auf und hängt den Zielordner
+   an den Release-Entwurf (.github/workflows/windows.yml).
    ========================================================================== */
 'use strict';
 
@@ -84,10 +88,28 @@ for (const f of Object.values(files)) {
 if (Math.abs(fs.statSync(files.setup.src).mtimeMs - fs.statSync(files.portable.src).mtimeMs) > 15 * 60 * 1000) {
   fail('Installer und portable Fassung stammen nicht aus demselben Build.');
 }
-if (!fs.existsSync(KEY_FILE)) fail('Kein privater Schlüssel unter ' + KEY_FILE + ' (node scripts/update-key.js).');
-const pem = fs.readFileSync(KEY_FILE, 'utf8');
-if (!fs.readFileSync(path.join(__dirname, '..', 'updater.js'), 'utf8').includes(publicKeyOf(pem))) {
-  fail('Der öffentliche Schlüssel in updater.js passt nicht zu ' + KEY_FILE + '.');
+// Schlüssel: aus CLAVICHAT_UPDATE_KEY (der PEM-Text selbst – so in GitHub
+// Actions aus dem Secret), sonst aus der Datei. Der Text wird nie ausgegeben.
+const fromEnv = !!(process.env.CLAVICHAT_UPDATE_KEY || '').trim();
+const keySource = fromEnv ? 'CLAVICHAT_UPDATE_KEY' : KEY_FILE;
+let pem = '';
+if (fromEnv) {
+  // Manche Oberflächen machen aus Zeilenumbrüchen ein wörtliches \n.
+  pem = process.env.CLAVICHAT_UPDATE_KEY.replace(/\\n/g, '\n').replace(/\r/g, '').trim() + '\n';
+} else {
+  if (!fs.existsSync(KEY_FILE)) fail('Kein privater Schlüssel unter ' + KEY_FILE + ' (node scripts/update-key.js).');
+  pem = fs.readFileSync(KEY_FILE, 'utf8');
+}
+let publicKey = '';
+try {
+  if (crypto.createPrivateKey(pem).asymmetricKeyType !== 'ed25519') throw new Error('kein Ed25519');
+  publicKey = publicKeyOf(pem);
+} catch (e) {
+  fail('In ' + keySource + ' steht kein gültiger privater Ed25519-Schlüssel (PEM, „-----BEGIN PRIVATE KEY-----“).');
+}
+// updater.js kann mehrere Schlüssel nennen (PUBLIC_KEYS) – einer davon muss passen.
+if (!fs.readFileSync(path.join(__dirname, '..', 'updater.js'), 'utf8').includes("'" + publicKey + "'")) {
+  fail('Der öffentliche Schlüssel zu ' + keySource + ' steht nicht in updater.js (PUBLIC_KEYS).');
 }
 
 const manifest = { app: 'clavichat', version: version, date: new Date().toISOString().slice(0, 10), notes: changelogNotes(version), files: {} };

@@ -1,7 +1,10 @@
 /* ==========================================================================
    Clavichat — Schlüssel für signierte Updates
    Legt beim ersten Aufruf ein Ed25519-Schlüsselpaar an und zeigt danach
-   immer den öffentlichen Schlüssel (der gehört in updater.js, PUBLIC_KEY).
+   immer den öffentlichen Schlüssel (der gehört in updater.js, PUBLIC_KEYS).
+   Zwei Schlüssel sind im Einsatz: update-key.pem (Herausgeber, clavichat.de)
+   und update-key-github.pem (Inhalt als Secret CLAVICHAT_UPDATE_KEY in
+   GitHub Actions); anzeigen lassen mit SECURECOM_UPDATE_KEY=<Datei>.
 
    Der private Schlüssel liegt in %USERPROFILE%\.securecom\update-key.pem
    (oder dort, wohin SECURECOM_UPDATE_KEY zeigt). Er gehört nie ins Repo und
@@ -33,7 +36,7 @@ if (require.main === module) {
   } else {
     console.log('Privater Schlüssel:', KEY_FILE);
   }
-  console.log('Öffentlicher Schlüssel für updater.js:');
+  console.log('Öffentlicher Schlüssel für updater.js (PUBLIC_KEYS):');
   console.log(publicKeyOf(fs.readFileSync(KEY_FILE, 'utf8')));
 }
 

@@ -235,16 +235,21 @@ erfunden. Im Überblick – wo verschlüsselt wird und was der Server davon sieh
 
 ### Updates der Windows-App
 
-- Die App lädt eine Update-Liste vom offiziellen Server. Sie ist mit Ed25519
-  signiert; den öffentlichen Schlüssel bringt die App mit
-  (`desktop/updater.js`). Der private Schlüssel liegt nur beim Herausgeber,
-  weder im Repository noch auf dem Webserver.
+- Die App lädt eine Update-Liste vom neuesten veröffentlichten GitHub-Release
+  und vom offiziellen Server (clavichat.de) und nimmt die höchste Fassung mit
+  gültiger Signatur. Die Listen sind mit Ed25519 signiert; die öffentlichen
+  Schlüssel bringt die App mit (`desktop/updater.js`, `PUBLIC_KEYS`). Es gibt
+  zwei: Den einen hat nur der Herausgeber (für clavichat.de), den anderen
+  GitHub Actions als verschlüsseltes Secret (für die Releases). Keiner liegt im
+  Repository oder auf dem Webserver.
+- GitHub Actions signiert nur beim Bauen eines Versions-Tags und legt einen
+  Entwurf an. Zum Update wird er erst, wenn der Herausgeber ihn veröffentlicht.
 - Die Liste nennt Größe und SHA-256 jeder Datei. Passt eine heruntergeladene
-  Datei nicht genau, wird sie verworfen. Ein übernommener Webserver kann so
-  keine fremde Fassung unterschieben. Als Update gilt nur eine höhere
-  Versionsnummer.
-- Die Suche beim Start lässt sich abschalten. Der Server sieht dabei nur
-  IP-Adresse und Zeitpunkt.
+  Datei nicht genau, wird sie verworfen. Ein übernommener Webserver oder ein
+  fremdes Release-Asset kann so keine fremde Fassung unterschieben. Als Update
+  gilt nur eine höhere Versionsnummer.
+- Die Suche beim Start lässt sich abschalten. GitHub und der Server sehen
+  dabei nur IP-Adresse und Zeitpunkt.
 
 ### Auf dem Gerät
 

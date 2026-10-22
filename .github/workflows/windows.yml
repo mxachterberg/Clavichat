@@ -2,6 +2,9 @@
 # (z. B. v1.3.0) hochgeladen wird, und legt beides als Entwurf unter
 # "Releases" ab. Keine Bausteine von Dritten – nur die offiziellen
 # GitHub-Actions und die GitHub-Kommandozeile.
+# Mit dem Secret CLAVICHAT_UPDATE_KEY liegt eine signierte update.json dabei;
+# sobald der Entwurf veröffentlicht ist, holen sich die Apps (alle Fassungen
+# nach 1.8.2) das Update von dort.
 name: Windows
 
 on:
@@ -27,6 +30,27 @@ jobs:
       - run: node scripts/fetch-php.js
       - run: npx electron-builder --win nsis portable --publish never
       - run: npx electron-builder --config host/builder.json --win nsis portable --publish never
+      # Signierte Update-Liste fürs Release: Die App holt Updates vom neuesten
+      # veröffentlichten Release (desktop/updater.js). Der private Schlüssel
+      # kommt nur in diesem Schritt aus dem Secret und wird nie ausgegeben.
+      # Ohne Secret gibt es kein update.json – die App sucht dann weiter
+      # nur auf clavichat.de.
+      - name: Update-Liste signieren
+        shell: bash
+        env:
+          CLAVICHAT_UPDATE_KEY: ${{ secrets.CLAVICHAT_UPDATE_KEY }}
+        run: |
+          if [ -z "$CLAVICHAT_UPDATE_KEY" ]; then
+            echo "::notice::Secret CLAVICHAT_UPDATE_KEY fehlt – Release ohne update.json (keine Updates über GitHub)."
+            exit 0
+          fi
+          VERSION="${GITHUB_REF_NAME#v}"
+          PKG="$(node -p "require('./package.json').version")"
+          if [ "$VERSION" != "$PKG" ]; then
+            echo "::error::Tag $GITHUB_REF_NAME passt nicht zu package.json ($PKG)."
+            exit 1
+          fi
+          node scripts/publish-update.js release
       - name: Release-Entwurf anlegen
         shell: bash
         env:
@@ -44,5 +68,15 @@ jobs:
             echo "---"
             echo "Clavichat (App) und Clavichat Server für Windows, gebaut von GitHub Actions aus genau diesem Stand. Nicht signiert: Windows SmartScreen fragt beim ersten Start nach. Docker: ghcr.io/${GITHUB_REPOSITORY,,}:$VERSION"
           } >> notes.md
-          gh release create "$GITHUB_REF_NAME" dist/*.exe dist-server/*.exe \
+          # Mit signierter Liste: genau die Dateien, die update.json nennt
+          # (Namen mit Versionsnummer), sonst wie bisher alles aus dist/.
+          shopt -s nullglob   # kein kleines Update gebaut: kein *.asar.gz
+          if [ -f release/update.json ]; then
+            APP=(release/update.json release/Clavichat-*.exe release/Clavichat-*.asar.gz)
+          else
+            APP=(dist/*.exe)
+          fi
+          # Ein Entwurf: Erst das Veröffentlichen macht ihn zu
+          # releases/latest – und damit zum Update für alle.
+          gh release create "$GITHUB_REF_NAME" "${APP[@]}" dist-server/*.exe \
             --draft --title "Clavichat $GITHUB_REF_NAME" --notes-file notes.md

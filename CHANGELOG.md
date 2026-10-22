@@ -4,6 +4,13 @@ Was sich von Version zu Version ändert. Beim Veröffentlichen wird der
 Abschnitt einer Version zum Text des GitHub-Releases
 (`.github/workflows/windows.yml`).
 
+## Unveröffentlicht
+
+- **Updates über GitHub:** Die Windows-App holt neue Fassungen vom neuesten
+  veröffentlichten GitHub-Release; clavichat.de bleibt als Ersatz. Die
+  Update-Liste signiert GitHub Actions beim Release mit einem eigenen
+  Schlüssel, den die App zusätzlich kennt.
+
 ## 1.8.2 – 16.10.2026
 
 Mehr Leute ins Meeting holen und die Kamera wechseln. Für installierte Apps
