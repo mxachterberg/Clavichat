@@ -19,7 +19,7 @@
    ========================================================================== */
 'use strict';
 
-const { app, BrowserWindow, Menu, Tray, desktopCapturer, ipcMain, net, powerMonitor, protocol, safeStorage, session, shell } = require('electron');
+const { app, BrowserWindow, Menu, Tray, desktopCapturer, ipcMain, nativeImage, net, powerMonitor, protocol, safeStorage, session, shell } = require('electron');
 const crypto = require('node:crypto');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -114,9 +114,23 @@ function showWindow() {
   win.show();
   win.focus();
 }
+/* Logo aus den Einstellungen der Oberfläche (LOGO, je Gerät): Fenster,
+   Taskleiste und Infobereich zeigen es, solange die App läuft – die
+   Oberfläche schickt es bei jedem Start neu (nur wenn nicht der Standard).
+   null = wieder das eingebaute Symbol. Programmdatei, Verknüpfungen und
+   Installer behalten build/icon.ico. */
+let customIcon = null;
+function trayImage() {
+  if (!customIcon) return ICON;
+  const img = nativeImage.createEmpty();
+  for (const [scaleFactor, px] of [[1, 16], [1.25, 20], [1.5, 24], [2, 32]]) {
+    img.addRepresentation({ scaleFactor: scaleFactor, buffer: customIcon.resize({ width: px, height: px, quality: 'best' }).toPNG() });
+  }
+  return img;
+}
 function updateTray() {
   if (windowPrefs.tray && !tray && !SMOKE) {
-    tray = new Tray(ICON);
+    tray = new Tray(trayImage());
     tray.setToolTip('Clavichat');
     tray.setContextMenu(Menu.buildFromTemplate([
       { label: 'Clavichat öffnen', click: showWindow },
@@ -477,6 +491,25 @@ ipcMain.handle('securecom:window', (event, op, value) => {
     updateTray();
   }
   return { tray: windowPrefs.tray };
+});
+
+// Logo-Wahl (Einstellungen → LOGO): PNG als Data-URL, höchstens 512 × 512.
+// Nur vom eigenen Fenster und nur PNG – alles andere wird ignoriert.
+const ICON_URL_MAX = 1024 * 1024;
+ipcMain.handle('securecom:icon', (event, dataUrl) => {
+  if (!win || event.sender !== win.webContents || !event.senderFrame || !isOurs(event.senderFrame.url)) return false;
+  if (dataUrl === null) {
+    customIcon = null;
+  } else {
+    if (typeof dataUrl !== 'string' || dataUrl.length > ICON_URL_MAX || !/^data:image\/png;base64,[A-Za-z0-9+/]+=*$/.test(dataUrl)) return false;
+    const img = nativeImage.createFromDataURL(dataUrl);
+    const size = img.getSize();
+    if (img.isEmpty() || size.width > 512 || size.height > 512 || size.width !== size.height) return false;
+    customIcon = img;
+  }
+  win.setIcon(customIcon || ICON);
+  if (tray) tray.setImage(trayImage());
+  return true;
 });
 
 ipcMain.on('securecom:attention', (event) => {

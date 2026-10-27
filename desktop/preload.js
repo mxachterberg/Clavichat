@@ -9,7 +9,9 @@ contextBridge.exposeInMainWorld('securecomDesktop', {
   /** Fenster: beim Schließen in den Infobereich statt beenden. */
   window: {
     get: () => ipcRenderer.invoke('securecom:window', 'get'),
-    setTray: (on) => ipcRenderer.invoke('securecom:window', 'tray', !!on)
+    setTray: (on) => ipcRenderer.invoke('securecom:window', 'tray', !!on),
+    /** Logo für Fenster, Taskleiste und Infobereich: PNG als Data-URL, null = eingebautes Symbol. */
+    setIcon: (dataUrl) => ipcRenderer.invoke('securecom:icon', dataUrl == null ? null : String(dataUrl))
   },
   /** In der Taskleiste blinken (eingehender Anruf). */
   attention: () => ipcRenderer.send('securecom:attention'),

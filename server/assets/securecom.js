@@ -160,15 +160,106 @@ const ICONS = {
   camSwitch: '<path d="M3 8h3.5L8 5.5h8L17.5 8H21v11H3z"/><path d="M8.6 12.6a3.5 3.5 0 0 1 6.2-1.4"/><path d="M15.4 14.4a3.5 3.5 0 0 1-6.2 1.4"/><path d="M15.2 9.4v2h-2M8.8 17.6v-2h2"/>'
 };
 
-/** Das Clavichat-Logo, durchsichtig: Funkgerät innen dunkel, helle Linien mit dunklem Rand, Bart und Lämpchen orange. */
-const LOGO = '<path d="M27 26V8.5M38 26V21.5" fill="none" stroke="#0b0b0d" stroke-width="5.8" stroke-linecap="round"/><rect x="20" y="26" width="24" height="26" rx="4" fill="#0b0b0d" stroke="#0b0b0d" stroke-width="5.8"/><rect x="27.4" y="6.8" width="9" height="13.4" rx="1.2" fill="#0b0b0d"/><path d="M28.6 8h6.6v4h-2.6v3h2.6v4h-6.6z" fill="#f97316"/><path d="M27 26V8.5M38 26V21.5" fill="none" stroke="#ededec" stroke-width="3.4" stroke-linecap="round"/><rect x="20" y="26" width="24" height="26" rx="4" fill="none" stroke="#ededec" stroke-width="3.4"/><path d="M26.5 33.5h11M26.5 39h11" fill="none" stroke="#ededec" stroke-width="3" stroke-linecap="round"/><circle cx="32" cy="46" r="2.6" fill="#f97316"/>';
-function logoMark(size) {
+/* ---------- Logo ---------------------------------------------------------------
+   Eine Quelle für alle Stellen: Knopf oben links (#sc-home), logoMark(), das
+   Favicon im Browser-Tab und – in der Windows-App – Fenster-, Taskleisten- und
+   Infobereich-Symbol. Wählbar je Gerät (localStorage sc-logo), Standard ist
+   das Funkgerät (a). Das Programmsymbol (desktop/scripts/make-icon.js →
+   build/icon.ico) und server/assets/securecom-icon.svg zeigen immer a.
+   fit: Die klassische Fassung sitzt enger in ihrem viewBox und wird dafür etwas
+   kleiner gezeichnet, damit alle Varianten gleich groß wirken. */
+const LOGO_KEY = 'sc-logo';
+const LOGO_DEFAULT = 'a';
+const LOGOS = {
+  a: { label: 'Funkgerät', viewBox: '0 0 64 64', svg: '<rect x="20" y="9" width="6" height="14" rx="3" fill="#3a3a40"/><rect x="35" y="2" width="6" height="21" fill="#c2410c"/><rect x="41" y="5" width="5" height="4" fill="#c2410c"/><rect x="41" y="12" width="3.5" height="4" fill="#c2410c"/><rect x="13" y="20" width="38" height="42" rx="6" fill="#2a2a2f"/><rect x="21" y="29" width="22" height="3.5" rx="1.75" fill="#121214"/><rect x="21" y="36" width="22" height="3.5" rx="1.75" fill="#121214"/><rect x="21" y="43" width="22" height="3.5" rx="1.75" fill="#121214"/><circle cx="32" cy="53.5" r="3.5" fill="#c2410c"/>' },
+  b: { label: 'Kachel', viewBox: '0 0 64 64', svg: '<rect width="64" height="64" rx="12" fill="#18181b"/><rect x="21" y="25" width="22" height="31" rx="4" fill="#c2410c"/><rect x="33.5" y="7" width="5" height="19" fill="#c2410c"/><rect x="38.5" y="9.5" width="4" height="3.5" fill="#c2410c"/><rect x="38.5" y="15.5" width="3" height="3.5" fill="#c2410c"/><rect x="26" y="32" width="12" height="3" rx="1.5" fill="#18181b"/><rect x="26" y="38" width="12" height="3" rx="1.5" fill="#18181b"/><circle cx="32" cy="48" r="2.8" fill="#18181b"/>' },
+  c: { label: 'Sprechblase', viewBox: '0 0 64 64', svg: '<path d="M10 6h44a6 6 0 0 1 6 6v32a6 6 0 0 1-6 6H26l-12 10v-10h-4a6 6 0 0 1-6-6V12a6 6 0 0 1 6-6z" fill="#2a2a2f"/><circle cx="32" cy="22" r="7" fill="#c2410c"/><path d="M28.5 26h7l2 14h-11z" fill="#c2410c"/>' },
+  d: { label: 'Monogramm', viewBox: '0 0 64 64', svg: '<rect width="64" height="64" rx="12" fill="#18181b"/><path d="M45 18.5A18 18 0 1 0 45 45.5" fill="none" stroke="#c2410c" stroke-width="9"/><rect x="40.5" y="41" width="9" height="13" fill="#c2410c"/><rect x="49.5" y="44" width="5" height="3.5" fill="#c2410c"/><rect x="49.5" y="50.5" width="3.5" height="3.5" fill="#c2410c"/>' },
+  // Bis Oktober 2026 der Standard: durchsichtig, Funkgerät innen dunkel, helle Linien mit dunklem Rand
+  classic: { label: 'Klassisch', viewBox: '7.3 5.5 49.4 49.4', fit: 0.94, svg: '<path d="M27 26V8.5M38 26V21.5" fill="none" stroke="#0b0b0d" stroke-width="5.8" stroke-linecap="round"/><rect x="20" y="26" width="24" height="26" rx="4" fill="#0b0b0d" stroke="#0b0b0d" stroke-width="5.8"/><rect x="27.4" y="6.8" width="9" height="13.4" rx="1.2" fill="#0b0b0d"/><path d="M28.6 8h6.6v4h-2.6v3h2.6v4h-6.6z" fill="#f97316"/><path d="M27 26V8.5M38 26V21.5" fill="none" stroke="#ededec" stroke-width="3.4" stroke-linecap="round"/><rect x="20" y="26" width="24" height="26" rx="4" fill="none" stroke="#ededec" stroke-width="3.4"/><path d="M26.5 33.5h11M26.5 39h11" fill="none" stroke="#ededec" stroke-width="3" stroke-linecap="round"/><circle cx="32" cy="46" r="2.6" fill="#f97316"/>' }
+};
+const HOME_LOGO = 34;   // Größe im Knopf oben links (44 × 44)
+
+function logoChoice() {
+  let id = null;
+  try { id = localStorage.getItem(LOGO_KEY); } catch (e) { /* privater Modus */ }
+  return id && Object.prototype.hasOwnProperty.call(LOGOS, id) ? id : LOGO_DEFAULT;
+}
+
+function logoSvg(id, size) {
+  const logo = LOGOS[id] || LOGOS[LOGO_DEFAULT];
+  const px = Math.round(size * (logo.fit || 1));
+  return '<svg width="' + px + '" height="' + px + '" viewBox="' + logo.viewBox + '" aria-hidden="true">' + logo.svg + '</svg>';
+}
+
+/** Das Logo als eigenständige SVG-Datei (Favicon, Symbol der Windows-App). */
+function logoDataUrl(id, size) {
+  const logo = LOGOS[id] || LOGOS[LOGO_DEFAULT];
+  return 'data:image/svg+xml,' + encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg"' +
+    (size ? ' width="' + size + '" height="' + size + '"' : '') + ' viewBox="' + logo.viewBox + '">' + logo.svg + '</svg>');
+}
+
+/** Logo als Symbol im Text; mit id immer diese Variante (Vorschau in den Einstellungen). */
+function logoMark(size, id) {
   const span = document.createElement('span');
   span.className = 'sc-ic sc-logo';
   span.setAttribute('aria-hidden', 'true');
-  span.innerHTML = '<svg width="' + size + '" height="' + size + '" viewBox="7.3 5.5 49.4 49.4">' + LOGO + '</svg>';
+  span.dataset.size = size;
+  if (id) span.dataset.logo = id;
+  span.innerHTML = logoSvg(id || logoChoice(), size);
   return span;
 }
+
+/** Zeichnet die SVG per Canvas als PNG (für Fenster und Infobereich der Windows-App). */
+function logoPng(id, size) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => {
+      try {
+        const canvas = document.createElement('canvas');
+        canvas.width = canvas.height = size;
+        canvas.getContext('2d').drawImage(img, 0, 0, size, size);
+        resolve(canvas.toDataURL('image/png'));
+      } catch (e) { reject(e); }
+    };
+    img.onerror = () => reject(new Error('Logo ließ sich nicht zeichnen.'));
+    img.src = logoDataUrl(id, size);
+  });
+}
+
+let logoShown = LOGO_DEFAULT;   // was Favicon und App-Symbol gerade zeigen
+
+/** Gewähltes Logo überall einsetzen. Beim Start mit dem Standard bleiben Favicon und App-Symbol, wie sie sind. */
+function applyLogo(id) {
+  const home = $('sc-home');
+  if (home) {
+    const box = document.createElement('span');
+    box.innerHTML = logoSvg(id, HOME_LOGO);
+    const old = home.querySelector('svg');
+    if (old) old.replaceWith(box.firstChild); else home.prepend(box.firstChild);
+  }
+  document.querySelectorAll('.sc-logo:not([data-logo])').forEach((span) => {
+    span.innerHTML = logoSvg(id, Number(span.dataset.size) || 18);
+  });
+  if (id === logoShown) return;
+  logoShown = id;
+  let link = document.querySelector('link[rel~="icon"]');
+  if (!link) link = document.head.appendChild(el('link', { rel: 'icon' }));
+  link.type = 'image/svg+xml';
+  link.href = logoDataUrl(id);
+  // Windows-App: Fenster, Taskleiste und Infobereich (Programmdatei und Installer bleiben beim Funkgerät)
+  if (DESKTOP && DESKTOP.window && DESKTOP.window.setIcon) {
+    (id === LOGO_DEFAULT ? DESKTOP.window.setIcon(null) : logoPng(id, 256).then((png) => DESKTOP.window.setIcon(png))).catch(() => {});
+  }
+}
+
+function setLogo(id) {
+  if (!Object.prototype.hasOwnProperty.call(LOGOS, id)) return;
+  try { localStorage.setItem(LOGO_KEY, id); } catch (e) { /* gilt bis zum Neuladen */ }
+  applyLogo(id);
+}
+
+applyLogo(logoChoice());
 
 function icon(name, size) {
   const s = size || 18;
@@ -8448,6 +8539,20 @@ function showSettings() {
         body.append(el('label', { class: 'sc-check' }, shield, el('span', { text:
           'Bildschirmfotos und Aufnahmen verhindern: Andere Programme, Screenshots und Bildschirmübertragungen sehen dieses Fenster schwarz. Gilt für dieses Gerät.' })));
       }
+
+      // Logo (je Gerät)
+      body.appendChild(sectionHead('LOGO'));
+      const logoNow = logoChoice();
+      const logoPick = el('div', { class: 'sc-logo-pick', role: 'group', 'aria-label': 'Logo wählen' });
+      for (const id of Object.keys(LOGOS)) {
+        logoPick.appendChild(el('button', { type: 'button', class: 'sc-logo-tile', 'aria-pressed': id === logoNow ? 'true' : 'false', onclick: (ev) => {
+          setLogo(id);
+          logoPick.querySelectorAll('.sc-logo-tile').forEach((b) => b.setAttribute('aria-pressed', b === ev.currentTarget ? 'true' : 'false'));
+        } }, logoMark(44, id), el('span', { class: 'sc-logo-name', text: LOGOS[id].label })));
+      }
+      body.append(logoPick, el('p', { class: 'sc-note', text: 'Gilt für dieses Gerät: oben links und im Browser-Tab' + (DESKTOP
+        ? ', in der App auch für Fenster, Taskleiste und Infobereich. Programmdatei, Verknüpfungen und Installer zeigen weiter das Funkgerät – sie lassen sich im laufenden Betrieb nicht ändern.'
+        : '.') }));
 
       // App-Sperre (je Gerät) – nicht im Meeting-Modus: Die Sitzung lebt nur so lange wie das Meeting.
       if (!inMeetingMode()) {

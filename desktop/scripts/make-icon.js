@@ -3,9 +3,12 @@
      build/icon.png   512 × 512 (Linux, Vorschau)
      build/icon.ico   16 … 256 (Windows: Programmdatei, Fenster, Taskleiste,
                       Infobereich – Windows nimmt je Stelle die passende Größe)
-   Gleiches Motiv wie server/assets/securecom-icon.svg: durchsichtig,
-   Funkgerät mit Schlüssel als Antenne, innen dunkel, dunkler Rand. Ohne Grafikprogramm: Pixel per
-   Hand, überabgetastet (glatte Kanten), PNG mit zlib.
+   Gleiches Motiv wie server/assets/securecom-icon.svg und LOGOS.a in
+   securecom.js („Funkgerät“, seit Oktober 2026): durchsichtig, dunkles
+   Gehäuse mit drei Lautsprecherschlitzen und orangem Lämpchen, grauer
+   Drehknopf, die Antenne ein oranger Schlüsselbart. Ohne Grafikprogramm:
+   dieselben Formen wie im SVG (Rechtecke mit Radius, Kreis), Pixel für
+   Pixel überabgetastet (glatte Kanten), PNG mit zlib.
    Aufruf: npm run icon
    ========================================================================== */
 'use strict';
@@ -16,57 +19,38 @@ const zlib = require('node:zlib');
 
 const ICO_SIZES = [16, 20, 24, 32, 40, 48, 64, 128, 256];
 
-const BG = [11, 11, 13];
-const ORANGE = [249, 115, 22];
-const WHITE = [237, 237, 236];
+const hex = (h) => [parseInt(h.slice(1, 3), 16), parseInt(h.slice(3, 5), 16), parseInt(h.slice(5, 7), 16)];
 
 function inRoundRect(x, y, x0, y0, w, h, r) {
   if (x < x0 || y < y0 || x > x0 + w || y > y0 + h) return false;
+  if (!r) return true;
   const cx = Math.min(Math.max(x, x0 + r), x0 + w - r);
   const cy = Math.min(Math.max(y, y0 + r), y0 + h - r);
   return (x - cx) ** 2 + (y - cy) ** 2 <= r * r;
 }
 
-function inRect(x, y, x0, y0, w, h) {
-  return x >= x0 && y >= y0 && x <= x0 + w && y <= y0 + h;
-}
-
-/** Strich von (x1, y1) nach (x2, y2) mit runden Enden, halbe Breite r. */
-function onLine(x, y, x1, y1, x2, y2, r) {
-  const dx = x2 - x1;
-  const dy = y2 - y1;
-  const t = Math.max(0, Math.min(1, ((x - x1) * dx + (y - y1) * dy) / (dx * dx + dy * dy)));
-  return Math.hypot(x - (x1 + t * dx), y - (y1 + t * dy)) <= r;
-}
-
-// Seit 1.6.6 ohne Kachel (durchsichtig): Das Funkgerät ist innen dunkel,
-// alle hellen Linien haben einen schmalen dunklen Rand – so steht es auf
-// heller wie dunkler Taskleiste. Das Motiv füllt die Fläche fast ganz aus.
-const ZOOM = 1.25;
-const MOTIF_CY = 30.25;   // Mitte des Motivs im 64er-Raster des SVG
-const HALO = 1.2;         // dunkler Rand um die hellen Linien
+/* Die Formen aus dem SVG (viewBox 0 0 64 64) in derselben Reihenfolge –
+   spätere liegen oben. small: false = unter 24 Pixeln weglassen (die
+   Schlitze verschwimmen dort zu einem grauen Brei). */
+const rect = (x, y, w, h, r, fill, small) => ({ hit: (px, py) => inRoundRect(px, py, x, y, w, h, r), fill: hex(fill), small: small !== false });
+const circle = (cx, cy, r, fill) => ({ hit: (px, py) => (px - cx) ** 2 + (py - cy) ** 2 <= r * r, fill: hex(fill), small: true });
+const SHAPES = [
+  rect(20, 9, 6, 14, 3, '#3a3a40'),          // Drehknopf
+  rect(35, 2, 6, 21, 0, '#c2410c'),          // Antenne = Schlüsselschaft …
+  rect(41, 5, 5, 4, 0, '#c2410c'),           // … mit zwei Zähnen
+  rect(41, 12, 3.5, 4, 0, '#c2410c'),
+  rect(13, 20, 38, 42, 6, '#2a2a2f'),        // Gehäuse
+  rect(21, 29, 22, 3.5, 1.75, '#121214', false),   // Lautsprecher
+  rect(21, 36, 22, 3.5, 1.75, '#121214', false),
+  rect(21, 43, 22, 3.5, 1.75, '#121214', false),
+  circle(32, 53.5, 3.5, '#c2410c')           // Lämpchen
+].reverse();
 
 /** Farbe am Punkt (x, y) im 64er-Raster – oder null (durchsichtig). */
 function shade(x, y, size) {
-  x = 32 + (x - 32) / ZOOM;
-  y = MOTIF_CY + (y - 32) / ZOOM;
-  const bold = (size <= 32 ? 0.45 : 0) / ZOOM;
-  const s = 1.7 + bold;   // halbe Strichstärke des Funkgeräts (3,4)
-
-  // Lämpchen und Schlüsselbart (Block mit Kerbe, zwei Zähne)
-  if (Math.hypot(x - 32, y - 46) <= 2.6 + bold) return ORANGE;
-  if (inRect(x, y, 28.6, 8, 6.6, 11) && !inRect(x, y, 32.6, 12, 2.6, 3)) return ORANGE;
-
-  // Helle Linien: Antenne (Schlüsselschaft), Drehknopf, Gehäuserahmen
-  const antenna = (r) => onLine(x, y, 27, 8.5, 27, 26, r) || onLine(x, y, 38, 21.5, 38, 26, r);
-  const outer = (r) => inRoundRect(x, y, 20 - r, 26 - r, 24 + 2 * r, 26 + 2 * r, 4 + r);
-  const inner = inRoundRect(x, y, 20 + s, 26 + s, 24 - 2 * s, 26 - 2 * s, 4 - s);
-  if (antenna(s) || (outer(s) && !inner)) return WHITE;
-  // Lautsprecher: zwei Striche – unter 24 Pixeln weggelassen, dort verschwimmen sie
-  if (size >= 24 && (onLine(x, y, 26.5, 33.5, 37.5, 33.5, 1.5 + bold) || onLine(x, y, 26.5, 39, 37.5, 39, 1.5 + bold))) return WHITE;
-
-  // Dunkel: das Innere des Gehäuses und der Rand um alles
-  if (inner || antenna(s + HALO) || outer(s + HALO) || inRect(x, y, 28.6 - HALO, 8 - HALO, 6.6 + 2 * HALO, 11 + 2 * HALO)) return BG;
+  for (const s of SHAPES) {
+    if ((s.small || size >= 24) && s.hit(x, y)) return s.fill;
+  }
   return null;
 }
 

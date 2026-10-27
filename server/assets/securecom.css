@@ -1234,6 +1234,29 @@ html[data-theme="light"] .sc-modal { background: rgba(40, 40, 40, .3); }
 
 .sc-set-row { display: flex; align-items: center; gap: 12px; margin-bottom: 12px; }
 
+/* Logo-Auswahl in den Einstellungen: Vorschau-Kacheln, die gewählte orange umrandet */
+.sc-logo-pick { display: grid; grid-template-columns: repeat(auto-fill, minmax(92px, 1fr)); gap: 10px; margin-bottom: 12px; }
+.sc-logo-tile {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 14px 6px 10px;
+  border: 1px solid var(--border);
+  background: var(--panel);
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: .04em;
+  cursor: pointer;
+  transition: color .15s ease, border-color .15s ease, background .15s ease;
+}
+.sc-logo-tile .sc-logo { width: 44px; height: 44px; align-items: center; justify-content: center; }
+.sc-logo-tile:hover { color: var(--text); border-color: var(--accent); }
+.sc-logo-tile[aria-pressed="true"] { color: var(--text); border-color: var(--accent); background: var(--accent-soft); box-shadow: inset 0 0 0 1px var(--accent); }
+.sc-logo-tile:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.sc-logo-name { white-space: nowrap; }
+
 /* Relay-Server (TURN) in den Einstellungen: Punkt + Text */
 .sc-relay { padding: 10px 12px; border: 1px solid var(--border-soft); }
 .sc-relay-dot { flex: none; width: 10px; height: 10px; border-radius: 50%; background: var(--muted); }
