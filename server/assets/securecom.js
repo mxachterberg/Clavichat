@@ -110,7 +110,8 @@ const ICONS = {
   image: '<rect x="3" y="4" width="18" height="16" rx="1"/><circle cx="9" cy="10" r="2"/><path d="M21 16l-5-5L5 20"/>',
   phone: '<path d="M5 4h4l2 5-2.5 1.5a11 11 0 0 0 5 5L15 13l5 2v4a2 2 0 0 1-2 2A16 16 0 0 1 3 6a2 2 0 0 1 2-2z"/>',
   video: '<rect x="3" y="6" width="13" height="12" rx="1"/><path d="M16 10l5-3v10l-5-3z"/>',
-  meet: '<rect x="2" y="7" width="13" height="11" rx="1"/><path d="M15 11l5-3v9l-5-3z"/><path d="M8.5 10.5v4M6.5 12.5h4"/><path d="M5 4.5h7"/>',
+  // Meetings (Knopf MEET, Meeting-Karten, Startseite): eine Gruppe – die Kamera bleibt beim Video-Anruf
+  group: '<circle cx="12" cy="8" r="3"/><path d="M6.5 19.5a5.5 5.5 0 0 1 11 0"/><circle cx="5.5" cy="10" r="2.2"/><path d="M1.8 18.5a3.9 3.9 0 0 1 3.7-3.4"/><circle cx="18.5" cy="10" r="2.2"/><path d="M22.2 18.5a3.9 3.9 0 0 0-3.7-3.4"/>',
   bolt: '<path d="M13 2.5L4.5 13.5h6.5l-1 8 8.5-11h-6.5z"/>',
   videoOff: '<rect x="3" y="6" width="13" height="12" rx="1"/><path d="M16 10l5-3v10l-5-3z"/><path d="M2 2l20 20"/>',
   mic: '<rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/>',
@@ -1136,7 +1137,7 @@ function renderGate(tab, message) {
       el('span', {}, el('strong', { text: 'Dieser Raum ist nur für Mitglieder mit Konto.' }),
         ' Erstelle ein Konto – oder melde dich an, wenn du schon eins hast. Danach trittst du dem Raum bei. ', drop)));
   } else if (S.pendingJoin) {
-    card.appendChild(el('p', { class: 'sc-gate-invite' }, icon(S.pendingJoin.meet ? 'meet' : 'link', 15), S.pendingJoin.meet
+    card.appendChild(el('p', { class: 'sc-gate-invite' }, icon(S.pendingJoin.meet ? 'group' : 'link', 15), S.pendingJoin.meet
       ? 'Du wurdest in einen Meeting-Raum eingeladen. Starte eine temporäre Sitzung (oder melde dich an) – danach bist du mit einem Klick drin.'
       : 'Du wurdest in einen Raum eingeladen. Melde dich an oder starte eine temporäre Sitzung – danach trittst du bei.'));
   }
@@ -1195,7 +1196,7 @@ function gateTemp(panel) {
   // Zweiter Weg: gleich ein Meeting eröffnen – nur mit Namen, danach mit Link zum Teilen.
   const meet = el('button', { type: 'button', class: 'btn btn--block sc-gate-meet', id: 'sc-gate-meet',
     onclick: () => showMeetingStart(cleanName(alias.value), code ? code.querySelector('input').value : '') },
-  icon('video', 16), 'Meeting erstellen');
+  icon('group', 16), 'Meeting erstellen');
   panel.append(form,
     el('p', { class: 'sc-gate-or', text: 'oder' }),
     meet,
@@ -1499,7 +1500,7 @@ function showMeetingStart(prefill, codeValue, message) {
     }
   });
   card.append(
-    el('span', { class: 'sc-guest-emblem' }, icon('video', 30)),
+    el('span', { class: 'sc-guest-emblem' }, icon('group', 30)),
     el('h1', { class: 'sc-gate-title sc-guest-title', text: 'Meeting erstellen' }),
     el('p', { class: 'sc-gate-sub', text: 'Mit welchem Namen möchtest du das Meeting eröffnen?' }),
     error, form,
@@ -1583,7 +1584,7 @@ function showGuestJoin(message) {
     }
   });
   card.append(
-    el('span', { class: 'sc-guest-emblem' }, icon('video', 30)),
+    el('span', { class: 'sc-guest-emblem' }, icon('group', 30)),
     el('h1', { class: 'sc-gate-title sc-guest-title', text: 'Meeting beitreten' }),
     el('p', { class: 'sc-gate-sub', text: 'Mit welchem Namen möchtest du dem Meeting beitreten?' }),
     error, form,
@@ -1657,14 +1658,14 @@ function showGuestEnd(note) {
   }[kind] || ['Das Meeting ist zu Ende.', ''];
   const link = !host && kind !== 'denied' && note.link && /^[A-Za-z0-9_-]{22}$/.test(note.link.rid || '') ? note.link : null;
   appendAll(card,
-    el('span', { class: 'sc-guest-emblem' + (kind === 'left' ? '' : ' is-ended') }, icon(kind === 'left' ? 'leave' : 'meet', 30)),
+    el('span', { class: 'sc-guest-emblem' + (kind === 'left' ? '' : ' is-ended') }, icon(kind === 'left' ? 'leave' : 'group', 30)),
     el('h1', { class: 'sc-gate-title sc-guest-title', text: text[0] }),
     el('p', { class: 'sc-gate-sub', text: text[1] }),
     link ? el('button', { type: 'button', class: 'btn btn--primary btn--block', onclick: () => {
       S.pendingJoin = Object.assign({}, link, { once: true, meet: true });
       showGuestJoin();
-    } }, icon('meet', 15), 'Erneut beitreten') : null,
-    host ? el('button', { type: 'button', class: 'btn btn--primary btn--block', onclick: () => showMeetingStart(note.name || '') }, icon('video', 15), 'Neues Meeting erstellen') : null,
+    } }, icon('group', 15), 'Erneut beitreten') : null,
+    host ? el('button', { type: 'button', class: 'btn btn--primary btn--block', onclick: () => showMeetingStart(note.name || '') }, icon('group', 15), 'Neues Meeting erstellen') : null,
     el('button', { type: 'button', class: 'btn btn--block sc-guest-more', onclick: () => showGate() }, host ? 'Zur Startseite' : 'Zu Clavichat'));
   bootDone();
 }
@@ -2833,7 +2834,7 @@ function renderRail() {
     }, room.meta.img
       ? el('span', { class: 'sc-rail-initials sc-rail-pic' }, el('img', { src: room.meta.img, alt: '', draggable: 'false' }))
       : room.meta.meet
-        ? el('span', { class: 'sc-rail-initials' }, icon('video', 19))
+        ? el('span', { class: 'sc-rail-initials' }, icon('group', 19))
         : el('span', { class: 'sc-rail-initials', text: initials(room.meta.name) }));
     b.style.setProperty('--hue', hueOf(C.toHex(C.unb64url(room.id)).slice(-6)));
     box.appendChild(b);
@@ -3192,7 +3193,7 @@ function renderMainHead() {
     const room = S.rooms.get(S.view.rid);
     appendAll(head,
       el('span', { class: 'sc-head-text' },
-        el('span', { class: 'sc-head-title' }, icon('meet', 16), 'Meeting-Chat'),
+        el('span', { class: 'sc-head-title' }, icon('group', 16), 'Meeting-Chat'),
         el('span', { class: 'sc-head-sub', text: room.meta.name + ' · ' + room.members.length + ' Teilnehmer · Ende-zu-Ende verschlüsselt' })),
       el('span', { class: 'sc-head-spacer' }),
       meetingCallButton(room, 'icon'),
@@ -5303,7 +5304,7 @@ function stopWaiting() { WAIT.cur = null; }
 function showGuestWait() {
   const card = guestCard();
   card.append(
-    el('span', { class: 'sc-guest-emblem is-waiting' }, icon('meet', 30)),
+    el('span', { class: 'sc-guest-emblem is-waiting' }, icon('group', 30)),
     el('h1', { class: 'sc-gate-title sc-guest-title is-long', text: 'Warte auf den Gastgeber …' }),
     el('p', { class: 'sc-gate-sub', text: 'Der Gastgeber muss deinen Beitritt bestätigen.' }),
     el('div', { class: 'sc-wait-spin', role: 'progressbar', 'aria-label': 'Warte auf den Gastgeber' }),
@@ -5369,13 +5370,13 @@ function waitDialog(inv) {
 function renderMeetingSide(head, body, room) {
   const once = isOnceMeeting(room);
   const owner = room.owner === S.me.id;
-  appendAll(head, el('span', { class: 'sc-side-title sc-meet-title' }, icon('meet', 16), 'Meeting'),
+  appendAll(head, el('span', { class: 'sc-side-title sc-meet-title' }, icon('group', 16), 'Meeting'),
     S.guest ? null : iconBtn('more', 'Meeting-Menü', () => roomMenu(room)));
   const inCall = !!(S.voice && S.voice.rid === room.id);
   const n = room.vc.length;
   const card = el('div', { class: 'sc-meet-card tickbox' + (n ? ' is-live' : '') });
   appendAll(card,
-    el('span', { class: 'sc-meet-emblem' }, icon('video', 26)),
+    el('span', { class: 'sc-meet-emblem' }, icon('group', 26)),
     el('span', { class: 'sc-meet-name', text: room.meta.name }),
     el('span', { class: 'sc-meet-state', text: inCall ? 'Du bist im Call' : n ? 'Call läuft · ' + n + (n === 1 ? ' Person' : ' Personen') : 'Noch kein Call' }),
     meetingCallButton(room),
@@ -5426,7 +5427,7 @@ function renderMeetingLobby() {
   const names = room.vc.slice(0, 3).map((id) => displayName(S.ids.get(id))).join(', ') + (n > 3 ? ' und ' + (n - 3) + ' weitere' : '');
   lobby.classList.toggle('is-live', n > 0);
   appendAll(lobby,
-    el('span', { class: 'sc-meet-lobby-emblem' }, icon('video', 30)),
+    el('span', { class: 'sc-meet-lobby-emblem' }, icon('group', 30)),
     el('span', { class: 'sc-meet-lobby-text' },
       el('span', { class: 'sc-meet-lobby-title', text: n ? 'Call läuft' : 'Noch kein Call' }),
       el('span', { class: 'sc-meet-lobby-sub', text: n ? names + (n === 1 ? ' ist drin.' : ' sind drin.') : 'Schreibt hier im Chat – oder startet einen Call mit Ton, Kamera und Bildschirm. Alle im Meeting sehen es sofort.' })),
@@ -9107,7 +9108,7 @@ function bind() {
   $('sc-add-room').addEventListener('click', roomDialog);
   // Meeting starten: eigener Knopf unter „Raum erstellen“, deutlich als Meeting erkennbar.
   const meetBtn = el('button', { type: 'button', class: 'sc-rail-btn sc-rail-meet', id: 'sc-add-meet', title: 'Meeting starten', 'aria-label': 'Meeting starten', onclick: () => startMeeting() },
-    icon('video', 19), el('span', { class: 'sc-rail-meet-label', text: 'MEET' }));
+    icon('group', 19), el('span', { class: 'sc-rail-meet-label', text: 'MEET' }));
   $('sc-add-room').insertAdjacentElement('afterend', meetBtn);
   $('sc-scrim').addEventListener('click', () => toggleSide(false));
   $('sc-modal').addEventListener('mousedown', (ev) => { if (ev.target === $('sc-modal')) closeModal(); });
