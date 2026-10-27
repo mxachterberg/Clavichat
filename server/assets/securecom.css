@@ -311,6 +311,11 @@
 .sc-chan[aria-current="true"] { border-left-color: var(--accent); background: var(--accent-soft); color: var(--text); }
 .sc-chan.has-unread { color: var(--text); font-weight: 600; }
 .sc-chan-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* Kanäle verschieben (Besitzer): Linie zeigt, wo der Kanal landet */
+.sc-chan.is-sortable { cursor: grab; }
+.sc-chan.is-dragging { opacity: .4; }
+.sc-chan.drop-before { box-shadow: inset 0 2px 0 var(--accent); }
+.sc-chan.drop-after { box-shadow: inset 0 -2px 0 var(--accent); }
 .sc-chan-meta { font-size: 10px; color: var(--muted); }
 .sc-chan--voice.is-joined { color: var(--green); }
 .sc-vmember { display: flex; align-items: center; gap: 8px; padding: 4px 8px 4px 30px; font-size: 12.5px; color: var(--text-body); }

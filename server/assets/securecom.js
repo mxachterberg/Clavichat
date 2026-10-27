@@ -127,6 +127,8 @@ const ICONS = {
   key: '<circle cx="8" cy="15" r="4"/><path d="M11 12l9-9M16 7l3 3M14 9l2 2"/>',
   users: '<circle cx="9" cy="8" r="3.5"/><path d="M2.5 20a6.5 6.5 0 0 1 13 0"/><path d="M16 4.5a3.5 3.5 0 0 1 0 7"/><path d="M18.5 14.5A6.5 6.5 0 0 1 21.5 20"/>',
   plus: '<path d="M12 5v14M5 12h14"/>',
+  arrowUp: '<path d="M12 19V5M6 11l6-6 6 6"/>',
+  arrowDown: '<path d="M12 5v14M6 13l6 6 6-6"/>',
   hash: '<path d="M5 9h15M4 15h15M10 3L8 21M16 3l-2 18"/>',
   speaker: '<path d="M4 9h4l5-4v14l-5-4H4z"/><path d="M16.5 8.5a5 5 0 0 1 0 7M19 6a8.5 8.5 0 0 1 0 12"/>',
   copy: '<rect x="8" y="8" width="12" height="12" rx="1"/><path d="M16 8V5a1 1 0 0 0-1-1H5a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h3"/>',
@@ -3076,6 +3078,7 @@ function renderRoomSide(head, body, room) {
     }, icon('hash', 15), el('span', { class: 'sc-chan-name', text: ch.name }),
     u ? el('span', { class: 'sc-count', text: String(u) }) : null);
     withMenu(btn, () => textChannelMenu(room, ch));
+    if (isOwner) { sortable(btn, room, 'ch', ch.id); dropTarget(btn, room, 'ch', ch.id); }
     chl.appendChild(btn);
   }
   body.appendChild(chl);
@@ -3093,6 +3096,7 @@ function renderRoomSide(head, body, room) {
     }, icon('speaker', 15), el('span', { class: 'sc-chan-name', text: vch.name }),
     el('span', { class: 'sc-chan-meta', text: people.length ? people.length + '/' + (S.cfg.limits.voice || 8) : '' }));
     withMenu(vbtn, () => voiceChannelMenu(room, vch));
+    if (isOwner) { sortable(vbtn, room, 'vch', vch.id); dropTarget(vbtn, room, 'vch', vch.id); }
     vbox.appendChild(vbtn);
     for (const id of people) {
       const ident = S.ids.get(id);
@@ -5880,11 +5884,95 @@ function addVoiceChannel(room) {
 }
 
 /* ---------- Kanäle: Rechtsklick-Menüs, umbenennen, löschen ------------------ */
+/* ---------- Kanäle verschieben (nur Besitzer) -------------------------------
+   Per Drag & Drop in der Seitenleiste oder über das Kanal-Menü (Handys kennen
+   kein Ziehen). Die Reihenfolge steht in den verschlüsselten Raumdaten und
+   gilt für alle. Der erste Sprachkanal ("") bleibt oben – ältere Apps
+   erwarten ihn dort. */
+let DRAG = null;
+
+async function moveChannel(room, kind, id, toIndex) {
+  const list = room.meta[kind].slice();
+  const from = list.findIndex((c) => c.id === id);
+  if (from < 0) return;
+  const [item] = list.splice(from, 1);
+  const to = Math.max(kind === 'vch' ? 1 : 0, Math.min(list.length, toIndex));
+  list.splice(to, 0, item);
+  if (list.every((c, i) => c.id === room.meta[kind][i].id)) return;
+  try {
+    await updateMeta(room, metaOf(room, { [kind]: list }));
+  } catch (e) { toast(e.message, 'error'); }
+}
+
+function moveItems(room, kind, id) {
+  if (room.owner !== S.me.id || (kind === 'vch' && id === '')) return [];
+  const list = room.meta[kind];
+  const i = list.findIndex((c) => c.id === id);
+  const min = kind === 'vch' ? 1 : 0;
+  if (list.length - min < 2) return [];
+  return [
+    { icon: 'arrowUp', label: 'Nach oben', disabled: i <= min, run: () => moveChannel(room, kind, id, i - 1) },
+    { icon: 'arrowDown', label: 'Nach unten', disabled: i >= list.length - 1, run: () => moveChannel(room, kind, id, i + 1) }
+  ];
+}
+
+function clearDrop() {
+  document.querySelectorAll('.sc-chan.drop-before, .sc-chan.drop-after')
+    .forEach((b) => b.classList.remove('drop-before', 'drop-after'));
+}
+
+function sortable(btn, room, kind, id) {
+  if (kind === 'vch' && id === '') return;
+  btn.draggable = true;
+  btn.classList.add('is-sortable');
+  btn.addEventListener('dragstart', (ev) => {
+    DRAG = { rid: room.id, kind: kind, id: id };
+    ev.dataTransfer.effectAllowed = 'move';
+    try { ev.dataTransfer.setData('text/plain', id || 'sprache'); } catch (e) { /* egal */ }
+    btn.classList.add('is-dragging');
+  });
+  btn.addEventListener('dragend', () => {
+    DRAG = null;
+    btn.classList.remove('is-dragging');
+    clearDrop();
+  });
+}
+
+function dropTarget(btn, room, kind, id) {
+  const ok = () => DRAG && DRAG.rid === room.id && DRAG.kind === kind && DRAG.id !== id;
+  btn.addEventListener('dragover', (ev) => {
+    if (!ok()) return;
+    ev.preventDefault();
+    ev.dataTransfer.dropEffect = 'move';
+    const r = btn.getBoundingClientRect();
+    const after = (kind === 'vch' && id === '') || ev.clientY > r.top + r.height / 2;
+    clearDrop();
+    btn.classList.add(after ? 'drop-after' : 'drop-before');
+  });
+  btn.addEventListener('dragleave', (ev) => {
+    if (!btn.contains(ev.relatedTarget)) btn.classList.remove('drop-before', 'drop-after');
+  });
+  btn.addEventListener('drop', (ev) => {
+    if (!ok()) return;
+    ev.preventDefault();
+    const after = btn.classList.contains('drop-after');
+    clearDrop();
+    const list = room.meta[kind];
+    const from = list.findIndex((c) => c.id === DRAG.id);
+    let to = list.findIndex((c) => c.id === id) + (after ? 1 : 0);
+    if (from < to) to--;
+    const moving = DRAG.id;
+    DRAG = null;
+    moveChannel(room, kind, moving, to);
+  });
+}
+
 function textChannelMenu(room, ch) {
   const owner = room.owner === S.me.id;
   return [
     { icon: 'check', label: 'Als gelesen markieren', disabled: !(room.unread.get(ch.id) || 0), run: () => markChannelRead(room, ch.id) },
     owner ? { icon: 'edit', label: 'Kanal umbenennen', run: () => renameChannel(room, 'ch', ch) } : null,
+    ...moveItems(room, 'ch', ch.id),
     owner ? { icon: 'clock', label: 'Nachrichten aufbewahren: ' + ttlLabel(roomTtl(room)), run: () => roomTtlDialog(room) } : null,
     owner ? { icon: 'trash', label: 'Kanal löschen', danger: true, disabled: room.meta.ch.length <= 1, run: () => deleteChannel(room, 'ch', ch) } : null
   ];
@@ -5897,6 +5985,7 @@ function voiceChannelMenu(room, vch) {
   return [
     inHere ? { icon: 'leave', label: 'Sprachkanal verlassen', run: () => leaveVoice() } : { icon: 'speaker', label: 'Beitreten', run: () => joinVoice(room.id, vch.id) },
     owner ? { icon: 'edit', label: 'Sprachkanal umbenennen', run: () => renameChannel(room, 'vch', vch) } : null,
+    ...moveItems(room, 'vch', vch.id),
     owner ? { icon: 'sliders', label: 'Sprachqualität im Raum: ' + (aq ? aq.name : 'jeder nach Wahl'), run: () => roomAudioDialog(room) } : null,
     owner ? { icon: 'trash', label: 'Sprachkanal löschen', danger: true, disabled: vch.id === '', run: () => deleteChannel(room, 'vch', vch) } : null
   ];
