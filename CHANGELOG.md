@@ -4,6 +4,19 @@ Was sich von Version zu Version ändert. Beim Veröffentlichen wird der
 Abschnitt einer Version zum Text des GitHub-Releases
 (`.github/workflows/windows.yml`).
 
+## 1.8.7 – 27.10.2026
+
+Das Logo kommt jetzt auch in der Windows-Taskleiste an. Für installierte
+Apps ein kleines Update.
+
+- **Taskleiste:** Windows zeigte dort das Symbol der Programmdatei bzw. der
+  Startmenü-Verknüpfung – nach kleinen Updates noch das alte Logo, und eine
+  Logo-Wahl kam nie an. Jetzt legt die App ihr Symbol als eigene Datei ab und
+  stellt Taskleiste sowie ihre Verknüpfungen (Startmenü, Desktop,
+  angeheftet) darauf um.
+- **Monogramm:** Das Logo „Monogramm“ ist jetzt ein C, das unten rechts in
+  einen Schlüssel ausläuft.
+
 ## 1.8.6 – 27.10.2026
 
 Neues Logo. Für installierte Apps ein kleines Update – das neue Symbol der
