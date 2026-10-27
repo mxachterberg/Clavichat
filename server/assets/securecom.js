@@ -4885,7 +4885,7 @@ async function decryptMeta(room) {
     if (!signer || !room.members.some((m) => m.id === signer.id) || res.obj.t !== 'meta') return;
     const ch = Array.isArray(res.obj.ch) ? res.obj.ch
       .filter((c) => c && /^[A-Za-z0-9_-]{1,22}$/.test(c.id)).slice(0, 30)
-      .map((c) => ({ id: c.id, name: cleanName(c.name).toLowerCase().replace(/\s+/g, '-').slice(0, 30) || 'kanal' })) : [];
+      .map((c) => ({ id: c.id, name: cleanName(c.name).replace(/\s+/g, '-').slice(0, 30) || 'kanal' })) : [];
     // Sprachkanäle: der erste ("") immer, weitere aus den Raumdaten.
     const vch = Array.isArray(res.obj.vch) ? res.obj.vch
       .filter((c) => c && typeof c.id === 'string' && (c.id === '' || /^[A-Za-z0-9_-]{1,22}$/.test(c.id))).slice(0, 20)
@@ -5589,7 +5589,7 @@ function addChannel(room) {
       const name = el('input', { type: 'text', maxlength: '30', placeholder: 'z. B. planung' });
       const go = el('button', { type: 'button', class: 'btn btn--primary btn--block', text: 'Anlegen' });
       go.addEventListener('click', async () => {
-        const n = cleanName(name.value).toLowerCase().replace(/\s+/g, '-');
+        const n = cleanName(name.value).replace(/\s+/g, '-');   // Groß-/Kleinschreibung bleibt
         if (!n) return;
         go.disabled = true;
         try {
@@ -5665,7 +5665,7 @@ function renameChannel(room, kind, c) {
       const name = el('input', { type: 'text', maxlength: '30', value: c.name });
       const go = el('button', { type: 'button', class: 'btn btn--primary btn--block', text: 'Speichern' });
       go.addEventListener('click', async () => {
-        const n = voice ? cleanName(name.value).slice(0, 30) : cleanName(name.value).toLowerCase().replace(/\s+/g, '-').slice(0, 30);
+        const n = voice ? cleanName(name.value).slice(0, 30) : cleanName(name.value).replace(/\s+/g, '-').slice(0, 30);
         if (!n) { name.focus(); return; }
         go.disabled = true;
         try {
