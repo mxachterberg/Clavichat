@@ -75,6 +75,11 @@ try {
             sc_limit('temp:' . $ipTag, 20, 3600);
             json_out(['ok' => true] + SecureCom::startTemp($body));
 
+        case 'invite.info':
+            // Vor dem Beitritt: Lässt der Raum nur Konten zu? (Nur mit gültiger Einladung.)
+            sc_limit('invi:' . $ipTag, 60, 3600);
+            json_out(['ok' => true] + SecureCom::inviteInfo($body));
+
         case 'sso.who':
             // Nur mit Ticket des Dashboards (gibt es auf eigenständigen Servern nicht).
             sc_limit('sso:' . $ipTag, 30, 600);
@@ -192,6 +197,10 @@ try {
 
         case 'room.ttl':
             json_out(['ok' => true, 'room' => SecureCom::setRoomTtl($me, $body)]);
+
+        case 'room.ao':
+            // Nur Mitglieder mit Konto: an/aus (nur der Besitzer).
+            json_out(['ok' => true, 'room' => SecureCom::setRoomAccounts($me, $body)]);
 
         case 'room.invite':
             sc_limit('inv:' . $me['id'], 60, 3600);

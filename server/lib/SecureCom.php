@@ -1011,6 +1011,12 @@ class SecureCom
     {
         self::guestOnly($me, 'Gäste eines Meetings können keine Räume oder Meetings anlegen.');
         $once = !empty($b['once']);   // Einmal-Meeting: Gäste mit Link, nach ONCE_IDLE Ruhe weg
+        $tmp  = $me['k'] === 'temp' || !empty($b['tmp']) || $once;
+        // Nur Mitglieder mit Konto: nur für bleibende Räume von Konten (keine Meetings).
+        $ao   = !empty($b['ao']);
+        if ($ao && $tmp) {
+            throw new SecureComException('„Nur Mitglieder mit Konto“ gibt es nur für Räume, die ein Konto erstellt – nicht für Meetings und temporäre Räume.', 422);
+        }
         $rid  = self::idOf(self::str($b, 'id'));
         $meta = self::b64(self::str($b, 'meta'), self::MAX_META, 'Raumdaten');
         if (count(self::roomsOf($me['id'])) >= self::MAX_ROOMS) {
@@ -1033,10 +1039,11 @@ class SecureCom
             'inv' => [],
             'vc'  => [],
             // Aus einer temporären Sitzung oder ausdrücklich gewünscht: verfällt ohne Aktivität.
-            'tmp' => ($me['k'] === 'temp' || !empty($b['tmp']) || $once) ? 1 : 0,
+            'tmp' => $tmp ? 1 : 0,
             'la'  => time(),                         // letzte Aktivität
         ];
         if ($once) $room['ot'] = 1;
+        if ($ao) $room['ao'] = 1;
         self::writeJson($file, $room);
         self::addMembership($me['id'], $rid);
         return self::publicRoom($room, $me['id']);
@@ -1090,6 +1097,46 @@ class SecureCom
             $room['la'] = $now;
             return ['code' => $code, 'epoch' => (int)$room['e'], 'x' => $now + $days * 86400, 'ap' => $approve];
         });
+    }
+
+    /**
+     * Raum: „Nur Mitglieder mit Konto“ an- oder ausschalten (nur der
+     * Besitzer). Gilt für neue Beitritte – wer schon drin ist, bleibt.
+     * Einschalten nur als Konto und nicht für Meetings oder verfallende Räume.
+     */
+    public static function setRoomAccounts(array $me, array $b)
+    {
+        $rid = self::idOf(self::str($b, 'id'));
+        $on  = !empty($b['on']);
+        if ($on && $me['k'] !== 'account') {
+            throw new SecureComException('Nur ein Konto kann „Nur Mitglieder mit Konto“ einschalten.', 403);
+        }
+        return self::roomMutate($rid, function (&$room) use ($me, $on) {
+            self::requireOwner($room, $me['id']);
+            if ($on && (!empty($room['ot']) || !empty($room['tmp']))) {
+                throw new SecureComException('„Nur Mitglieder mit Konto“ gibt es nicht für Meetings und temporäre Räume.', 422);
+            }
+            if ($on) $room['ao'] = 1; else unset($room['ao']);
+            $room['la'] = time();
+            $room['rev']++;
+            return self::publicRoom($room, $me['id']);
+        });
+    }
+
+    /**
+     * Ohne Anmeldung: Lässt der Raum hinter dieser Einladung nur Konten zu?
+     * Damit zeigt die App zu einem Link gleich die Kontoerstellung statt der
+     * temporären Sitzung. Verrät nur dieses eine Merkmal und nur mit gültiger
+     * Einladung – sonst immer "ao": false (wie ein Raum ohne Merkmal). Der
+     * Beitritt selbst prüft es ohnehin (joinRoom).
+     */
+    public static function inviteInfo(array $b)
+    {
+        $rid  = self::str($b, 'id');
+        $code = self::str($b, 'code');
+        if (!preg_match('/^[A-Za-z0-9_-]{22}$/', $rid) || !preg_match('/^[A-Za-z0-9_-]{22}$/', $code)) return ['ao' => false];
+        $room = self::readJson(self::roomFile($rid), true);
+        return ['ao' => $room && !empty($room['ao']) && self::inviteValid($room, $code)];
     }
 
     /**
@@ -1165,6 +1212,10 @@ class SecureCom
             if (isset($room['pend'][$me['id']]) && !($valid && !$approve)) { $state = 'wait'; return $room; }
             if (!$valid) {
                 throw new SecureComException('Die Einladung ist ungültig oder abgelaufen.', 403);
+            }
+            // Nur Mitglieder mit Konto: temporäre Sitzungen und Gäste nicht (wer schon drin ist, bleibt).
+            if (!empty($room['ao']) && ($me['k'] !== 'account' || $guest)) {
+                throw new SecureComException('Diesem Raum treten nur Mitglieder mit Konto bei. Erstelle ein Konto oder melde dich an.', 403, ['account' => true]);
             }
             if (count($room['mem']) >= self::MAX_MEMBERS) {
                 throw new SecureComException('Der Raum ist voll.', 409);
@@ -1956,6 +2007,7 @@ class SecureCom
             'ttl'     => self::roomTtl($room),              // Aufbewahrung der Nachrichten (Sekunden)
             'tmp'     => !empty($room['tmp']),              // verfällt ohne Aktivität
             'ot'      => !empty($room['ot']),               // Einmal-Meeting (Gäste mit Link)
+            'ao'      => !empty($room['ao']),               // nur Mitglieder mit Konto treten bei
             'exp'     => !empty($room['tmp']) ? self::lastActive($room) + self::roomIdle($room) : 0,
             'members' => $members,
             'pend'    => $room['o'] === $selfId ? self::pendingList($room) : [],   // Beitrittsanfragen (nur für den Besitzer)

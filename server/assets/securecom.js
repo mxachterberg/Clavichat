@@ -1012,12 +1012,19 @@ function gateCard() { return $('sc-gate-card'); }
 function showGate(message, tab) {
   $('sc').hidden = true;
   $('sc-gate').hidden = false;
-  renderGate(tab || 'temp', message);
+  renderGate(tab || (gateAccountsOnly() ? 'register' : 'temp'), message);
   bootDone();
+}
+
+/** Offene Einladung zu einem Raum nur für Konten: keine temporäre Sitzung anbieten. */
+function gateAccountsOnly() {
+  return !!(S.pendingJoin && S.pendingJoin.ao && !S.pendingJoin.meet);
 }
 
 function renderGate(tab, message) {
   const card = gateCard();
+  const ao = gateAccountsOnly();
+  if (ao && tab === 'temp') tab = 'register';
   card.textContent = '';
   card.classList.remove('is-guest');
   card.append(
@@ -1025,14 +1032,26 @@ function renderGate(tab, message) {
     el('h1', { class: 'sc-gate-title', text: 'Sicher schreiben & telefonieren' }),
     el('p', { class: 'sc-gate-sub', text: 'Ende-zu-Ende verschlüsselt: Deine Schlüssel entstehen ' + (DESKTOP ? 'in dieser App' : 'in diesem Browser') + '. Der Server leitet nur Verschlüsseltes weiter – auch der Hoster kann nicht mitlesen oder mithören.' })
   );
-  if (S.pendingJoin) {
+  if (ao) {
+    // Ohne Einladung weiter: dann wieder mit temporärer Sitzung.
+    const drop = el('a', { href: '#', text: 'Ohne Einladung fortfahren', onclick: (ev) => {
+      ev.preventDefault();
+      S.pendingJoin = null;
+      ssSet(JOIN_KEY, null);
+      renderGate('temp');
+    } });
+    card.appendChild(el('p', { class: 'sc-gate-invite sc-gate-invite--ao', id: 'sc-gate-ao' }, icon('users', 15),
+      el('span', {}, el('strong', { text: 'Dieser Raum ist nur für Mitglieder mit Konto.' }),
+        ' Erstelle ein Konto – oder melde dich an, wenn du schon eins hast. Danach trittst du dem Raum bei. ', drop)));
+  } else if (S.pendingJoin) {
     card.appendChild(el('p', { class: 'sc-gate-invite' }, icon(S.pendingJoin.meet ? 'meet' : 'link', 15), S.pendingJoin.meet
       ? 'Du wurdest in einen Meeting-Raum eingeladen. Starte eine temporäre Sitzung (oder melde dich an) – danach bist du mit einem Klick drin.'
       : 'Du wurdest in einen Raum eingeladen. Melde dich an oder starte eine temporäre Sitzung – danach trittst du bei.'));
   }
   const tabs = el('div', { class: 'sc-tabs', role: 'tablist' });
   const panel = el('div', { class: 'sc-gate-panel' });
-  [['temp', 'Temporär'], ['login', 'Anmelden'], ['register', 'Konto erstellen']].forEach(([key, label]) => {
+  (ao ? [['register', 'Konto erstellen'], ['login', 'Anmelden']]
+    : [['temp', 'Temporär'], ['login', 'Anmelden'], ['register', 'Konto erstellen']]).forEach(([key, label]) => {
     tabs.appendChild(el('button', {
       type: 'button', role: 'tab', class: 'sc-tab', 'aria-selected': key === tab ? 'true' : 'false', text: label,
       onclick: () => renderGate(key)
@@ -2507,8 +2526,11 @@ function parseJoinFragment() {
 }
 
 async function offerPendingJoin() {
+  if (!S.pendingJoin) return;
+  // Erst den offenen Dialog fertig werden lassen (etwa „Schlüssel sichern“ gleich nach dem Erstellen eines Kontos).
+  while (modalClose && S.token) await sleep(400);
   const join = S.pendingJoin;
-  if (!join) return;
+  if (!join || !S.token) return;
   S.pendingJoin = null;
   ssSet(JOIN_KEY, null);
   if (inMeetingMode()) {
@@ -2527,6 +2549,8 @@ async function offerPendingJoin() {
     return;
   }
   if (S.rooms.has(join.rid)) { openRoom(join.rid); return; }
+  // Temporäre Sitzung, Raum nur für Konten: gleich zur Kontoerstellung anbieten.
+  if (S.mode === 'temp' && await inviteAccountsOnly(join)) { accountOnlyDialog(join); return; }
   const ok = await confirmBox('Einladung', 'Du wurdest in einen Raum eingeladen. Beitreten? Alle Mitglieder sehen dich danach in der Mitgliederliste.', 'Beitreten');
   if (ok) joinRoom(join);
 }
@@ -2589,6 +2613,11 @@ async function boot() {
   } else if (guestEnd && typeof guestEnd === 'object') {
     showGuestEnd(guestEnd);
   } else {
+    // Link zu einem Raum nur für Konten: Kontoerstellung statt temporärer Sitzung.
+    if (S.pendingJoin && !S.pendingJoin.meet) {
+      S.pendingJoin.ao = await inviteAccountsOnly(S.pendingJoin);
+      ssSet(JOIN_KEY, S.pendingJoin);
+    }
     showGate(gateNote || undefined, gateNote ? 'login' : undefined);
   }
   bootDone();
@@ -2929,6 +2958,7 @@ function renderRoomSide(head, body, room) {
   appendAll(head, room.meta.img ? el('img', { class: 'sc-side-pic', src: room.meta.img, alt: '' }) : null,
     el('span', { class: 'sc-side-title', text: room.meta.name, title: room.meta.name }),
     room.tmp ? el('span', { class: 'sc-kind', text: 'TEMP', title: tempRoomNote(room) }) : null,
+    room.ao ? el('span', { class: 'sc-kind sc-kind--ao', text: 'NUR KONTEN', title: AO_NOTE }) : null,
     iconBtn('more', 'Raum-Menü', () => roomMenu(room)));
 
   body.appendChild(sectionHead('TEXTKANÄLE', isOwner ? iconBtn('plus', 'Kanal anlegen', () => addChannel(room), { class: 'sc-ibtn sc-ibtn--tiny' }) : null));
@@ -4730,6 +4760,7 @@ async function loadRooms() {
     room.tmp = !!raw.tmp;              // aus einer temporären Sitzung: verfällt ohne Aktivität
     room.exp = Number(raw.exp) || 0;   // dann weg (Unix-Zeit), wenn bis dahin nichts passiert
     room.ot = !!raw.ot;                // Einmal-Meeting (der Server lässt Gäste mit Link hinein)
+    room.ao = !!raw.ao;                // nur Mitglieder mit Konto treten bei (setzt der Besitzer)
     room.iv = typeof raw.iv === 'number' ? raw.iv : null;   // offene Einladungen (ältere Server: unbekannt)
     // Beitrittsanfragen (nur der Besitzer bekommt sie): [{ id, t, x }]
     room.knocks = Array.isArray(raw.pend) ? raw.pend.filter((k) => k && typeof k.id === 'string' && /^[A-Za-z0-9_-]{22}$/.test(k.id)) : [];
@@ -4816,14 +4847,21 @@ function roomDialog() {
         if (tab === 'create') {
           const name = el('input', { type: 'text', maxlength: '40', placeholder: 'z. B. Projekt Nordlicht' });
           const go = el('button', { type: 'button', class: 'btn btn--primary btn--block', text: 'Raum erstellen' });
+          // Nur Konten: Räume temporärer Sitzungen verfallen ohnehin.
+          const ao = S.mode === 'account' ? el('input', { type: 'checkbox', id: 'sc-room-ao' }) : null;
           go.addEventListener('click', async () => {
             const n = cleanName(name.value);
             if (!n) { name.focus(); return; }
             go.disabled = true;
-            try { await createRoom(n); close(); } catch (e) { go.disabled = false; toast(e.message, 'error'); }
+            try { await createRoom(n, ao && ao.checked ? { ao: true } : undefined); close(); } catch (e) { go.disabled = false; toast(e.message, 'error'); }
           });
           name.addEventListener('keydown', (ev) => { if (ev.key === 'Enter') go.click(); });
           panel.append(field('Name des Raums', name, 'Name und Kanäle sind verschlüsselt – der Server sieht nur eine zufällige Kennung.'));
+          if (ao) {
+            panel.append(el('label', { class: 'sc-check sc-ao-check' }, ao,
+              el('span', {}, el('strong', { text: 'Nur Mitglieder mit Konto' }),
+                el('span', { class: 'sc-field-note', text: 'Wer einen Einladungslink ohne Konto öffnet, wird zur Kontoerstellung geführt – temporäre Sitzungen können nicht beitreten. Später im Raum-Menü änderbar.' }))));
+          }
           if (S.mode === 'temp') {
             const d = tempRoomDays();
             panel.append(el('p', { class: 'sc-note', text: 'Du bist temporär angemeldet: Diesen Raum löscht der Server nach ' + (d === 1 ? '1 Tag' : d + ' Tagen') + ' ohne Aktivität – auch wenn andere drin sind.' }));
@@ -4871,8 +4909,74 @@ async function createRoomOnly(name, opts) {
   await saveVault(true);
   // Meetings verfallen nach onceHours() Ruhe. Räume von Konten bleiben, aus
   // temporären Sitzungen verfallen sie (setzt der Server).
-  await api('room.create', once ? { id: rid, meta: meta, once: 1 } : { id: rid, meta: meta });
+  // „Nur Mitglieder mit Konto“ (ao) gibt es nur für Räume von Konten, nie für Meetings.
+  const ao = !meet && !!(opts && opts.ao) && S.mode === 'account';
+  await api('room.create', once ? { id: rid, meta: meta, once: 1 } : ao ? { id: rid, meta: meta, ao: 1 } : { id: rid, meta: meta });
   return rid;
+}
+
+/* ---------- Nur Mitglieder mit Konto ----------------------------------------
+   Der Besitzer kann einen Raum (nicht Meetings) auf Konten beschränken. Das
+   Merkmal steht offen beim Server ("ao"), der es beim Beitritt durchsetzt:
+   Temporäre Sitzungen und Gäste lehnt er ab (Antwortfeld "account"). Damit
+   die App zu einem Link gleich die Kontoerstellung zeigt statt der
+   temporären Sitzung, fragt sie vorher nach (invite.info – ohne Anmeldung,
+   nur mit gültiger Einladung). Der Link selbst bleibt unverändert, so
+   verstehen ihn auch ältere Apps. Wer schon im Raum ist, bleibt. */
+const AO_NOTE = 'Nur Mitglieder mit Konto: Neue Mitglieder brauchen ein Konto – temporäre Sitzungen können nicht beitreten. Wer schon drin ist, bleibt.';
+
+/** Lässt der Raum hinter dieser Einladung nur Konten zu? Ältere Server kennen die Frage nicht: dann nein. */
+async function inviteAccountsOnly(inv) {
+  if (!inv || inv.meet) return false;
+  try {
+    const r = await api('invite.info', { id: inv.rid, code: inv.code });
+    return r.ao === true;
+  } catch (e) {
+    return false;
+  }
+}
+
+/**
+ * Temporäre Sitzung mit einem Link zu einem Raum nur für Konten: Sitzung
+ * beenden und zur Kontoerstellung – die Einladung bleibt (sessionStorage)
+ * und wird nach Registrierung oder Anmeldung eingelöst (offerPendingJoin).
+ */
+function accountOnlyDialog(inv) {
+  openModal({
+    title: 'NUR MIT KONTO',
+    build: (body) => appendAll(body,
+      el('p', { class: 'sc-p', text: 'Diesem Raum treten nur Mitglieder mit Konto bei – mit einer temporären Sitzung geht es nicht.' }),
+      el('p', { class: 'sc-note', text: '„Konto erstellen“ beendet deine temporäre Sitzung: Der Server löscht sie samt Unterhaltungen und Raummitgliedschaften. Danach erstellst du ein Konto – oder meldest dich an, wenn du schon eins hast. Die Einladung bleibt erhalten und wird gleich danach eingelöst.' })),
+    actions: [
+      { label: 'Abbrechen', onClick: (close) => close() },
+      { label: 'Konto erstellen', primary: true, onClick: (close) => { close(); switchToAccount(inv); } }
+    ]
+  });
+}
+
+async function switchToAccount(inv) {
+  ssSet(JOIN_KEY, { rid: inv.rid, code: inv.code, key: inv.key, epoch: inv.epoch, meet: false, once: false, ao: true });
+  await clearPresence();
+  try { await api('end'); } catch (e) { /* trotzdem lokal beenden */ }
+  teardownMedia();
+  await clearStoredSession();
+  location.reload();
+}
+
+/** Raum-Menü: „Nur Mitglieder mit Konto“ an- oder ausschalten (nur der Besitzer). */
+async function roomAccountsDialog(room) {
+  const on = !room.ao;
+  const ok = await confirmBox('NUR MITGLIEDER MIT KONTO', on
+    ? 'Neue Mitglieder brauchen dann ein Konto: Wer einen Einladungslink ohne Konto öffnet, wird zur Kontoerstellung geführt, temporäre Sitzungen können nicht beitreten. Wer schon im Raum ist, bleibt – auch mit temporärer Sitzung.'
+    : 'Dann können auch temporäre Sitzungen mit einem Einladungslink beitreten.', on ? 'Einschalten' : 'Ausschalten');
+  if (!ok) return;
+  try {
+    await api('room.ao', { id: room.id, on: on ? 1 : 0 });
+    await loadRooms();
+    toast(on ? 'Nur noch Mitglieder mit Konto können beitreten.' : 'Auch temporäre Sitzungen können wieder beitreten.', 'ok');
+  } catch (e) {
+    toast(e.message, 'error');
+  }
 }
 
 /* ---------- Meetings ------------------------------------------------------------
@@ -5289,6 +5393,8 @@ async function joinRoom(inv) {
     toast('Du bist dem Raum beigetreten.', 'ok');
   } catch (e) {
     if (!S.rooms.has(inv.rid)) { delete S.vault.rooms[inv.rid]; saveVault(); }
+    // Raum nur für Konten (alter Link oder Merkmal erst später gesetzt): zur Kontoerstellung anbieten.
+    if (e.data && e.data.account && S.mode === 'temp' && !inMeetingMode()) { accountOnlyDialog(inv); return; }
     toast(e.message, 'error');
   }
 }
@@ -5311,10 +5417,14 @@ function roomMenu(room) {
         owner ? item('image', room.meta.img ? 'Raumbild ändern' : 'Raumbild festlegen', () => roomPicture(room)) : null,
         owner ? item('clock', 'Nachrichten aufbewahren: ' + ttlLabel(roomTtl(room)), () => roomTtlDialog(room)) : null,
         owner ? item('sliders', 'Sprachqualität im Raum: ' + ((AUDIO_QUALITY.find((q) => q.id === room.meta.aq) || { name: 'jeder nach Wahl' }).name), () => roomAudioDialog(room)) : null,
+        // Nur Mitglieder mit Konto: nicht für Meetings und verfallende Räume; einschalten nur als Konto.
+        owner && !meet && !room.tmp && (room.ao || S.mode === 'account')
+          ? item('users', 'Nur Mitglieder mit Konto: ' + (room.ao ? 'an' : 'aus'), () => roomAccountsDialog(room)) : null,
         owner ? item('key', 'Raumschlüssel erneuern', () => rotateRoom(room.id, true)) : null,
         item('leave', meet ? 'Meeting verlassen' : 'Raum verlassen', () => leaveRoom(room), true),
         owner ? item(once ? 'x' : 'trash', once ? 'Meeting beenden' : meet ? 'Meeting löschen' : 'Raum löschen', () => deleteRoom(room), true) : null,
         el('p', { class: 'sc-note', text: 'Schlüsselgeneration ' + room.epoch + ' · ' + room.members.length + ' Mitglieder · Besitzer: ' + displayName(S.ids.get(room.owner)) }),
+        room.ao ? el('p', { class: 'sc-note', text: AO_NOTE }) : null,
         meet && meetingExpiryNote(room) ? el('p', { class: 'sc-note', text: meetingExpiryNote(room) })
           : room.tmp ? el('p', { class: 'sc-note', text: tempRoomNote(room) }) : null);
     }
@@ -5338,14 +5448,16 @@ function inviteDialog(room) {
           out.textContent = '';
           out.append(input,
             el('button', { type: 'button', class: 'btn', onclick: () => copyText(link, 'Link') }, icon('copy', 14), 'Kopieren'),
-            el('p', { class: 'sc-note', text: 'Gilt 7 Tage, höchstens 25-mal. Wer den Link hat, kann beitreten und mitlesen – teile ihn nur über einen sicheren Weg. Nach „Raumschlüssel erneuern“ ist er ungültig.' }));
+            el('p', { class: 'sc-note', text: 'Gilt 7 Tage, höchstens 25-mal. Wer den Link hat, kann beitreten und mitlesen – teile ihn nur über einen sicheren Weg. Nach „Raumschlüssel erneuern“ ist er ungültig.' +
+              (room.ao ? ' Nur mit Konto: Wer den Link ohne Konto öffnet, wird zur Kontoerstellung geführt.' : '') }));
           input.select();
         } catch (e) { toast(e.message, 'error'); }
         mk.disabled = false;
       });
 
+      // Nur Mitglieder mit Konto: temporäre Sitzungen gar nicht erst anbieten (der Server lehnte sie ab).
       const people = [...new Set([...S.online, ...S.convs.keys()])]
-        .map((id) => S.ids.get(id)).filter((i) => i && i.id !== S.me.id && !room.members.some((m) => m.id === i.id));
+        .map((id) => S.ids.get(id)).filter((i) => i && i.id !== S.me.id && !room.members.some((m) => m.id === i.id) && !(room.ao && i.kind !== 'account'));
       const list = el('div', { class: 'sc-list' });
       for (const ident of people) {
         list.appendChild(personRow(ident, async () => {
@@ -5357,8 +5469,9 @@ function inviteDialog(room) {
           } catch (e) { toast(e.message, 'error'); }
         }));
       }
-      body.append(
+      appendAll(body,
         el('p', { class: 'sc-p', text: 'Per Link oder direkt an eine Person – dann geht die Einladung samt Raumschlüssel PGP-verschlüsselt an genau sie.' }),
+        room.ao ? el('p', { class: 'sc-gate-invite sc-ao-invite' }, icon('users', 15), 'Nur Mitglieder mit Konto: Der Link gilt nur für Konten. Wer ihn ohne Konto öffnet, wird zur Kontoerstellung geführt.') : null,
         mk, out,
         sectionHead('DIREKT EINLADEN'),
         people.length ? list : el('p', { class: 'sc-empty-note', text: 'Niemand in Reichweite. Per Schlüssel verbundene oder online sichtbare Personen erscheinen hier.' }));
@@ -8964,7 +9077,14 @@ function bind() {
     if (S.entered) offerPendingJoin();
     else if (!$('sc-gate').hidden) {
       if (S.pendingJoin && S.pendingJoin.once) showGuestJoin();
-      else renderGate('temp');
+      else {
+        // Raum nur für Konten? Dann gleich die Kontoerstellung.
+        const join = S.pendingJoin;
+        inviteAccountsOnly(join).then((ao) => {
+          if (join && S.pendingJoin === join) { join.ao = ao; ssSet(JOIN_KEY, join); }
+          if (!S.entered) renderGate(ao ? 'register' : 'temp');
+        });
+      }
     }
   });
   document.addEventListener('visibilitychange', () => {

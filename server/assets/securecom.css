@@ -1880,6 +1880,16 @@ html[data-theme="light"] .sc-modal { background: rgba(40, 40, 40, .3); }
 .sc-meet-person .sc-kind, .sc-meet-person .sc-owner { flex: none; }
 .sc-kind--guest { border-color: var(--accent); color: var(--accent); }
 
+/* ---- Nur Mitglieder mit Konto: Zeichen im Raum, Kästchen, Hinweise ------- */
+.sc-kind--ao { border-color: var(--accent); color: var(--accent); white-space: nowrap; }
+.sc-ao-check { margin-top: 2px; }
+.sc-ao-check strong { color: var(--text); font-weight: 600; }
+.sc-ao-check .sc-field-note { margin-top: 2px; }
+.sc-gate-invite--ao strong { font-weight: 600; }
+.sc-gate-invite--ao a { color: var(--accent); white-space: nowrap; }
+.sc-gate-invite--ao > .sc-ic, .sc-ao-invite > .sc-ic { flex: none; margin-top: 2px; }
+.sc-ao-invite { margin: 0 0 12px; }
+
 /* ---- Meeting-Modus (Gäste und Gastgeber von der Startseite): nur das Meeting */
 .sc-gate-card.is-guest { max-width: 430px; }
 .sc-guest-emblem { display: grid; place-items: center; width: 62px; height: 62px; margin: 6px 0 14px; border: 1px solid var(--accent); background: var(--accent-soft); color: var(--accent); }
