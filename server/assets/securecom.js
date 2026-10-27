@@ -5495,34 +5495,79 @@ async function joinRoom(inv) {
   }
 }
 
+/**
+ * Raum-Menü: oben eine Karte (Bild, Name, Merkmale, Mitglieder, Besitzer,
+ * Schlüsselgeneration), darunter Gruppen mit Abschnittsköpfen wie in den
+ * Einstellungen, ganz unten abgesetzt Verlassen und Löschen. Nicht-Besitzer
+ * sehen nur, was sie dürfen.
+ */
 function roomMenu(room) {
   if (S.guest) return;   // Gäste: nur Call und „Meeting verlassen“ in der Meeting-Karte
   const owner = room.owner === S.me.id;
   const meet = !!room.meta.meet;
   const once = isOnceMeeting(room);
   openModal({
-    title: room.meta.name.toUpperCase(),
+    title: meet ? 'MEETING' : 'RAUM',
     build: (body, close) => {
-      const item = (ic, label, fn, danger) => el('button', { type: 'button', class: 'sc-menu-item' + (danger ? ' is-danger' : ''), onclick: () => { close(); fn(); } }, icon(ic, 16), el('span', { text: label }));
-      appendAll(body,
-        room.meta.meet ? item('link', 'Meeting-Link teilen', () => meetingDialog(room)) : item('userPlus', 'Einladen', () => inviteDialog(room)),
-        S.voice && S.voice.rid === room.id ? item('leave', 'Sprachkanal verlassen', () => leaveVoice()) : item('speaker', 'Sprachkanal betreten', () => joinVoice(room.id)),
-        owner ? item('hash', 'Textkanal anlegen', () => addChannel(room)) : null,
-        owner ? item('speaker', 'Sprachkanal anlegen', () => addVoiceChannel(room)) : null,
-        owner ? item('edit', 'Raum umbenennen', () => renameRoom(room)) : null,
-        owner ? item('image', room.meta.img ? 'Raumbild ändern' : 'Raumbild festlegen', () => roomPicture(room)) : null,
-        owner ? item('clock', 'Nachrichten aufbewahren: ' + ttlLabel(roomTtl(room)), () => roomTtlDialog(room)) : null,
-        owner ? item('sliders', 'Sprachqualität im Raum: ' + ((AUDIO_QUALITY.find((q) => q.id === room.meta.aq) || { name: 'jeder nach Wahl' }).name), () => roomAudioDialog(room)) : null,
-        // Nur Mitglieder mit Konto: nicht für Meetings und verfallende Räume; einschalten nur als Konto.
-        owner && !meet && !room.tmp && (room.ao || S.mode === 'account')
-          ? item('users', 'Nur Mitglieder mit Konto: ' + (room.ao ? 'an' : 'aus'), () => roomAccountsDialog(room)) : null,
-        owner ? item('key', 'Raumschlüssel erneuern', () => rotateRoom(room.id, true)) : null,
-        item('leave', meet ? 'Meeting verlassen' : 'Raum verlassen', () => leaveRoom(room), true),
-        owner ? item(once ? 'x' : 'trash', once ? 'Meeting beenden' : meet ? 'Meeting löschen' : 'Raum löschen', () => deleteRoom(room), true) : null,
-        el('p', { class: 'sc-note', text: 'Schlüsselgeneration ' + room.epoch + ' · ' + room.members.length + ' Mitglieder · Besitzer: ' + displayName(S.ids.get(room.owner)) }),
-        room.ao ? el('p', { class: 'sc-note', text: AO_NOTE }) : null,
-        meet && meetingExpiryNote(room) ? el('p', { class: 'sc-note', text: meetingExpiryNote(room) })
-          : room.tmp ? el('p', { class: 'sc-note', text: tempRoomNote(room) }) : null);
+      const run = (fn) => () => { close(); fn(); };
+      // Kachel (Paare nebeneinander) und Zeile (mit Wert rechts oder Schalter)
+      const tile = (ic, label, fn, cls) => el('button', { type: 'button', class: 'sc-rm-tile' + (cls ? ' ' + cls : ''), onclick: run(fn) },
+        icon(ic, 16), el('span', { text: label }));
+      const row = (ic, label, fn, value, note) => el('button', { type: 'button', class: 'sc-menu-item sc-rm-row', onclick: run(fn) },
+        icon(ic, 16),
+        el('span', { class: 'sc-rm-text' }, el('span', { text: label }), note ? el('span', { class: 'sc-rm-note', text: note }) : null),
+        value ? el('span', { class: 'sc-rm-val', text: value }) : null);
+      const toggle = (ic, label, on, fn, note) => {
+        const b = row(ic, label, fn, null, note);
+        b.setAttribute('role', 'switch');
+        b.setAttribute('aria-checked', on ? 'true' : 'false');
+        b.appendChild(el('span', { class: 'sc-rm-switch' }, el('span', { class: 'sc-rm-switch-text', text: on ? 'AN' : 'AUS' }), el('span', { class: 'sc-rm-knob' })));
+        return b;
+      };
+      const pair = (a, b) => el('div', { class: 'sc-rm-pair' }, a, b);
+
+      // Karte
+      const n = room.members.length;
+      const pic = el('span', { class: 'sc-rm-pic' + (meet ? ' is-meeting' : '') },
+        room.meta.img ? el('img', { src: room.meta.img, alt: '' }) : meet ? icon('group', 20) : el('span', { text: initials(room.meta.name) }));
+      pic.style.setProperty('--hue', hueOf(C.toHex(C.unb64url(room.id)).slice(-6)));
+      const expiry = meet ? meetingExpiryNote(room) : room.tmp ? tempRoomNote(room) : '';
+      const card = el('div', { class: 'sc-rm-card' }, pic,
+        el('span', { class: 'sc-rm-id' },
+          el('span', { class: 'sc-rm-name', text: room.meta.name, title: room.meta.name }),
+          room.tmp || room.ao ? el('span', { class: 'sc-side-tags' },
+            room.ao ? el('span', { class: 'sc-side-tag sc-side-tag--ao', title: AO_NOTE }, icon('users', 11), 'NUR KONTEN') : null,
+            room.tmp ? el('span', { class: 'sc-side-tag', title: tempRoomNote(room) }, icon('clock', 11), 'TEMP') : null) : null,
+          el('span', { class: 'sc-rm-facts' },
+            el('span', { text: n + (n === 1 ? ' MITGLIED' : ' MITGLIEDER') }),
+            el('span', { text: 'BESITZER: ' + displayName(S.ids.get(room.owner)) + (owner ? ' (DU)' : '') }),
+            el('span', { text: 'SCHLÜSSEL GEN. ' + room.epoch }))));
+
+      const inVoice = S.voice && S.voice.rid === room.id;
+      const aq = AUDIO_QUALITY.find((q) => q.id === room.meta.aq);
+      // Nur Mitglieder mit Konto: nicht für Meetings und verfallende Räume; einschalten nur als Konto.
+      const aoOk = owner && !meet && !room.tmp && (room.ao || S.mode === 'account');
+      appendAll(body, el('div', { class: 'sc-rm' },
+        card,
+        expiry ? el('p', { class: 'sc-rm-hint', text: expiry }) : null,
+        sectionHead(meet ? 'TEILNEHMER & CALL' : 'MITGLIEDER & SPRACHE'),
+        pair(meet ? tile('link', 'Meeting-Link teilen', () => meetingDialog(room), 'is-accent') : tile('userPlus', 'Einladen', () => inviteDialog(room), 'is-accent'),
+          inVoice ? tile('leave', 'Sprachkanal verlassen', () => leaveVoice()) : tile(meet ? 'phone' : 'speaker', meet ? 'Call beitreten' : 'Sprachkanal betreten', () => joinVoice(room.id))),
+        owner ? sectionHead('KANÄLE') : null,
+        owner ? pair(tile('hash', 'Textkanal anlegen', () => addChannel(room)), tile('speaker', 'Sprachkanal anlegen', () => addVoiceChannel(room))) : null,
+        owner ? sectionHead('EINSTELLUNGEN') : null,
+        owner ? el('div', { class: 'sc-rm-rows' },
+          row('edit', 'Raum umbenennen', () => renameRoom(room)),
+          row('image', room.meta.img ? 'Raumbild ändern' : 'Raumbild festlegen', () => roomPicture(room), room.meta.img ? 'GESETZT' : 'KEINS'),
+          row('clock', 'Nachrichten aufbewahren', () => roomTtlDialog(room), ttlLabel(roomTtl(room)).toUpperCase()),
+          row('sliders', 'Sprachqualität im Raum', () => roomAudioDialog(room), aq ? aq.name.toUpperCase() : 'JEDER NACH WAHL'),
+          aoOk ? toggle('users', 'Nur Mitglieder mit Konto', room.ao, () => roomAccountsDialog(room), 'Neue Mitglieder brauchen ein Konto.') : null) : null,
+        owner ? sectionHead('SICHERHEIT') : null,
+        owner ? el('div', { class: 'sc-rm-rows' },
+          row('key', 'Raumschlüssel erneuern', () => rotateRoom(room.id, true), 'GEN. ' + room.epoch + ' → ' + (room.epoch + 1), 'Alte Einladungslinks werden ungültig.')) : null,
+        el('div', { class: 'sc-rm-danger' + (owner ? '' : ' is-single') },
+          tile('leave', meet ? 'Meeting verlassen' : 'Raum verlassen', () => leaveRoom(room), 'is-danger'),
+          owner ? tile(once ? 'x' : 'trash', once ? 'Meeting beenden' : meet ? 'Meeting löschen' : 'Raum löschen', () => deleteRoom(room), 'is-danger') : null)));
     }
   });
 }
