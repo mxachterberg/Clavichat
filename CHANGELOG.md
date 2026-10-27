@@ -4,6 +4,20 @@ Was sich von Version zu Version ändert. Beim Veröffentlichen wird der
 Abschnitt einer Version zum Text des GitHub-Releases
 (`.github/workflows/windows.yml`).
 
+## 1.8.6 – 27.10.2026
+
+Neues Logo. Für installierte Apps ein kleines Update – das neue Symbol der
+Programmdatei und Verknüpfungen kommt mit dem nächsten vollständigen Update
+oder einer Neuinstallation.
+
+- **Neues Logo:** ein flaches, dunkles Funkgerät mit Schlüssel als Antenne –
+  ruhiger als das alte mit hellen Umrissen. Oben links füllt es den Knopf
+  jetzt besser aus.
+- **Logo wählen:** Einstellungen → LOGO bietet Funkgerät, Kachel,
+  Sprechblase, Monogramm und das klassische Logo. Die Wahl gilt je Gerät
+  oben links, im Browser-Tab und in der Windows-App auch für Fenster,
+  Taskleiste und Infobereich.
+
 ## 1.8.5 – 27.10.2026
 
 Kleine Verbesserung der Raumansicht. Für installierte Apps ein kleines Update.
