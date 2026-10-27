@@ -4,6 +4,21 @@ Was sich von Version zu Version ändert. Beim Veröffentlichen wird der
 Abschnitt einer Version zum Text des GitHub-Releases
 (`.github/workflows/windows.yml`).
 
+## 1.8.4 – 27.10.2026
+
+Räume nur für Mitglieder mit Konto. Für installierte Apps ein kleines Update.
+
+- **Nur Mitglieder mit Konto:** Beim Erstellen eines Raums (als Konto) lässt
+  sich festlegen, dass nur Mitglieder mit Konto beitreten; der Besitzer
+  schaltet das später im Raum-Menü um. Der Raum zeigt dann NUR KONTEN.
+- **Einladungslink führt zur Kontoerstellung:** Wer einen Link zu so einem
+  Raum ohne Sitzung öffnet, landet direkt bei „Konto erstellen“ (oder
+  Anmelden) statt bei der temporären Sitzung und tritt danach bei. In einer
+  temporären Sitzung erklärt ein Dialog, warum es nicht geht, und führt zur
+  Kontoerstellung – die Einladung bleibt erhalten. Der Server lehnt
+  temporäre Sitzungen und Gäste in solchen Räumen ab; wer schon drin ist,
+  bleibt.
+
 ## 1.8.3 – 22.10.2026
 
 Updates künftig über GitHub. Für installierte Apps ein kleines Update.
