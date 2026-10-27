@@ -3430,7 +3430,6 @@ function hookNode(m, grouped) {
   appendAll(body, reactChips(m));
   node.appendChild(body);
   withMenu(node, () => messageMenu(m, node));
-  if (canReact(m)) node.appendChild(el('div', { class: 'sc-msg-actions' }, iconBtn('react', 'Reagieren', (ev) => openReactPicker(m, ev.currentTarget))));
   return node;
 }
 
@@ -3536,12 +3535,11 @@ function messageNode(m, grouped) {
   node.appendChild(body);
   withMenu(node, () => messageMenu(m, node));
 
+  // Reagieren sitzt unten links an der Nachricht (reactChips), hier nur Bearbeiten/Löschen.
   const mine = own && !m.deleted && !m.invite && m.state !== 'pending';
-  const react = canReact(m);
-  if (mine || react) {
+  if (mine) {
     node.appendChild(el('div', { class: 'sc-msg-actions' },
-      react ? iconBtn('react', 'Reagieren', (ev) => openReactPicker(m, ev.currentTarget)) : null,
-      mine && !m.file ? iconBtn('edit', 'Bearbeiten', () => editMessage(m, node)) : null,
+      !m.file ? iconBtn('edit', 'Bearbeiten', () => editMessage(m, node)) : null,
       mine ? iconBtn('trash', 'Löschen', () => deleteMessage(m)) : null));
   }
   return node;
@@ -3581,14 +3579,23 @@ function reactBar(m) {
 
 function openReactPicker(m, anchor) {
   const r = anchor.getBoundingClientRect();
-  openContextMenu(r.right - 236, r.bottom + 6, [{ bar: reactBar(m) }]);
+  openContextMenu(r.left, r.bottom + 6, [{ bar: reactBar(m) }]);
 }
 
-/** Unter der Nachricht: Symbol + Anzahl; eigene hervorgehoben, Klick schaltet um, Namen im Hinweis. */
+/**
+ * Unter der Nachricht, links beginnend: Symbol + Anzahl; eigene hervorgehoben,
+ * Klick schaltet um, Namen im Hinweis. Dahinter der Knopf „Reagieren“. Ohne
+ * Reaktionen schwebt nur dieser Knopf unten links an der Nachricht (beim
+ * Überfahren, nimmt keinen Platz ein – nichts springt); auf Touch-Geräten
+ * reagiert man wie bisher per langem Drücken.
+ */
 function reactChips(m) {
-  if (!m.rx || !m.rx.size || m.deleted) return null;
-  const box = el('div', { class: 'sc-rx-chips' });
+  if (m.deleted) return null;
   const can = canReact(m);
+  const add = () => el('button', { type: 'button', class: 'sc-rx-chip sc-rx-add', title: 'Reagieren', 'aria-label': 'Reagieren',
+    onclick: (ev) => openReactPicker(m, ev.currentTarget) }, icon('react', 15));
+  if (!m.rx || !m.rx.size) return can ? el('div', { class: 'sc-rx-chips is-float' }, add()) : null;
+  const box = el('div', { class: 'sc-rx-chips' });
   for (const [id, set] of m.rx) {
     const r = REACTIONS.find((x) => x.id === id);
     if (!r || !set.size) continue;
@@ -3601,11 +3608,9 @@ function reactChips(m) {
       onclick: () => toggleReaction(m, id)
     }, reactIcon(id, 16), el('span', { class: 'sc-rx-n', text: String(set.size) })));
   }
-  if (can && box.childNodes.length) {
-    box.appendChild(el('button', { type: 'button', class: 'sc-rx-chip sc-rx-add', title: 'Reagieren', 'aria-label': 'Reagieren',
-      onclick: (ev) => openReactPicker(m, ev.currentTarget) }, icon('react', 15)));
-  }
-  return box.childNodes.length ? box : null;
+  if (!box.childNodes.length) return can ? el('div', { class: 'sc-rx-chips is-float' }, add()) : null;
+  if (can) box.appendChild(add());
+  return box;
 }
 
 /** Reaktion setzen (on) oder zurücknehmen – unabhängig von der Reihenfolge, gleiche Meldung zweimal schadet nicht. */

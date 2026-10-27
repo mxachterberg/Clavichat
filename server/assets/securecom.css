@@ -515,7 +515,7 @@
 .sc-banner .btn { flex: none; padding: 7px 12px; }
 
 /* ---- Verlauf ------------------------------------------------------------ */
-.sc-thread { flex: 1; min-height: 0; overflow-y: auto; padding: 16px 0 10px; }
+.sc-thread { flex: 1; min-height: 0; overflow-y: auto; padding: 16px 0 14px; }
 .sc-day {
   display: flex;
   align-items: center;
@@ -549,7 +549,7 @@
   color: var(--muted);
 }
 .sc-msg:hover .sc-msg-gtime { visibility: visible; }
-.sc-msg-body { min-width: 0; }
+.sc-msg-body { position: relative; min-width: 0; }
 .sc-msg-head { display: flex; align-items: baseline; gap: 8px; margin-bottom: 3px; }
 .sc-msg-name {
   padding: 0;
@@ -650,6 +650,13 @@ html[data-theme="light"] {
 .sc-rx-add { padding: 0 6px; color: var(--muted); opacity: 0; transition: opacity .12s ease; }
 .sc-msg:hover .sc-rx-add, .sc-rx-add:focus-visible { opacity: 1; }
 @media (pointer: coarse) { .sc-rx-add { opacity: 1; } }
+/* Ohne Reaktionen: nur „Reagieren“, unten links über der Kante der Nachricht
+   (absolut – die Zeilen behalten ihre Höhe). Touch: langes Drücken. */
+.sc-rx-chips.is-float { position: absolute; left: 0; bottom: -15px; z-index: 2; margin: 0; pointer-events: none; }
+.sc-msg:hover .sc-rx-chips.is-float, .sc-rx-chips.is-float:focus-within { pointer-events: auto; }
+.sc-rx-chips.is-float .sc-rx-add { height: 24px; background: var(--panel); }
+.sc-rx-chips.is-float .sc-rx-add:hover { color: var(--text); }
+@media (pointer: coarse) { .sc-rx-chips.is-float { display: none; } }
 .sc-edit-box { display: flex; flex-direction: column; gap: 4px; }
 .sc-edit { min-height: 44px; resize: vertical; font-size: 14px; }
 .sc-edit-hint { font-family: var(--mono); font-size: 10px; color: var(--muted); }
