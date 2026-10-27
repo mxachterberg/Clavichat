@@ -3215,7 +3215,7 @@ function renderMainHead() {
       iconBtn('users', 'Mitglieder', () => { S.membersOpen = !S.membersOpen; renderAll(); }, { 'aria-pressed': S.membersOpen ? 'true' : 'false' }));
   } else {
     head.append(el('span', { class: 'sc-head-text' },
-      el('span', { class: 'sc-head-title' }, logoMark(18), 'Clavichat'),
+      el('span', { class: 'sc-head-title', text: 'Clavichat' }),
       el('span', { class: 'sc-head-sub', text: 'Ende-zu-Ende verschlüsselt' })),
       el('span', { class: 'sc-head-spacer' }),
       iconBtn('info', 'So funktioniert Clavichat', showSecurityInfo));
