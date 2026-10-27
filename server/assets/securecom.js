@@ -6004,8 +6004,118 @@ function roomPicture(room) {
         el('div', { class: 'sc-card-actions' },
           el('button', { type: 'button', class: 'btn btn--primary', onclick: () => set(false) }, icon('image', 14), 'Bild wählen'),
           room.meta.img ? el('button', { type: 'button', class: 'btn sc-btn--danger', onclick: () => set(true) }, icon('trash', 14), 'Entfernen') : null));
+      symbolPicker(body, room, close);
     }
   });
+}
+
+/* ---------- Vorgefertigte Raumsymbole ---------------------------------------
+   Statt eines Fotos: ein Symbol im Strichstil der App auf einer Farbfläche.
+   Gespeichert wird es wie ein hochgeladenes Bild – als kleines PNG
+   (128 × 128) in meta.img. So zeigen es auch ältere Apps, und es geht beim
+   Neu-Verschlüsseln (metaOf) nicht verloren. Alles eigene Zeichnungen
+   (24er-Raster, Linien wie ICONS); nie Daten von außen. */
+const ROOM_SYMBOLS = [
+  { id: 'gamepad', label: 'Controller', svg: '<path d="M6.5 8h11a4 4 0 0 1 3.9 3.1l1 4.6a2.4 2.4 0 0 1-4.1 2.1L16 15.5H8l-2.3 2.3a2.4 2.4 0 0 1-4.1-2.1l1-4.6A4 4 0 0 1 6.5 8z"/><path d="M7.5 10.3v3.4M5.8 12h3.4"/><path d="M15.5 10.8h.01M17.6 13.2h.01"/>' },
+  { id: 'block', label: 'Block', svg: '<path d="M12 2.8l8.5 4.7v9L12 21.2l-8.5-4.7v-9z"/><path d="M3.5 7.5L12 12.2l8.5-4.7M12 12.2v9"/><path d="M3.5 10.6l2.3 1.3 1.6-.5 1.8 1.6 2.8 1.6M20.5 10.6l-2.3 1.3-1.6-.5-1.8 1.6-2.8 1.6"/>' },
+  { id: 'sword', label: 'Schwert', svg: '<path d="M20.5 3.5l-.6 4.1-9.1 9.1-3.5-3.5 9.1-9.1z"/><path d="M5.3 12.3l6.4 6.4M8.5 15.5L4 20M3.3 18.7l2 2"/>' },
+  { id: 'music', label: 'Musik', svg: '<path d="M9 18V5.5l11-2v12"/><path d="M9 9.5l11-2"/><circle cx="6.5" cy="18" r="2.5"/><circle cx="17.5" cy="15.5" r="2.5"/>' },
+  { id: 'headphones', label: 'Kopfhörer', svg: ICONS.head },
+  { id: 'code', label: 'Code', svg: ICONS.code },
+  { id: 'terminal', label: 'Terminal', svg: '<rect x="2.5" y="4" width="19" height="16" rx="1"/><path d="M6.5 9.5l3 2.5-3 2.5M12 15h5"/>' },
+  { id: 'film', label: 'Film', svg: '<path d="M3 9.5h18V20H3z"/><path d="M3 9.5l-.5-3.7 17-2.6.5 3.7z"/><path d="M7.2 5.6l2.4 3M11.6 4.9l2.4 3M16 4.2l2.4 3"/>' },
+  { id: 'camera', label: 'Kamera', svg: '<path d="M3 8h3.5L8 5.5h8L17.5 8H21v11H3z"/><circle cx="12" cy="13.2" r="3.5"/>' },
+  { id: 'book', label: 'Buch', svg: '<path d="M12 6.5C10 5 7 4.5 3 5v13.5c4-.5 7 0 9 1.5 2-1.5 5-2 9-1.5V5c-4-.5-7 0-9 1.5z"/><path d="M12 6.5V20"/>' },
+  { id: 'school', label: 'Schule', svg: '<path d="M2 9l10-4.5L22 9l-10 4.5z"/><path d="M6 11v4.5c3.5 2.5 8.5 2.5 12 0V11"/><path d="M22 9v5"/>' },
+  { id: 'rocket', label: 'Rakete', svg: '<path d="M12 2.5c3.5 2.5 5 6.5 4.5 11.5h-9C7 9 8.5 5 12 2.5z"/><circle cx="12" cy="9" r="1.8"/><path d="M7.5 14L5 17.5h3.5M16.5 14l2.5 3.5h-3.5M10 17.5l2 3.5 2-3.5"/>' },
+  { id: 'heart', label: 'Herz', svg: '<path d="M12 20s-8-4.6-8-10.3A4.4 4.4 0 0 1 12 7a4.4 4.4 0 0 1 8 2.7C20 15.4 12 20 12 20z"/>' },
+  { id: 'star', label: 'Stern', svg: '<path d="M12 3l2.7 5.6 6.1.8-4.5 4.2 1.1 6.1L12 16.8l-5.4 2.9 1.1-6.1-4.5-4.2 6.1-.8z"/>' },
+  { id: 'crown', label: 'Krone', svg: '<path d="M4 16l-1-9 5 4 4-6 4 6 5-4-1 9z"/><path d="M4 19.5h16"/>' },
+  { id: 'bolt', label: 'Blitz', svg: ICONS.bolt },
+  { id: 'ball', label: 'Ball', svg: '<circle cx="12" cy="12" r="9"/><path d="M12 7.6l3.7 2.7-1.4 4.4H9.7l-1.4-4.4z"/><path d="M12 3v4.6M15.7 10.3l4.6-1.5M14.3 14.7l2.8 3.9M9.7 14.7l-2.8 3.9M8.3 10.3L3.7 8.8"/>' },
+  { id: 'coffee', label: 'Kaffee', svg: '<path d="M4 9h13v5a5 5 0 0 1-5 5H9a5 5 0 0 1-5-5z"/><path d="M17 10.5h1.5a2.5 2.5 0 0 1 0 5H17"/><path d="M8 3.5c-1 1.2 1 2 0 3.5M12 3.5c-1 1.2 1 2 0 3.5"/><path d="M3.5 21.5h14"/>' },
+  { id: 'pizza', label: 'Pizza', svg: '<path d="M12 21L3.5 6.5C8.5 3.5 15.5 3.5 20.5 6.5z"/><path d="M4.8 8.8c4.5-2.3 9.9-2.3 14.4 0"/><circle cx="10" cy="11.2" r="1.2"/><circle cx="14.2" cy="12.4" r="1.2"/><circle cx="12" cy="16" r="1"/>' },
+  { id: 'wrench', label: 'Werkzeug', svg: '<path d="M14.5 3.5a5 5 0 0 0-4.6 6.9L3.5 16.8a1.9 1.9 0 0 0 2.7 2.7l6.4-6.4a5 5 0 0 0 6.9-4.6l-2.8 2.8-2.9-.7-.7-2.9z"/>' },
+  { id: 'palette', label: 'Kunst', svg: '<path d="M12 3a9 9 0 0 0 0 18c1.4 0 2-1 1.5-2.2-.6-1.4.3-2.8 1.8-2.8H17a4 4 0 0 0 4-4c0-5-4-9-9-9z"/><circle cx="7.5" cy="11.5" r="1.2"/><circle cx="10" cy="7.3" r="1.2"/><circle cx="14.5" cy="7.3" r="1.2"/>' },
+  { id: 'globe', label: 'Welt', svg: '<circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c2.5 2.5 3.8 5.5 3.8 9s-1.3 6.5-3.8 9c-2.5-2.5-3.8-5.5-3.8-9S9.5 5.5 12 3z"/>' },
+  { id: 'home', label: 'Zuhause', svg: '<path d="M3.5 11L12 4l8.5 7"/><path d="M5.5 9.5V20h13V9.5"/><path d="M10 20v-5.5h4V20"/>' },
+  { id: 'chat', label: 'Plaudern', svg: '<path d="M4 5h16v11H9l-5 4z"/><path d="M8.5 10.5h.01M12 10.5h.01M15.5 10.5h.01"/>' }
+];
+const ROOM_COLORS = [
+  { id: 'orange', label: 'Orange', bg: '#c2410c', fg: '#fff7ed' },
+  { id: 'glow', label: 'Hellorange', bg: '#f97316', fg: '#1c1917' },
+  { id: 'graphite', label: 'Graphit', bg: '#27272a', fg: '#f97316' },
+  { id: 'blue', label: 'Blau', bg: '#35557f', fg: '#eef4fb' },
+  { id: 'green', label: 'Grün', bg: '#2f6f4f', fg: '#effaf3' },
+  { id: 'violet', label: 'Violett', bg: '#5b4a8b', fg: '#f3f0fb' },
+  { id: 'red', label: 'Rot', bg: '#a3302a', fg: '#fdf0ef' },
+  { id: 'sand', label: 'Sand', bg: '#d6c7a8', fg: '#292524' }
+];
+
+/** Symbol auf Farbfläche als SVG (nur eigene, feste Zeichen). */
+function roomSymbolSvg(sym, color, size) {
+  return '<svg xmlns="http://www.w3.org/2000/svg" width="' + size + '" height="' + size + '" viewBox="0 0 24 24">' +
+    '<rect width="24" height="24" fill="' + color.bg + '"/>' +
+    '<g transform="translate(4.8 4.8) scale(.6)" fill="none" stroke="' + color.fg + '" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">' + sym.svg + '</g></svg>';
+}
+
+/** Als Raumbild: PNG 128 × 128 (wie hochgeladene Bilder, gleiche Grenze). */
+function roomSymbolImage(sym, color) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => {
+      try {
+        const canvas = document.createElement('canvas');
+        canvas.width = canvas.height = 128;
+        canvas.getContext('2d').drawImage(img, 0, 0, 128, 128);
+        let url = canvas.toDataURL('image/png');
+        if (url.length > 22000) url = canvas.toDataURL('image/jpeg', 0.84);
+        resolve(url);
+      } catch (e) { reject(e); }
+    };
+    img.onerror = () => reject(new Error('Das Symbol ließ sich nicht zeichnen.'));
+    img.src = 'data:image/svg+xml,' + encodeURIComponent(roomSymbolSvg(sym, color, 128));
+  });
+}
+
+/** Im Dialog „Raumbild“: Symbol und Farbe wählen, Vorschau groß, dann als Raumbild speichern. */
+function symbolPicker(body, room, close) {
+  let sym = ROOM_SYMBOLS[0];
+  let color = ROOM_COLORS[0];
+  const preview = el('span', { class: 'sc-sym-preview' });
+  const grid = el('div', { class: 'sc-sym-grid', role: 'listbox', 'aria-label': 'Symbol' });
+  const colors = el('div', { class: 'sc-sym-colors', role: 'listbox', 'aria-label': 'Farbe' });
+  const name = el('span', { class: 'sc-sym-name' });
+  const draw = () => {
+    preview.innerHTML = roomSymbolSvg(sym, color, 72);
+    name.textContent = (sym.label + ' · ' + color.label).toUpperCase();
+    grid.textContent = '';
+    for (const s of ROOM_SYMBOLS) {
+      const b = el('button', { type: 'button', class: 'sc-sym', role: 'option', title: s.label, 'aria-label': s.label, 'aria-selected': s === sym ? 'true' : 'false', onclick: () => { sym = s; draw(); } });
+      b.innerHTML = roomSymbolSvg(s, color, 34);
+      grid.appendChild(b);
+    }
+    colors.textContent = '';
+    for (const c of ROOM_COLORS) {
+      const b = el('button', { type: 'button', class: 'sc-sym-color', role: 'option', title: c.label, 'aria-label': c.label, 'aria-selected': c === color ? 'true' : 'false', onclick: () => { color = c; draw(); } });
+      b.style.background = c.bg;
+      colors.appendChild(b);
+    }
+  };
+  const go = el('button', { type: 'button', class: 'btn btn--primary btn--block' }, icon('check', 14), 'Symbol übernehmen');
+  go.addEventListener('click', async () => {
+    go.disabled = true;
+    try {
+      const img = await roomSymbolImage(sym, color);
+      await updateMeta(room, metaOf(room, { img: img }));
+      close();
+      toast('Raumbild gespeichert.', 'ok');
+    } catch (e) { go.disabled = false; toast(e.message, 'error'); }
+  });
+  draw();
+  appendAll(body, sectionHead('ODER EIN SYMBOL'),
+    el('div', { class: 'sc-sym-head' }, preview, el('span', { class: 'sc-sym-side' }, name, colors)),
+    grid, go);
 }
 
 function renameRoom(room) {
