@@ -1008,6 +1008,42 @@ r = await call('room.del', { id: ctRoom, s: [sOwnerMsg], f: [bobFile] }, accToke
 ok(r.ok && r.n === 1 && r.files === 0, 'fremde Datei (Hochlader nicht im Raum) bleibt');
 await call('room.delete', { id: ctRoom }, accToken);
 
+console.log('\n== Reaktionen (verschlüsselte Einträge t „react“)');
+const rxRoom = C.randomId();
+const rxKey = await C.importRoomKey(C.newRoomKey());
+r = await call('room.create', { id: rxRoom, meta: await C.sealRoom({ t: 'meta', name: 'Reaktionen', ch: [{ id: 'c1', name: 'allgemein' }] }, rxKey, 1, rxRoom, acc.privateKey) }, accToken);
+r = await call('room.invite', { id: rxRoom }, accToken);
+r = await call('room.join', { id: rxRoom, code: r.code }, acc2Token);
+ok(r.ok, 'Raum für Reaktionen, zweites Konto ist Mitglied');
+const rxMsgId = C.randomId();
+r = await call('room.post', { id: rxRoom, k: 'msg', d: await C.sealRoom({ v: 1, t: 'msg', id: rxMsgId, from: acc2Id, room: rxRoom, ch: 'c1', ts: Date.now(), body: 'Wer kommt mit?' }, rxKey, 1, rxRoom, acc2.privateKey) }, acc2Token);
+const rxTarget = r.s;
+r = await call('room.post', { id: rxRoom, k: 'msg', d: await C.sealRoom({ v: 1, t: 'react', id: C.randomId(), from: accId, room: rxRoom, ch: 'c1', ts: Date.now(), ref: rxMsgId, r: 'rocket', on: true }, rxKey, 1, rxRoom, acc.privateKey) }, accToken);
+ok(r.ok && r.s > rxTarget, 'Besitzer reagiert (Rakete) – ein gewöhnlicher Raum-Eintrag');
+const rxSeq = r.s;
+let rxFeed = (await call('poll', { r: { [rxRoom]: { s: 0, o: 0, g: 0 } } }, acc2Token)).r[rxRoom].e;
+const rxEntry = rxFeed.find((e) => e.s === rxSeq);
+ok(rxEntry && rxEntry.k === 'msg' && Object.keys(rxEntry).sort().join() === 'd,k,s,t' && !/react|rocket/.test(JSON.stringify(rxEntry)),
+  'beim Server nur Chiffretext: k „msg“, keine Art, kein Symbol, kein Ziel');
+const rxOpen = await C.openRoom(rxEntry.d, rxKey, rxRoom, [acc.publicKey, acc2.publicKey]);
+ok(rxOpen.signer === acc.fingerprint && rxOpen.obj.t === 'react' && rxOpen.obj.ref === rxMsgId && rxOpen.obj.r === 'rocket' && rxOpen.obj.on === true,
+  'Mitglied entschlüsselt die Reaktion, Besitzer als Absender bestätigt');
+r = await call('room.post', { id: rxRoom, k: 'msg', d: await C.sealRoom({ v: 1, t: 'react', id: C.randomId(), from: accId, room: rxRoom, ch: 'c1', ts: Date.now(), ref: rxMsgId, r: 'rocket', on: false }, rxKey, 1, rxRoom, acc.privateKey) }, accToken);
+const rxOff = r.s;
+rxFeed = (await call('poll', { r: { [rxRoom]: { s: rxSeq, o: 0, g: 0 } } }, acc2Token)).r[rxRoom].e;
+ok((await C.openRoom(rxFeed.find((e) => e.s === rxOff).d, rxKey, rxRoom, [acc.publicKey])).obj.on === false, 'Zurücknehmen: on false');
+r = await call('room.del', { id: rxRoom, s: [rxTarget, rxSeq, rxOff] }, accToken);
+ok(r.ok && r.n === 3, 'Besitzer löscht die Nachricht samt ihren Reaktionen');
+await call('room.delete', { id: rxRoom }, accToken);
+// Direktnachricht: dasselbe Muster, PGP an beide
+const dmRx = await C.sealFor({ v: 1, t: 'react', id: C.randomId(), from: accId, to: acc2Id, ts: Date.now(), ref: 'x'.repeat(22), r: 'heart', on: true }, [acc2.publicKey, acc.publicKey], acc.privateKey);
+r = await call('send', { to: acc2Id, k: 'dm', d: dmRx, self: true }, accToken);
+ok(r.ok, 'Reaktion als Direktnachricht verschickt');
+r = await call('poll', { i: { s: 0, o: 0, g: 0 }, tail: 300 }, acc2Token);
+const dmRxEntry = r.i.e.filter((e) => e.k === 'dm').pop();
+const dmRxOpen = await C.openSealed(dmRxEntry.d, acc2.privateKey, [acc.publicKey]);
+ok(dmRxOpen.obj.t === 'react' && dmRxOpen.obj.r === 'heart' && dmRxOpen.signer === acc.fingerprint && !/heart/.test(JSON.stringify(dmRxEntry)), 'Empfänger entschlüsselt die Reaktion (Server sieht nur Chiffretext)');
+
 r = await call('delete', { auth: keys2.auth }, acc2Token);
 ok(r.ok, 'zweites Konto gelöscht');
 

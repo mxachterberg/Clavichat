@@ -54,6 +54,9 @@ Signaturen.
   löst einen neuen Raumschlüssel aus. Wie lange Nachrichten bleiben, legt
   jede Unterhaltung fest (1 Stunde bis 30 Tage, Standard 7 Tage) – danach
   löscht sie der Server.
+- **Reagieren** mit zwölf eigenen Symbolen (Rechtsklick oder Knopf an der
+  Nachricht) – in Räumen und Direktnachrichten, verschlüsselt wie die
+  Nachrichten selbst.
 - **Dateien und Bilder** bis 25 MB, Ende-zu-Ende verschlüsselt mit eigenem
   Schlüssel je Datei; Bilder ohne Metadaten (etwa den Aufnahmeort), mit
   Vorschau. Per Büroklammer, Hereinziehen oder Einfügen.

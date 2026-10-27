@@ -162,7 +162,9 @@ const ICONS = {
   mobile: '<rect x="7" y="3" width="10" height="18" rx="1.5"/><path d="M11 17.5h2"/>',
   clip: '<path d="M20 11.5l-8 8a5 5 0 0 1-7-7l8.5-8.5a3.3 3.3 0 0 1 4.7 4.7l-8.5 8.5a1.7 1.7 0 0 1-2.4-2.4l7.8-7.8"/>',
   file: '<path d="M6 3h8l5 5v13H6z"/><path d="M14 3v5h5"/>',
-  camSwitch: '<path d="M3 8h3.5L8 5.5h8L17.5 8H21v11H3z"/><path d="M8.6 12.6a3.5 3.5 0 0 1 6.2-1.4"/><path d="M15.4 14.4a3.5 3.5 0 0 1-6.2 1.4"/><path d="M15.2 9.4v2h-2M8.8 17.6v-2h2"/>'
+  camSwitch: '<path d="M3 8h3.5L8 5.5h8L17.5 8H21v11H3z"/><path d="M8.6 12.6a3.5 3.5 0 0 1 6.2-1.4"/><path d="M15.4 14.4a3.5 3.5 0 0 1-6.2 1.4"/><path d="M15.2 9.4v2h-2M8.8 17.6v-2h2"/>',
+  // Reagieren: Gesicht mit Plus
+  react: '<circle cx="10.5" cy="13.5" r="7.5"/><path d="M7.6 15.6a3.6 3.6 0 0 0 5.8 0M8 11.6v.4M13 11.6v.4"/><path d="M19.5 2.5v5M17 5h5"/>'
 };
 
 /* ---------- Logo ---------------------------------------------------------------
@@ -275,6 +277,43 @@ function icon(name, size) {
   // Nur feste, eigene Zeichen – nie Daten von außen.
   span.innerHTML = '<svg width="' + s + '" height="' + s + '" viewBox="0 0 24 24" fill="none" stroke="currentColor" ' +
     'stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">' + ICONS[name] + '</svg>';
+  return span;
+}
+
+/* ---------- Reaktionen ---------------------------------------------------------
+   Eigene Symbole im Strichstil der App (24er-Raster wie ICONS), jedes mit
+   einer dezenten eigenen Farbe (--rx-<id> in securecom.css, hell und dunkel).
+   Eine Reaktion ist ein verschlüsselter Eintrag wie Bearbeiten/Löschen:
+   { t: 'react', ref: Nachricht, r: Symbol, on: true|false }. Ältere Apps
+   (bis 1.8.8) kennen t 'react' nicht und übergehen ihn still. Die Kennungen
+   nie ändern – sie stehen in den Nachrichten. */
+const REACTIONS = [
+  { id: 'up', label: 'Daumen hoch', svg: '<path d="M7 10.5V20H3.5v-9.5z"/><path class="f" d="M7 11l3.4-7a1.8 1.8 0 0 1 3.3 1.5L12.8 9.5h5.7a2 2 0 0 1 2 2.4l-1.3 6.4a2 2 0 0 1-2 1.7H7z"/>' },
+  { id: 'down', label: 'Daumen runter', svg: '<g transform="rotate(180 12 12)"><path d="M7 10.5V20H3.5v-9.5z"/><path class="f" d="M7 11l3.4-7a1.8 1.8 0 0 1 3.3 1.5L12.8 9.5h5.7a2 2 0 0 1 2 2.4l-1.3 6.4a2 2 0 0 1-2 1.7H7z"/></g>' },
+  { id: 'heart', label: 'Herz', svg: '<path class="f" d="M12 20s-8-4.6-8-10.3A4.4 4.4 0 0 1 12 7a4.4 4.4 0 0 1 8 2.7C20 15.4 12 20 12 20z"/>' },
+  { id: 'laugh', label: 'Lachen', svg: '<circle class="f" cx="12" cy="12" r="9"/><path d="M7.6 10.3c.7-1.2 2-1.2 2.7 0M13.7 10.3c.7-1.2 2-1.2 2.7 0"/><path d="M7.5 13.4h9a4.5 4.5 0 0 1-9 0z"/>' },
+  { id: 'wow', label: 'Staunen', svg: '<circle class="f" cx="12" cy="12" r="9"/><path d="M7.8 7.4c.8-.7 1.9-.7 2.7 0M13.5 7.4c.8-.7 1.9-.7 2.7 0"/><path d="M9.2 10.2v.6M14.8 10.2v.6"/><circle cx="12" cy="15.4" r="2.1"/>' },
+  { id: 'sad', label: 'Traurig', svg: '<circle class="f" cx="12" cy="12" r="9"/><path d="M9 9.8v.6M15 9.8v.6"/><path d="M8.6 16.6a4.4 4.4 0 0 1 6.8 0"/><path d="M16.6 12.2c-.7 1-1 1.6-1 2a1 1 0 0 0 2 0c0-.4-.3-1-1-2z"/>' },
+  { id: 'fire', label: 'Feuer', svg: '<path class="f" d="M12 21.5c-3.9 0-7-2.7-7-6.6 0-3.6 2.7-5.8 3.9-9.4 1.7 1.5 2.4 3.2 2.4 5 1-.8 1.6-2 1.6-3.4 3 2.1 5.1 5 5.1 7.8 0 3.9-2.9 6.6-6 6.6z"/><path d="M12 21.5c-1.7 0-3-1.2-3-2.9 0-1.7 1.4-2.6 2.2-4.3 1.6 1.2 3.8 2.6 3.8 4.4 0 1.6-1.3 2.8-3 2.8z"/>' },
+  { id: 'check', label: 'Erledigt', svg: '<circle class="f" cx="12" cy="12" r="9"/><path d="M7.8 12.3l2.9 2.9 5.6-6"/>' },
+  { id: 'rocket', label: 'Rakete', svg: '<path class="f" d="M12 2.5c3.5 2.5 5 6.5 4.5 11.5h-9C7 9 8.5 5 12 2.5z"/><circle cx="12" cy="9" r="1.8"/><path d="M7.5 14L5 17.5h3.5M16.5 14l2.5 3.5h-3.5M10 17.5l2 3.5 2-3.5"/>' },
+  { id: 'eyes', label: 'Augen', svg: '<ellipse class="f" cx="8" cy="12" rx="3.6" ry="5.4"/><ellipse class="f" cx="16" cy="12" rx="3.6" ry="5.4"/><circle class="p" cx="9.2" cy="13.2" r="1.3"/><circle class="p" cx="17.2" cy="13.2" r="1.3"/>' },
+  { id: 'party', label: 'Party', svg: '<path class="f" d="M3.5 20.5l4.3-11.4 7.1 7.1z"/><path d="M6 14l4 4M12.6 4.4c.7 1.3.3 2.6-.8 3.4M19.6 11.4c-1.3-.7-2.6-.3-3.4.8"/><path d="M15.6 3.6v.01M20.4 8.4v.01M17.6 6.4l2-2M9.6 3.8l-.5-1.4M21.6 14.2l-1.4-.5"/>' },
+  { id: 'star', label: 'Stark', svg: '<path class="f" d="M12 3l2.7 5.6 6.1.8-4.5 4.2 1.1 6.1L12 16.8l-5.4 2.9 1.1-6.1-4.5-4.2 6.1-.8z"/>' }
+];
+const REACT_IDS = new Set(REACTIONS.map((r) => r.id));
+const REACT_MAX = 20;   // verschiedene Reaktionen je Nachricht (mehr zeigt die App nicht an)
+
+/** Reaktionssymbol in seiner Farbe (nur eigene, feste Zeichen). */
+function reactIcon(id, size) {
+  const r = REACTIONS.find((x) => x.id === id);
+  const s = size || 18;
+  const span = document.createElement('span');
+  span.className = 'sc-ic sc-rx';
+  span.dataset.rx = id;
+  span.setAttribute('aria-hidden', 'true');
+  span.innerHTML = '<svg width="' + s + '" height="' + s + '" viewBox="0 0 24 24" fill="none" stroke="currentColor" ' +
+    'stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">' + (r ? r.svg : '') + '</svg>';
   return span;
 }
 
@@ -2942,8 +2981,8 @@ function closeContextMenu() {
 }
 
 /**
- * Einträge: { icon | dot, label, note?, checked?, danger?, disabled?, run }
- * oder { sep: true }. opts.above: über dem Punkt öffnen (Menü unten links).
+ * Einträge: { icon | dot, label, note?, checked?, danger?, disabled?, run },
+ * { sep: true } oder { bar: Element }. opts.above: über dem Punkt öffnen (Menü unten links).
  */
 function openContextMenu(x, y, items, opts) {
   closeContextMenu();
@@ -2951,6 +2990,7 @@ function openContextMenu(x, y, items, opts) {
   for (const it of items) {
     if (!it) continue;
     if (it.sep) { menu.appendChild(el('div', { class: 'sc-ctx-sep', role: 'separator' })); continue; }
+    if (it.bar) { menu.appendChild(it.bar); continue; }   // eigener Baustein, z. B. die Reaktionsleiste
     const radio = it.checked !== undefined;
     menu.appendChild(el('button', {
       type: 'button', role: radio ? 'menuitemradio' : 'menuitem', 'aria-checked': radio ? String(!!it.checked) : null,
@@ -3354,8 +3394,10 @@ function hookNode(m, grouped) {
       el('time', { text: fmtTime(m.ts), title: new Date(m.ts).toLocaleString('de-DE') })));
   }
   body.appendChild(el('div', { class: 'sc-msg-text' }, linkify(m.body)));
+  appendAll(body, reactChips(m));
   node.appendChild(body);
   withMenu(node, () => messageMenu(m, node));
+  if (canReact(m)) node.appendChild(el('div', { class: 'sc-msg-actions' }, iconBtn('react', 'Reagieren', (ev) => openReactPicker(m, ev.currentTarget))));
   return node;
 }
 
@@ -3369,7 +3411,10 @@ function messageMenu(m, node) {
   const room = S.view.kind === 'room' ? S.rooms.get(S.view.rid) : null;
   const admin = !!(room && room.owner === S.me.id && S.cfg && S.cfg.rdel);
   const ready = !m.deleted && m.state !== 'pending';
+  const react = canReact(m);
   return [
+    react ? { bar: reactBar(m) } : null,
+    react ? { sep: true } : null,
     m.body && !m.deleted && !m.file ? { icon: 'copy', label: 'Text kopieren', run: () => copyText(m.body, 'Text') } : null,
     own && ready && !m.file && !m.invite && !m.hook ? { icon: 'edit', label: 'Bearbeiten', run: () => editMessage(m, node) } : null,
     own && ready && !m.invite && !admin ? { icon: 'trash', label: 'Löschen', danger: true, run: () => deleteMessage(m) } : null,
@@ -3452,15 +3497,144 @@ function messageNode(m, grouped) {
   }
   if (m.invite && !m.deleted) body.appendChild(inviteCard(m));
   if (m.state === 'failed') body.appendChild(el('span', { class: 'sc-msg-state', text: 'Nicht gesendet' }));
+  appendAll(body, reactChips(m));
   node.appendChild(body);
   withMenu(node, () => messageMenu(m, node));
 
-  if (own && !m.deleted && !m.invite && m.state !== 'pending') {
+  const mine = own && !m.deleted && !m.invite && m.state !== 'pending';
+  const react = canReact(m);
+  if (mine || react) {
     node.appendChild(el('div', { class: 'sc-msg-actions' },
-      m.file ? null : iconBtn('edit', 'Bearbeiten', () => editMessage(m, node)),
-      iconBtn('trash', 'Löschen', () => deleteMessage(m))));
+      react ? iconBtn('react', 'Reagieren', (ev) => openReactPicker(m, ev.currentTarget)) : null,
+      mine && !m.file ? iconBtn('edit', 'Bearbeiten', () => editMessage(m, node)) : null,
+      mine ? iconBtn('trash', 'Löschen', () => deleteMessage(m)) : null));
   }
   return node;
+}
+
+/* ---------- Reaktionen: Leiste, Chips, Senden ---------------------------------- */
+/** Darf ich auf diese Nachricht reagieren? (Raum oder angenommene Unterhaltung, nicht gelöscht, schon gesendet) */
+function canReact(m) {
+  if (!m || m.sys || m.deleted || m.state === 'pending' || m.state === 'failed' || m.invite) return false;
+  if (S.view.kind === 'dm') {
+    const ident = S.ids.get(S.view.peer);
+    return !!ident && !ident.changed && !isBlocked(ident) && !isRequest(S.view.peer);
+  }
+  if (S.view.kind !== 'room') return false;
+  const room = S.rooms.get(S.view.rid);
+  return !!room && !!roomKeyRaw(room.id, room.epoch);
+}
+
+function hasMyReaction(m, id) {
+  const set = m.rx && m.rx.get(id);
+  return !!(set && set.has(S.me.id));
+}
+
+/** Alle Symbole zum Antippen (Kontextmenü und Knopf „Reagieren“). */
+function reactBar(m) {
+  const bar = el('div', { class: 'sc-rx-bar', role: 'group', 'aria-label': 'Reagieren' });
+  for (const r of REACTIONS) {
+    const mine = hasMyReaction(m, r.id);
+    bar.appendChild(el('button', {
+      type: 'button', class: 'sc-rx-pick' + (mine ? ' is-mine' : ''), title: r.label + (mine ? ' (entfernen)' : ''),
+      'aria-label': r.label, 'aria-pressed': mine ? 'true' : 'false',
+      onclick: () => { closeContextMenu(); toggleReaction(m, r.id); }
+    }, reactIcon(r.id, 22)));
+  }
+  return bar;
+}
+
+function openReactPicker(m, anchor) {
+  const r = anchor.getBoundingClientRect();
+  openContextMenu(r.right - 236, r.bottom + 6, [{ bar: reactBar(m) }]);
+}
+
+/** Unter der Nachricht: Symbol + Anzahl; eigene hervorgehoben, Klick schaltet um, Namen im Hinweis. */
+function reactChips(m) {
+  if (!m.rx || !m.rx.size || m.deleted) return null;
+  const box = el('div', { class: 'sc-rx-chips' });
+  const can = canReact(m);
+  for (const [id, set] of m.rx) {
+    const r = REACTIONS.find((x) => x.id === id);
+    if (!r || !set.size) continue;
+    const names = [...set].map((who) => (who === S.me.id ? 'Du' : displayName(S.ids.get(who))));
+    const mine = set.has(S.me.id);
+    box.appendChild(el('button', {
+      type: 'button', class: 'sc-rx-chip' + (mine ? ' is-mine' : ''), disabled: !can,
+      title: r.label + ': ' + (names.length > 12 ? names.slice(0, 12).join(', ') + ' und ' + (names.length - 12) + ' weitere' : names.join(', ')),
+      'aria-pressed': mine ? 'true' : 'false',
+      onclick: () => toggleReaction(m, id)
+    }, reactIcon(id, 16), el('span', { class: 'sc-rx-n', text: String(set.size) })));
+  }
+  if (can && box.childNodes.length) {
+    box.appendChild(el('button', { type: 'button', class: 'sc-rx-chip sc-rx-add', title: 'Reagieren', 'aria-label': 'Reagieren',
+      onclick: (ev) => openReactPicker(m, ev.currentTarget) }, icon('react', 15)));
+  }
+  return box.childNodes.length ? box : null;
+}
+
+/** Reaktion setzen (on) oder zurücknehmen – unabhängig von der Reihenfolge, gleiche Meldung zweimal schadet nicht. */
+function setReaction(m, id, who, on) {
+  if (!REACT_IDS.has(id) || typeof who !== 'string') return;
+  const rx = m.rx || (m.rx = new Map());
+  let set = rx.get(id);
+  if (on) {
+    if (!set) {
+      if (rx.size >= REACT_MAX) return;
+      set = new Set();
+      rx.set(id, set);
+    }
+    set.add(who);
+  } else if (set) {
+    set.delete(who);
+    if (!set.size) rx.delete(id);
+  }
+}
+
+/**
+ * Reaktion aus dem Verlauf: Ziel-Nachricht da → anwenden, sonst merken (die
+ * Nachricht kann noch auf ihren Schlüssel warten). holder: Raum oder Unterhaltung.
+ */
+function noteReaction(holder, obj, who) {
+  if (typeof obj.ref !== 'string' || obj.ref.length > 64 || !REACT_IDS.has(obj.r)) return;
+  const on = obj.on !== false && obj.on !== 0;
+  const m = holder.byId.get(obj.ref);
+  if (m) { setReaction(m, obj.r, who, on); scheduleRender(); return; }
+  const wait = holder.rxWait || (holder.rxWait = new Map());
+  if (!wait.has(obj.ref) && wait.size >= 500) return;
+  if (!wait.has(obj.ref)) wait.set(obj.ref, []);
+  const list = wait.get(obj.ref);
+  if (list.length < 200) list.push([obj.r, who, on]);
+}
+
+/** Gemerkte Reaktionen an eine gerade angekommene Nachricht hängen. */
+function takeReactions(holder, m) {
+  const list = holder.rxWait && holder.rxWait.get(m.id);
+  if (!list) return;
+  holder.rxWait.delete(m.id);
+  for (const [id, who, on] of list) setReaction(m, id, who, on);
+}
+
+async function toggleReaction(m, id) {
+  if (!REACT_IDS.has(id)) return;
+  const view = Object.assign({}, S.view);
+  const on = !hasMyReaction(m, id);
+  if (on && m.rx && !m.rx.has(id) && m.rx.size >= REACT_MAX) { toast('Mehr als ' + REACT_MAX + ' verschiedene Reaktionen gehen nicht.', 'error'); return; }
+  setReaction(m, id, S.me.id, on);   // gleich zeigen, der Server bestätigt
+  scheduleRender();
+  try {
+    const obj = { t: 'react', ref: m.id, r: id, on: on };
+    if (view.kind === 'dm') await sendDmEvent(view.peer, obj);
+    else {
+      const room = S.rooms.get(view.rid);
+      if (!room) throw new Error('Raum nicht gefunden.');
+      await postRoom(room, Object.assign(obj, { ch: view.ch }));
+    }
+  } catch (e) {
+    setReaction(m, id, S.me.id, !on);
+    scheduleRender();
+    toast(e.message, 'error');
+  }
 }
 
 function inviteCard(m) {
@@ -4502,6 +4676,8 @@ function handleDm(obj, from, e) {
   // Älter als die Aufbewahrung der Unterhaltung: nicht zeigen, beim Server löschen.
   if (ts + convTtl(peer) * 1000 < serverNow()) { noteExpired(e.s); return; }
   if ((S.vault.cleared[peer] || 0) >= ts) return;   // Unterhaltung hier gelöscht
+  // Reaktion: nur an eine vorhandene Unterhaltung (legt keine neue an, ist keine Anfrage)
+  if (obj.t === 'react') { const c = S.convs.get(peer); if (c) noteReaction(c, obj, from.id); return; }
   const conv = convOf(peer);
   if (from.id !== S.me.id) {
     if (obj.t === 'msg' || obj.t === 'invite') noteRequest(peer, ts);
@@ -4535,6 +4711,7 @@ function handleDm(obj, from, e) {
       }
       insertSorted(conv.msgs, m);
       conv.byId.set(m.id, m);
+      takeReactions(conv, m);
       conv.last = Math.max(conv.last, ts);
       if (from.id !== S.me.id && ts > (S.vault.reads['dm:' + peer] || 0)) {
         const req = isRequest(peer);   // Anfrage: ohne Ton, ohne Namen
@@ -6599,9 +6776,11 @@ function roomMessage(room, obj, from, e) {
   if (ts + chanTtl(room, ch) * 1000 < serverNow()) return;   // älter als die Aufbewahrung des Kanals
   const ref = typeof obj.ref === 'string' ? room.byId.get(obj.ref) : null;
   // Nummern von Änderungen merken: Bekommt der Kanal eine eigene Aufbewahrung, ordnet der Besitzer sie mit zu.
-  if ((obj.t === 'edit' || obj.t === 'del') && ref && ref.from === from.id && e.s) (ref.xs || (ref.xs = [])).push(e.s);
+  // Reaktionen anderer zählen mit (Löschen der Nachricht nimmt sie mit).
+  if ((((obj.t === 'edit' || obj.t === 'del') && ref && ref.from === from.id) || (obj.t === 'react' && ref)) && e.s) (ref.xs || (ref.xs = [])).push(e.s);
   if (obj.t === 'edit') { if (ref && ref.from === from.id) { ref.body = cleanText(obj.body); ref.edited = true; } scheduleRender(); return; }
   if (obj.t === 'del') { if (ref && ref.from === from.id) ref.deleted = true; scheduleRender(); return; }
+  if (obj.t === 'react') { noteReaction(room, obj, from.id); return; }
   if (obj.t !== 'msg') return;
   const existing = room.byId.get(obj.id);
   if (existing) {
@@ -6624,6 +6803,7 @@ function roomMessage(room, obj, from, e) {
   room.msgs.set(ch, list);
   insertSorted(list, m);
   room.byId.set(m.id, m);
+  takeReactions(room, m);
   if (from.id !== S.me.id && ts > (S.vault.reads['room:' + room.id + ':' + ch] || 0)) {
     noteArrival('room:' + room.id + ':' + ch, ts, isViewing('room', room.id, ch), () => {
       room.unread.set(ch, (room.unread.get(ch) || 0) + 1);
@@ -6666,6 +6846,7 @@ async function roomHook(room, e) {
   room.msgs.set(ch, list);
   insertSorted(list, m);
   room.byId.set(id, m);
+  takeReactions(room, m);
   if (ts > (S.vault.reads['room:' + room.id + ':' + ch] || 0)) {
     noteArrival('room:' + room.id + ':' + ch, ts, isViewing('room', room.id, ch), () => {
       room.unread.set(ch, (room.unread.get(ch) || 0) + 1);
