@@ -28,12 +28,25 @@ const path = require('node:path');
 const zlib = require('node:zlib');
 const { KEY_FILE, publicKeyOf } = require('./update-key');
 const { version } = require('../package.json');
-const electron = require('../node_modules/electron/package.json').version;
 
 function fail(message) {
   console.error('Abbruch: ' + message);
   process.exit(1);
 }
+
+// Electron-Fassung des Builds: aus node_modules, ohne node_modules (Signier-
+// Job in GitHub Actions, dort läuft bewusst kein npm ci) aus package-lock.json
+// – npm ci installiert genau diese Fassung.
+function electronVersion() {
+  try {
+    return require('../node_modules/electron/package.json').version;
+  } catch (e) {
+    const entry = (require('../package-lock.json').packages || {})['node_modules/electron'];
+    if (!entry || !entry.version) fail('Electron-Fassung weder in node_modules noch in package-lock.json gefunden.');
+    return entry.version;
+  }
+}
+const electron = electronVersion();
 
 // Die App zeigt höchstens 12 Stichpunkte zu je 400 Zeichen und schneidet
 // hart ab (updater.js) – deshalb hier vorher an einer Wortgrenze kürzen.

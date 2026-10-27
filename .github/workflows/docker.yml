@@ -16,11 +16,17 @@ jobs:
   image:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # Vor dem Anmelden: Dieser Container läuft mit --privileged und soll das
+      # Token für ghcr.io nie zu sehen bekommen. Festgelegt per Digest
+      # (tonistiigi/binfmt:qemu-v10.2.3, am 08.06.2026 auch :latest). Neue
+      # Fassung: Digest des Tags aus Docker Hub übernehmen.
+      - name: Emulation für arm64
+        run: docker run --privileged --rm tonistiigi/binfmt:qemu-v10.2.3@sha256:400a4873b838d1b89194d982c45e5fb3cda4593fbfd7e08a02e76b03b21166f0 --install arm64
       - name: Anmelden bei ghcr.io
         run: echo "${{ github.token }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
-      - name: Emulation für arm64
-        run: docker run --privileged --rm tonistiigi/binfmt --install arm64
       - name: Bauen und hochladen
         run: |
           IMAGE="ghcr.io/${GITHUB_REPOSITORY,,}"
