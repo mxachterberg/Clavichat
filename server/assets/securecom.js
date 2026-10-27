@@ -5871,7 +5871,8 @@ function hooksDialog(room, fresh) {
           el('div', { class: 'sc-card-actions' },
             el('button', { type: 'button', class: 'btn btn--primary', onclick: () => copyText(fresh.access, 'Zugang') }, icon('copy', 14), 'Kopieren')),
           el('p', { class: 'sc-note', text: 'Wird nur jetzt angezeigt – danach nie wieder (nur widerrufen und neu anlegen). Wer ihn hat, kann in #' + chName(fresh.ch) + ' posten: Aufbewahren wie ein Passwort, nicht in Code oder Protokolle schreiben.' }),
-          el('p', { class: 'sc-hook-cli', text: 'node tools/clavichat-post.mjs "<zugang>" "Hallo"' })));
+          el('p', { class: 'sc-note', text: 'So nutzt du ihn: Zugang in die Umgebungsvariable CLAVICHAT_HOOK legen und mit dem Werkzeug aus dem Clavichat-Repository posten (Node 18 oder neuer, keine Installation):' }),
+          hookCodeLine('echo "Hallo" | CLAVICHAT_HOOK="<zugang>" node tools/clavichat-post.mjs')));
         setTimeout(() => input.select(), 60);
       }
 
@@ -5919,9 +5920,50 @@ function hooksDialog(room, fresh) {
       } else {
         appendAll(body, el('p', { class: 'sc-note', text: 'Mehr als ' + HOOK_LIMIT + ' Zugänge je Raum gehen nicht – widerrufe einen, um einen neuen anzulegen.' }));
       }
-      appendAll(body, el('p', { class: 'sc-note sc-hook-foot', text: 'Den Leseschlüssel eines Zugangs kennen alle Mitglieder – auch ehemalige. Nach dem Entfernen von Mitgliedern Zugang bei Bedarf widerrufen und neu anlegen.' }));
+      appendAll(body, hookGuide(!hookCount(room) && !fresh),
+        el('p', { class: 'sc-note sc-hook-foot', text: 'Den Leseschlüssel eines Zugangs kennen alle Mitglieder – auch ehemalige. Nach dem Entfernen von Mitgliedern Zugang bei Bedarf widerrufen und neu anlegen.' }));
     }
   });
+}
+
+/** README-Abschnitt „Beiträge per API (nur posten)“ (GitHub-Anker). */
+const HOOK_DOCS_ANCHOR = '#beitr%C3%A4ge-per-api-nur-posten';
+
+/** Befehlszeile mit Kopier-Knopf. */
+function hookCodeLine(code) {
+  return el('div', { class: 'sc-hook-code' },
+    el('code', { text: code }),
+    iconBtn('copy', 'Befehl kopieren', () => copyText(code, 'Befehl')));
+}
+
+/**
+ * Anleitung im Dialog „API-Zugang“: aufklappbar, offen solange es noch
+ * keinen Zugang gibt. Grenzen wie beim Server (MAX_HOOKS, MAX_HOOK,
+ * hook.post in api.php: 20 je Minute, 300 je Stunde).
+ */
+function hookGuide(open) {
+  const step = (n, title, ...rest) => el('li', { class: 'sc-hook-step' },
+    el('span', { class: 'sc-hook-step-n', text: String(n) }),
+    el('div', { class: 'sc-hook-step-body' }, el('span', { class: 'sc-hook-step-title', text: title }), ...rest));
+  const text = (t) => el('p', { class: 'sc-hook-step-text', text: t });
+  const det = el('details', { class: 'sc-hook-guide' },
+    el('summary', { class: 'sc-hook-guide-head' },
+      el('span', { class: 'sq' }), el('span', { class: 'label', text: 'SO FUNKTIONIERT’S' }), el('span', { class: 'rule' }), icon('chevron', 14)),
+    el('ol', { class: 'sc-hook-steps' },
+      step(1, 'Was ist ein API-Zugang?',
+        text('Skripte oder Bots – etwa ein Server-Status oder ein KI-Assistent – posten damit in einen Kanal. Nur posten, nie lesen. Der Server sieht nur Chiffretext, die Beiträge tragen das Zeichen API.')),
+      step(2, 'Anlegen',
+        text('Unter NEUER ZUGANG Name und Kanal wählen. Der Zugang wird genau einmal angezeigt: kopieren und sicher aufbewahren – wer ihn hat, kann posten. Verloren? Hier widerrufen und neu anlegen.')),
+      step(3, 'Posten',
+        text('Mit dem Werkzeug tools/clavichat-post.mjs aus dem Clavichat-Repository – Node 18 oder neuer genügt, keine Installation:'),
+        hookCodeLine('node tools/clavichat-post.mjs "<zugang>" "Wartung um 22 Uhr"'),
+        text('Ohne Zugang in Befehlszeile und Shell-Verlauf – über die Umgebungsvariable, Text von stdin:'),
+        hookCodeLine('echo "Backup fertig" | CLAVICHAT_HOOK="<zugang>" node tools/clavichat-post.mjs'),
+        el('a', { class: 'sc-update-link', href: REPO_URL + HOOK_DOCS_ANCHOR, target: '_blank', rel: 'noopener noreferrer', text: 'Anleitung auf GitHub ↗' })),
+      step(4, 'Grenzen',
+        text('Höchstens ' + HOOK_LIMIT + ' Zugänge je Raum, je Zugang 20 Beiträge pro Minute und 300 pro Stunde, etwa 16 KB Text je Beitrag. Widerrufen geht jederzeit hier.'))));
+  if (open) det.open = true;
+  return det;
 }
 
 /** Zugang anlegen: erst beim Server (prüft Besitzer, Konto, Grenze), dann in die Raumdaten. Gibt den Zugang (Text) zurück. */

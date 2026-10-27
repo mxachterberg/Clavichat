@@ -1368,8 +1368,28 @@ html[data-theme="light"] .sc-modal { background: rgba(40, 40, 40, .3); }
 .sc-hook-secret { width: 100%; resize: none; font-family: var(--mono); font-size: 11px; line-height: 1.5; word-break: break-all; }
 .sc-hook-new .sc-card-actions { margin: 8px 0 10px; }
 .sc-hook-new .sc-note { margin-bottom: 8px; }
-.sc-hook-cli { margin: 0; font-family: var(--mono); font-size: 10.5px; color: var(--muted); overflow-wrap: anywhere; }
 .sc-hook-foot { margin-top: 14px; }
+/* Befehlszeile mit Kopier-Knopf */
+.sc-hook-code { display: flex; align-items: center; gap: 6px; margin: 2px 0 8px; padding: 4px 4px 4px 10px; border: 1px solid var(--border-soft); background: color-mix(in srgb, var(--text) 4%, transparent); }
+.sc-hook-code code { flex: 1; min-width: 0; font-family: var(--mono); font-size: 11px; line-height: 1.5; color: var(--text-body); overflow-wrap: anywhere; }
+/* Anleitung „SO FUNKTIONIERT’S“ (aufklappbar) */
+.sc-hook-guide { margin: 14px 0 0; }
+.sc-hook-guide-head { display: flex; align-items: center; gap: 10px; cursor: pointer; list-style: none; user-select: none; }
+.sc-hook-guide-head::-webkit-details-marker { display: none; }
+.sc-hook-guide-head .sq { width: 7px; height: 7px; flex: none; background: var(--accent); }
+.sc-hook-guide-head .label { font-family: var(--mono); font-size: 10.5px; letter-spacing: .14em; color: var(--muted); }
+.sc-hook-guide-head .rule { flex: 1; height: 1px; background: var(--border); }
+.sc-hook-guide-head .sc-ic { flex: none; color: var(--muted); transform: rotate(-90deg); transition: transform .15s; }
+.sc-hook-guide[open] > .sc-hook-guide-head .sc-ic { transform: none; }
+.sc-hook-guide-head:hover .label, .sc-hook-guide-head:hover .sc-ic { color: var(--accent); }
+.sc-hook-guide-head:focus-visible { outline: 1px solid var(--accent); outline-offset: 3px; }
+.sc-hook-steps { display: flex; flex-direction: column; gap: 12px; margin: 12px 0 0; padding: 0; list-style: none; }
+.sc-hook-step { display: flex; gap: 12px; }
+.sc-hook-step-n { display: inline-flex; flex: none; align-items: center; justify-content: center; width: 22px; height: 22px; border: 1px solid var(--accent); font-family: var(--mono); font-size: 11px; color: var(--accent); }
+.sc-hook-step-body { display: flex; flex: 1; flex-direction: column; gap: 4px; min-width: 0; }
+.sc-hook-step-title { font-size: 13.5px; font-weight: 600; color: var(--text); }
+.sc-hook-step-text { margin: 0; font-size: 12.5px; line-height: 1.55; color: var(--muted); }
+.sc-hook-step .sc-update-link { font-size: 12.5px; }
 
 /* Gefahrenbereich: abgesetzt, rot */
 .sc-rm-danger { margin-top: 18px; padding-top: 14px; border-top: 1px solid var(--border-soft); }
