@@ -4,6 +4,14 @@ Was sich von Version zu Version ändert. Beim Veröffentlichen wird der
 Abschnitt einer Version zum Text des GitHub-Releases
 (`.github/workflows/windows.yml`).
 
+## 1.8.5 – 27.10.2026
+
+Kleine Verbesserung der Raumansicht. Für installierte Apps ein kleines Update.
+
+- **Raumname oben links:** Der Name steht in voller Breite; die Merkmale
+  NUR KONTEN und TEMP stehen klein mit Symbol darunter, statt den Namen als
+  Kasten daneben abzuschneiden.
+
 ## 1.8.4 – 27.10.2026
 
 Räume nur für Mitglieder mit Konto. Für installierte Apps ein kleines Update.
