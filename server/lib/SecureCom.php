@@ -129,6 +129,13 @@ class SecureCom
     // Wer davon eins hat, darf die (verschlüsselten) Raumdaten neu schreiben.
     const P_META      = self::P_CHANNELS | self::P_ROOM | self::P_HOOKS | self::P_ROLES | self::P_ADMIN;
     const MAX_SIGNAL    = 49152;
+    const MAX_REACT     = 4096;      // Reaktion ohne Schreibrecht (verschlüsselt, Base64) – echte sind gut 1 KB
+    // Anruf-Signale im Raumverlauf: je Fenster (SIGNAL_TTL) höchstens so viele
+    // Byte je Absender bzw. je Raum. Sie verfallen nach zwei Minuten und
+    // dürfen ältere Nachrichten nie verdrängen (siehe dropOldest).
+    const SIG_SENDER    = 1572864;   // 1,5 MB: ein voller Sprachkanal (8) samt Neuverbindungen
+    const SIG_ROOM      = 6291456;   // 6 MB
+    const RATE_KEEP     = 172800;    // Ratenbegrenzung: Dateien ohne Treffer seit zwei Tagen weg (größtes Fenster: 1 Tag)
     const MAX_CARD      = 4096;
     const MAX_PUB       = 16384;
     const MAX_WRAPPED   = 65536;
@@ -179,6 +186,16 @@ class SecureCom
     public static function permanentBytes()
     {
         return max(1, min(64, (int)cfg('securecom_permanent_mb', 16))) * 1048576;
+    }
+
+    /**
+     * Raumverlauf „Permanent“: so viele Megabyte darf ein Mitglied (bzw. ein
+     * API-Zugang) je Stunde anhängen (Standard 2). Ohne Grenze könnte ein
+     * einzelnes Mitglied den ganzen Verlauf in Minuten hinausdrängen.
+     */
+    public static function memberHourBytes()
+    {
+        return max(1, min(64, (int)cfg('securecom_permanent_member_mb', 2))) * 1048576;
     }
 
     public static function accessCode()
@@ -1475,6 +1492,10 @@ class SecureCom
         $c  = $kind === 'msg' ? self::taggedChannel($room, $b['c'] ?? '') : '';
         if ($rx) {
             self::requirePerm($room, $me['id'], self::P_REACT, 'Du darfst in diesem Raum nicht reagieren.');
+            // Ohne Schreibrecht nur so groß wie eine Reaktion – sonst wäre rx ein Umweg zum Schreiben.
+            if (strlen($data) > self::MAX_REACT && !self::canWrite($room, $me['id'], $c)) {
+                throw new SecureComException('Reaktion zu groß.', 413);
+            }
         } elseif ($kind === 'msg' && !self::canWrite($room, $me['id'], $c)) {
             throw new SecureComException('Hier darfst du nicht schreiben.', 403);
         }
@@ -1487,6 +1508,15 @@ class SecureCom
         if ($kind === 'sig') {
             $to = self::idOf(self::str($b, 'to'));
             if (!isset($room['mem'][$to])) throw new SecureComException('Kein Mitglied dieses Raums.', 404);
+            // Signale gibt es nur für Sprachkanäle: Recht „Sprache“ und Absender
+            // oder Empfänger gerade in einem Sprachkanal dieses Raums.
+            if (!(self::permsOf($room, $me['id']) & (self::P_VOICE | self::P_ADMIN))) {
+                throw new SecureComException('Du darfst in diesem Raum keine Sprachkanäle betreten.', 403);
+            }
+            $inVoice = array_merge([], ...array_values(self::voiceMap($room)));
+            if (!in_array($me['id'], $inVoice, true) && !in_array($to, $inVoice, true)) {
+                throw new SecureComException('Signale gibt es nur im Sprachkanal.', 409);
+            }
             $entry['x']  = time() + self::SIGNAL_TTL;
             $entry['to'] = $to;
         } else {
@@ -1498,7 +1528,7 @@ class SecureCom
             if ($rx) $entry['r'] = 1;                         // nur als Reaktion geprüft
         }
         $entry['d'] = $data;
-        return ['s' => self::feedAppend($rid, $room, $entry)];
+        return ['s' => self::feedAppend($rid, $room, $entry, $me['id'])];
     }
 
     /**
@@ -1615,6 +1645,8 @@ class SecureCom
             if (!$owner && (int)$room['rl'][$r]['o'] >= $top) {
                 throw new SecureComException('Du kannst nur Ränge unterhalb deines eigenen löschen.', 403);
             }
+            // Wie beim Vergeben: nur Ränge, deren Rechte man selbst alle hat.
+            if (!$owner) self::requireGrantable(0, (int)$room['rl'][$r]['p'], $mine);
             unset($room['rl'][$r]);
             foreach ((array)($room['mr'] ?? []) as $id => $list) {
                 $list = array_values(array_diff((array)$list, [$r]));
@@ -1666,6 +1698,10 @@ class SecureCom
                 if ($member !== $me['id'] && self::topOf($room, $member) >= $top) {
                     throw new SecureComException('Du kannst nur Mitgliedern mit niedrigerem Rang Ränge geben oder nehmen.', 403);
                 }
+                // Geben und Nehmen nur für Ränge, deren Rechte man selbst alle hat –
+                // sonst verschaffte sich „Ränge verwalten“ über einen tiefer
+                // stehenden Rang mit mehr Rechten (etwa Administrator) alles.
+                self::requireGrantable(0, (int)$room['rl'][$r]['p'], $mine);
             }
             $list = self::rolesOf($room, $member);
             if ($on && !in_array($r, $list, true)) $list[] = $r;
@@ -1782,10 +1818,15 @@ class SecureCom
      * mit dem öffentlichen Schlüssel des Zugangs, siehe securecom-core.js).
      * Jeder Fehler beim Zugang selbst heißt gleich, damit nichts verrät, ob
      * es Raum oder Zugang gibt. Antwort: nur "ok".
+     *
+     * $limit (aus api.php) zählt die Grenzen je Zugang – erst NACH bestandener
+     * Token-Prüfung, mit hookTag(). Sonst könnte jeder, der Raum- und
+     * Zugangskennung kennt, mit falschen Tokens die Grenze des Zugangs
+     * aufbrauchen (und für jeden ausgedachten Zugang eine Datei anlegen).
+     * Fehlversuche zählen nur je Adresse (api.php).
      */
-    public static function hookPost(array $b)
+    public static function hookPost(array $b, ?callable $limit = null)
     {
-        $data  = self::b64(self::str($b, 'd'), self::MAX_HOOK, 'Beitrag');
         $rid   = self::str($b, 'r');
         $hid   = self::str($b, 'h');
         $token = self::str($b, 't');
@@ -1794,6 +1835,7 @@ class SecureCom
             || !preg_match('/^[A-Za-z0-9_-]{43}$/', $token)) {
             throw $deny;
         }
+        $data  = self::b64(self::str($b, 'd'), self::MAX_HOOK, 'Beitrag');
         $room = self::readJson(self::roomFile($rid), true);
         $hook = $room ? ($room['hk'][$hid] ?? null) : null;
         // Immer einen Hash vergleichen, auch ohne Zugang (gleiche Laufzeit).
@@ -1801,6 +1843,7 @@ class SecureCom
         if (!hash_equals($want, hash('sha256', $token)) || !is_array($hook) || !empty($room['tmp']) || !empty($room['ot'])) {
             throw $deny;
         }
+        if ($limit) $limit(self::hookTag($rid, $hid));
         $now = time();
         // Zuletzt benutzt (für die Liste des Besitzers) und letzte Aktivität – selten schreiben.
         if ($now - (int)($hook['u'] ?? 0) >= self::HOOK_SEEN) {
@@ -1813,8 +1856,14 @@ class SecureCom
         $c = self::taggedChannel($room, $hook['ch'] ?? '');
         $entry = ['t' => $now, 'k' => 'hook', 'x' => $now + self::chanTtl($room, $c)];
         if ($c !== '') $entry['c'] = $c;
-        self::feedAppend($rid, $room, $entry + ['h' => $hid, 'd' => $data]);
+        self::feedAppend($rid, $room, $entry + ['h' => $hid, 'd' => $data], 'h:' . $hid);
         return [];
+    }
+
+    /** Kennung eines Zugangs für die Ratenbegrenzung (wie bisher in api.php). */
+    public static function hookTag($rid, $hid)
+    {
+        return hash('sha256', $rid . '/' . $hid);
     }
 
     /* ======================================================================
@@ -1946,8 +1995,10 @@ class SecureCom
                 if (is_string($h) && preg_match('/^[A-Za-z0-9_-]{22}$/', $h)) $hids[$h] = true;
             }
         }
-        $room = self::roomMutate($rid, function (&$room) use ($me, $c, $ttl, $perm, $reset, $hids) {
+        $before = null;
+        $room = self::roomMutate($rid, function (&$room) use ($me, $c, $ttl, $perm, $reset, $hids, &$before) {
             self::requirePerm($room, $me['id'], self::P_CHANNELS, 'Das darf nur der Besitzer oder ein Rang mit dem Recht „Kanäle verwalten“.');
+            $before = $room;
             if ($perm && (!empty($room['tmp']) || !empty($room['ot']))) {
                 throw new SecureComException('„Permanent“ gibt es nicht für Meetings und temporäre Räume.', 422);
             }
@@ -1971,10 +2022,16 @@ class SecureCom
             $room['rev']++;
             return $room;
         }, true);
+        // Bestehende Einträge (s, h) diesem Kanal zuordnen: Bekämen sie dadurch
+        // eine kürzere Frist als bisher, wäre das ein Löschen fremder
+        // Nachrichten – das darf nur, wer auch „Nachrichten verwalten“ hat
+        // (Besitzer, Administratoren). Sonst bleiben solche Einträge, wo sie sind.
+        $any = (bool)(self::permsOf($room, $me['id']) & self::P_MESSAGES);
         // Kanal mit eigenen Schreibrechten: Zuordnung behalten (sie belegt, dass
         // der Server das Schreibrecht geprüft hat).
         self::retimeLog(self::dir('feeds') . '/' . $rid, $room,
-            $reset ? null : ['c' => $c, 's' => $seqs, 'h' => $hids], $reset && !isset($room['cw'][$c]) ? $c : null);
+            $reset ? null : ['c' => $c, 's' => $seqs, 'h' => $hids, 'old' => $any ? null : $before],
+            $reset && !isset($room['cw'][$c]) ? $c : null);
         return self::publicRoom($room, $me['id']);
     }
 
@@ -1983,7 +2040,8 @@ class SecureCom
      * Nachrichten und API-Beiträge bekommen Zeitpunkt + Frist ihres Kanals
      * (eigene oder die des Raums) als Ablauf, was danach schon abgelaufen
      * ist, fällt weg. $tag ordnet Einträge einem Kanal zu (c, s: Nummern von
-     * Nachrichten, h: Kennungen von API-Zugängen), $untag löscht die
+     * Nachrichten, h: Kennungen von API-Zugängen; old: Raum vorher – dann nur
+     * Einträge, deren Frist dadurch nicht kürzer wird), $untag löscht die
      * Zuordnung zu diesem Kanal wieder.
      */
     private static function retimeLog($base, array $room, $tag = null, $untag = null)
@@ -2008,7 +2066,8 @@ class SecureCom
                 if ($k === 'msg' || $k === 'hook') {
                     if ($untag !== null && (string)($e['c'] ?? '') === $untag) unset($e['c']);
                     if ($tag && (($k === 'msg' && isset($tag['s'][(int)($e['s'] ?? 0)]))
-                        || ($k === 'hook' && isset($tag['h'][(string)($e['h'] ?? '')])))) {
+                        || ($k === 'hook' && isset($tag['h'][(string)($e['h'] ?? '')])))
+                        && (empty($tag['old']) || self::chanTtl($room, $tag['c']) >= self::chanTtl($tag['old'], (string)($e['c'] ?? '')))) {
                         $e = self::withChannel($e, $tag['c']);
                     }
                     $e['x'] = (int)($e['t'] ?? $now) + self::chanTtl($room, (string)($e['c'] ?? ''));
@@ -2045,11 +2104,25 @@ class SecureCom
         return $out;
     }
 
-    /** An den Verlauf eines Raums anhängen; „Permanent“ (Raum oder ein Kanal): größere Grenze, Älteste fallen weg statt „voll“. */
-    private static function feedAppend($rid, array $room, array $entry)
+    /**
+     * An den Verlauf eines Raums anhängen; „Permanent“ (Raum oder ein Kanal):
+     * größere Grenze, Älteste fallen weg statt „voll“ – dafür darf jeder
+     * Absender ($who: Mitglied bzw. "h:" + Zugang) je Stunde nur
+     * memberHourBytes() anhängen. Signale haben eigene, kleine Grenzen und
+     * verdrängen nie etwas.
+     */
+    private static function feedAppend($rid, array $room, array $entry, $who = '')
     {
-        $perm = self::keepsPermanent($room);
-        return self::append(self::dir('feeds') . '/' . $rid, $entry, $perm ? self::permanentBytes() : self::MAX_FEED, $perm);
+        $perm  = self::keepsPermanent($room);
+        $kind  = (string)($entry['k'] ?? '');
+        $limit = [];
+        if ($who !== '' && $kind === 'sig') {
+            $limit = ['sig' => (string)$who];
+        } elseif ($who !== '' && $perm && ($kind === 'msg' || $kind === 'hook')) {
+            $limit = ['hour' => (string)$who, 'max' => self::memberHourBytes()];
+        }
+        return self::append(self::dir('feeds') . '/' . $rid, $entry, $perm ? self::permanentBytes() : self::MAX_FEED,
+            $perm && $kind !== 'sig', $limit);
     }
 
     /**
@@ -2920,7 +2993,7 @@ class SecureCom
      * steht unter exklusiver Sperre, so kommen sich zwei Schreiber nie in
      * die Quere. Leser nehmen dieselbe Sperre geteilt.
      */
-    private static function append($base, array $entry, $maxBytes, $dropOldest = false)
+    private static function append($base, array $entry, $maxBytes, $dropOldest = false, array $limit = [])
     {
         $h = fopen($base . '.n', 'c+');
         if (!$h) throw new RuntimeException('Zähler nicht beschreibbar.');
@@ -2928,6 +3001,7 @@ class SecureCom
         try {
             $state = json_decode((string)stream_get_contents($h), true);
             if (!is_array($state)) $state = ['n' => 0, 'c' => 0, 'g' => 0];
+            if ($limit) self::countVolume($state, $limit, strlen((string)($entry['d'] ?? '')));
 
             $file = $base . '.jsonl';
             clearstatcache(true, $file);
@@ -2962,6 +3036,38 @@ class SecureCom
         } finally {
             flock($h, LOCK_UN);
             fclose($h);
+        }
+    }
+
+    /**
+     * Mengengrenzen im Zähler des Verlaufs (unter der Sperre von append):
+     * Signale je Absender und je Raum im Fenster SIGNAL_TTL ("sg"), in
+     * „Permanent“-Verläufen Byte je Absender und Stunde ("vq"). Feste
+     * Fenster; gespeichert wird erst zusammen mit dem Eintrag.
+     */
+    private static function countVolume(array &$state, array $limit, $bytes)
+    {
+        $now = time();
+        if (isset($limit['sig'])) {
+            $sg = isset($state['sg']) && is_array($state['sg']) ? $state['sg'] : [];
+            if ($now - (int)($sg['w'] ?? 0) >= self::SIGNAL_TTL) $sg = ['w' => $now, 'b' => 0, 'm' => []];
+            $mine = (int)($sg['m'][$limit['sig']] ?? 0);
+            if ($mine + $bytes > self::SIG_SENDER || (int)$sg['b'] + $bytes > self::SIG_ROOM) {
+                throw new SecureComException('Zu viele Signale. Bitte kurz warten.', 429);
+            }
+            $sg['b'] = (int)$sg['b'] + $bytes;
+            $sg['m'][$limit['sig']] = $mine + $bytes;
+            $state['sg'] = $sg;
+        }
+        if (isset($limit['hour'])) {
+            $vq = isset($state['vq']) && is_array($state['vq']) ? $state['vq'] : [];
+            if ($now - (int)($vq['w'] ?? 0) >= 3600) $vq = ['w' => $now, 'm' => []];
+            $mine = (int)($vq['m'][$limit['hour']] ?? 0);
+            if ($mine + $bytes > (int)$limit['max']) {
+                throw new SecureComException('Zu viel in kurzer Zeit für diesen Verlauf. Bitte später erneut versuchen.', 429);
+            }
+            $vq['m'][$limit['hour']] = $mine + $bytes;
+            $state['vq'] = $vq;
         }
     }
 
@@ -3006,10 +3112,11 @@ class SecureCom
     }
 
     /**
-     * Älteste Nachrichten, API-Beiträge und Hinweise (Beitritt, Verlassen)
-     * entfernen, bis der Verlauf höchstens $target Byte hat (unter der Sperre
-     * von append). Schlüsselpakete und Signale bleiben – sie sind klein und
-     * verfallen ohnehin nach Zeit.
+     * Platz schaffen, bis der Verlauf höchstens $target Byte hat (unter der
+     * Sperre von append): zuerst Anruf-Signale (verfallen ohnehin nach zwei
+     * Minuten – so kann eine Signalflut keine Nachrichten verdrängen), dann
+     * die ältesten Nachrichten, API-Beiträge und Hinweise (Beitritt,
+     * Verlassen). Schlüsselpakete bleiben.
      */
     private static function dropOldest($base, array &$state, $target)
     {
@@ -3017,11 +3124,23 @@ class SecureCom
         if (!is_file($src)) return 0;
         $excess = filesize($src) - $target;
         if ($excess <= 0) return 0;
+        $sig = '/^\{"s":\d+,"t":\d+,"k":"sig"/';
+        $sigBytes = 0;
+        $in = fopen($src, 'r');
+        while (($line = fgets($in)) !== false) if (preg_match($sig, $line)) $sigBytes += strlen($line);
+        fclose($in);
+        $sigExcess = min($excess, $sigBytes);
+        $excess   -= $sigExcess;
         $tmp = $src . '.tmp';
         $in  = fopen($src, 'r');
         $out = fopen($tmp, 'w');
         $dropped = 0;
         while (($line = fgets($in)) !== false) {
+            if ($sigExcess > 0 && preg_match($sig, $line)) {
+                $sigExcess -= strlen($line);
+                $dropped++;
+                continue;
+            }
             if ($excess > 0 && preg_match('/^\{"s":\d+,"t":\d+,"k":"(msg|hook|sys)"/', $line)) {
                 $excess -= strlen($line);
                 $dropped++;
@@ -3150,6 +3269,7 @@ class SecureCom
                 self::expireTempRooms($now);
                 self::dropOrphans($now);
                 self::expireFiles($now);
+                self::expireRateLimits($now);
                 $logs = array_merge(glob(self::dir('inbox') . '/*.n') ?: [], glob(self::dir('feeds') . '/*.n') ?: []);
                 foreach ($logs as $nf) self::rewriteLog(substr($nf, 0, -2));
                 $state['h'] = $now;
@@ -3210,6 +3330,28 @@ class SecureCom
      * eine temporäre Sitzung ist. Ihre Frist beginnt dann jetzt.
      * Einmal-Meetings (ot) verfallen schon nach ONCE_IDLE (roomIdle()).
      */
+    /**
+     * Ratenbegrenzung (rate_limit() in lib/util.php, auf achterberg.dev in
+     * app/lib/util.php: beide unter storage_dir()/ratelimit, eine Datei je
+     * Eimer): Dateien ohne Treffer seit RATE_KEEP löschen. Das größte Fenster
+     * ist ein Tag (Website), die Datei wird bei jedem Treffer neu geschrieben –
+     * was älter ist, zählt in keinem Fenster mehr. Ohne das blieben Dateien
+     * jeder je benutzten Adresse bzw. jedes Eimers für immer liegen.
+     */
+    private static function expireRateLimits($now)
+    {
+        $dir = storage_dir() . '/ratelimit';
+        $h = is_dir($dir) ? @opendir($dir) : false;
+        if (!$h) return;
+        while (($f = readdir($h)) !== false) {
+            if (!preg_match('/^[0-9a-f]{64}\.json$/', $f)) continue;
+            $path = $dir . '/' . $f;
+            $m = @filemtime($path);
+            if ($m !== false && $now - $m > self::RATE_KEEP) @unlink($path);
+        }
+        closedir($h);
+    }
+
     private static function expireTempRooms($now)
     {
         foreach (glob(self::dir('rooms') . '/*.json') ?: [] as $file) {

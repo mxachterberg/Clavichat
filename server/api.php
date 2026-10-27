@@ -82,12 +82,14 @@ try {
             json_out(['ok' => true] + SecureCom::inviteInfo($body));
 
         case 'hook.post':
-            // API-Zugang (nur posten, ohne Anmeldung): je Adresse und je Zugang begrenzt.
+            // API-Zugang (nur posten, ohne Anmeldung): je Adresse; je Zugang erst
+            // nach bestandener Token-Prüfung (sonst könnte jeder mit falschen
+            // Tokens einen fremden Zugang blockieren).
             sc_limit('hookip:' . $ipTag, 60, 60);
-            $hookTag = hash('sha256', SecureCom::str($body, 'r') . '/' . SecureCom::str($body, 'h'));
-            sc_limit('hook:' . $hookTag, 20, 60);
-            sc_limit('hookh:' . $hookTag, 300, 3600);
-            json_out(['ok' => true] + SecureCom::hookPost($body));
+            json_out(['ok' => true] + SecureCom::hookPost($body, function ($hookTag) {
+                sc_limit('hook:' . $hookTag, 20, 60);
+                sc_limit('hookh:' . $hookTag, 300, 3600);
+            }));
 
         case 'sso.who':
             // Nur mit Ticket des Dashboards (gibt es auf eigenständigen Servern nicht).
