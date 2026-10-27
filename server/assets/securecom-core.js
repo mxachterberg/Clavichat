@@ -827,3 +827,225 @@ export function passwordStrength(password, hints) {
   if (score < 3 && !tips.size) tips.add('Länger ist besser – zum Beispiel vier zufällige Wörter.');
   return { bits: bits, score: score, tip: [...tips][0] || '' };
 }
+
+/* ---------- Töne: Synthese per WebAudio (live und offline) ------------------
+   Keine Audiodateien: Jeder Ton entsteht aus Oszillatoren und Hüllkurven.
+   sound() plant einen Ton in einem beliebigen (Offline)AudioContext ein –
+   die App spielt ihn live, Hörproben entstehen mit OfflineAudioContext aus
+   genau demselben Code. Rückgabe: { out, end } – out ist der Ausgang (zum
+   Ausblenden), end die Zeit, zu der der Ton verklungen ist.
+   - ring: klassisches Telefon. Zwei kleine Glocken mit unharmonischen
+     Obertönen, ein Klöppel schlägt abwechselnd an (22 Schläge je Sekunde –
+     der typische Triller), leises mechanisches Klacken, kurzer Nachhall.
+     Ein Zyklus = 1 s Klingeln; die App wiederholt alle RING_CYCLE Sekunden
+     (1 s klingeln, 4 s Pause wie ein altes deutsches Telefon).
+   - ringback: Freiton für ausgehende Anrufe, 425 Hz, 1 s (Pause 4 s).
+   - message: neue Nachricht – zwei Töne mit Holz-/Glas-Charakter (Quinte
+     aufwärts, der zweite gleitet leicht hinein), dezentes Stereo-Echo.
+     message-b (Kalimba-Dreiklang) und message-c (Tropfen) sind Varianten
+     für Hörproben. */
+export const RING_CYCLE = 5;       // Sekunden je Klingelzyklus (1 s an, 4 s aus)
+export const RINGBACK_CYCLE = 5;   // Freiton: 1 s an, 4 s aus
+
+export function sound(ctx, dest, name, t0) {
+  const t = Math.max(t0 === undefined ? ctx.currentTime : t0, ctx.currentTime);
+  const out = ctx.createGain();
+  out.gain.value = 1;
+  out.connect(dest);
+  let end;
+  if (name === 'ring') end = ringBell(ctx, out, t, 1.0);
+  else if (name === 'ringback') end = ringback(ctx, out, t);
+  else if (name === 'message-b') end = kalimba(ctx, out, t);
+  else if (name === 'message-c') end = drops(ctx, out, t);
+  else end = woodGlass(ctx, out, t);
+  return { out: out, end: end };
+}
+
+/** Sanft ausblenden (etwa beim Annehmen eines Anrufs mitten im Klingeln). */
+export function fadeOut(ctx, out, secs) {
+  const t = ctx.currentTime;
+  try {
+    out.gain.cancelScheduledValues(t);
+    out.gain.setValueAtTime(out.gain.value, t);
+    out.gain.linearRampToValueAtTime(0, t + (secs || 0.06));
+  } catch (e) { /* schon getrennt */ }
+}
+
+function panner(ctx, pan, dest) {
+  if (!ctx.createStereoPanner) return dest;
+  const p = ctx.createStereoPanner();
+  p.pan.value = pan;
+  p.connect(dest);
+  return p;
+}
+
+/** Gleiches Rauschen bei jedem Aufruf (die Hörproben sollen gleich klingen). */
+function noiseBuffer(ctx, secs) {
+  const n = Math.max(1, Math.floor(ctx.sampleRate * secs));
+  const buf = ctx.createBuffer(1, n, ctx.sampleRate);
+  const d = buf.getChannelData(0);
+  let s = 0x2545f491;
+  for (let i = 0; i < n; i++) {
+    s ^= s << 13; s ^= s >>> 17; s ^= s << 5;
+    d[i] = ((s >>> 0) / 4294967296) * 2 - 1;
+  }
+  return buf;
+}
+
+function ringBell(ctx, out, t0, dur) {
+  // Klang dämpfen: nichts Schrilles oben, kein Brummen unten.
+  const hp = ctx.createBiquadFilter();
+  hp.type = 'highpass';
+  hp.frequency.value = 280;
+  const lp = ctx.createBiquadFilter();
+  lp.type = 'lowpass';
+  lp.frequency.value = 5200;
+  lp.Q.value = 0.5;
+  const bus = ctx.createGain();
+  bus.gain.setValueAtTime(0, t0);
+  bus.gain.linearRampToValueAtTime(0.13, t0 + 0.03);
+  bus.connect(hp).connect(lp).connect(out);
+  const RATE = 22;                     // Schläge je Sekunde, abwechselnd auf beide Glocken
+  const n = Math.round(dur * RATE);
+  const stop = t0 + dur + 2.2;
+  // Zwei Glocken, gut eine Ganztonstufe auseinander; Obertöne wie bei
+  // dünnen Metallschalen (nicht ganzzahlig): Verhältnis, Pegel, Abklingen.
+  const bells = [{ f: 1046, pan: -0.2 }, { f: 1178, pan: 0.2 }];
+  const partials = [[1, 1, 0.2], [2.32, 0.46, 0.11], [3.86, 0.24, 0.07], [5.53, 0.12, 0.045]];
+  bells.forEach((b, bi) => {
+    const dst = panner(ctx, b.pan, bus);
+    for (const [ratio, level, tau] of partials) {
+      const o = ctx.createOscillator();
+      o.frequency.value = b.f * ratio;
+      const g = ctx.createGain();
+      g.gain.setValueAtTime(0, t0);
+      for (let i = bi; i < n; i += 2) {
+        const ts = t0 + i / RATE;
+        const spin = Math.min(1, 0.5 + i * 0.1);   // der Klöppel kommt erst in Schwung
+        g.gain.setTargetAtTime(level * spin, ts, 0.0012);
+        g.gain.setTargetAtTime(0, ts + 0.005, tau);
+      }
+      g.gain.setTargetAtTime(0, t0 + dur, tau * 1.9);   // Nachhall
+      o.connect(g).connect(dst);
+      o.start(t0);
+      o.stop(stop);
+    }
+  });
+  // Mechanisches Klacken des Klöppels
+  const nz = ctx.createBufferSource();
+  nz.buffer = noiseBuffer(ctx, dur + 0.1);
+  const bp = ctx.createBiquadFilter();
+  bp.type = 'bandpass';
+  bp.frequency.value = 2600;
+  bp.Q.value = 1.4;
+  const ng = ctx.createGain();
+  ng.gain.setValueAtTime(0, t0);
+  for (let i = 0; i < n; i++) {
+    const ts = t0 + i / RATE;
+    ng.gain.setTargetAtTime(0.16, ts, 0.0006);
+    ng.gain.setTargetAtTime(0, ts + 0.002, 0.004);
+  }
+  nz.connect(bp).connect(ng).connect(bus);
+  nz.start(t0);
+  nz.stop(t0 + dur + 0.1);
+  return t0 + dur + 1.2;
+}
+
+function ringback(ctx, out, t0) {
+  const o = ctx.createOscillator();
+  o.frequency.value = 425;
+  const g = ctx.createGain();
+  g.gain.setValueAtTime(0, t0);
+  g.gain.linearRampToValueAtTime(0.05, t0 + 0.02);
+  g.gain.setValueAtTime(0.05, t0 + 0.98);
+  g.gain.linearRampToValueAtTime(0, t0 + 1.0);
+  o.connect(g).connect(out);
+  o.start(t0);
+  o.stop(t0 + 1.05);
+  return t0 + 1.05;
+}
+
+/** Dezentes Stereo-Echo: zwei Verzögerungen links/rechts mit etwas Rückkopplung. */
+function echo(ctx, out, t0, wet) {
+  const send = ctx.createGain();
+  send.gain.value = wet;
+  [[0.083, -0.65], [0.131, 0.65]].forEach(([time, pan]) => {
+    const d = ctx.createDelay(0.5);
+    d.delayTime.value = time;
+    const fb = ctx.createGain();
+    fb.gain.value = 0.3;
+    const tone = ctx.createBiquadFilter();
+    tone.type = 'lowpass';
+    tone.frequency.value = 3200;
+    send.connect(d);
+    d.connect(tone).connect(fb).connect(d);
+    tone.connect(panner(ctx, pan, out));
+  });
+  return send;
+}
+
+/** Ein angeschlagener Ton aus Teiltönen [Verhältnis, Pegel, Abklingen]. */
+function struck(ctx, dest, f, t, level, partials, glide) {
+  for (const [ratio, lv, tau] of partials) {
+    const o = ctx.createOscillator();
+    if (glide) {
+      o.frequency.setValueAtTime(f * ratio * glide, t);
+      o.frequency.exponentialRampToValueAtTime(f * ratio, t + 0.045);
+    } else {
+      o.frequency.value = f * ratio;
+    }
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(0, t);
+    g.gain.linearRampToValueAtTime(level * lv, t + 0.004);
+    g.gain.setTargetAtTime(0, t + 0.004, tau);
+    o.connect(g).connect(dest);
+    o.start(t);
+    o.stop(t + tau * 9 + 0.05);
+  }
+}
+
+function woodGlass(ctx, out, t0) {
+  const bus = ctx.createGain();
+  bus.gain.value = 0.55;
+  bus.connect(out);
+  const wet = echo(ctx, out, t0, 0.2);
+  bus.connect(wet);
+  // Holz (Grundton, kräftiger 4. Teilton wie ein Marimbastab) + Glas (2,76)
+  const P = [[1, 0.13, 0.16], [2.76, 0.03, 0.06], [4, 0.035, 0.03], [5.4, 0.012, 0.018]];
+  struck(ctx, panner(ctx, -0.12, bus), 783.99, t0, 1, P, 0);           // G5
+  struck(ctx, panner(ctx, 0.12, bus), 1174.66, t0 + 0.095, 0.9, P, 0.955);   // D6, gleitet hinein
+  return t0 + 0.6;
+}
+
+function kalimba(ctx, out, t0) {
+  const bus = ctx.createGain();
+  bus.gain.value = 0.55;
+  bus.connect(out);
+  bus.connect(echo(ctx, out, t0, 0.16));
+  const P = [[1, 0.11, 0.13], [5.9, 0.025, 0.02], [2.01, 0.02, 0.05]];
+  [[1046.5, -0.2], [1318.5, 0], [1568, 0.2]].forEach(([f, pan], i) => {
+    struck(ctx, panner(ctx, pan, bus), f, t0 + i * 0.062, 1 - i * 0.12, P, 0.985);
+  });
+  return t0 + 0.55;
+}
+
+function drops(ctx, out, t0) {
+  const bus = ctx.createGain();
+  bus.gain.value = 0.6;
+  bus.connect(out);
+  bus.connect(echo(ctx, out, t0, 0.18));
+  [[620, 1350, 0, -0.15], [820, 1800, 0.12, 0.15]].forEach(([a, b, dt, pan]) => {
+    const t = t0 + dt;
+    const o = ctx.createOscillator();
+    o.frequency.setValueAtTime(a, t);
+    o.frequency.exponentialRampToValueAtTime(b, t + 0.055);
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(0, t);
+    g.gain.linearRampToValueAtTime(0.12, t + 0.006);
+    g.gain.setTargetAtTime(0, t + 0.02, 0.035);
+    o.connect(g).connect(panner(ctx, pan, bus));
+    o.start(t);
+    o.stop(t + 0.35);
+  });
+  return t0 + 0.5;
+}

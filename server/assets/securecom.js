@@ -9748,29 +9748,46 @@ function beep(freq, dur, when, vol) {
   osc.stop(t0 + dur + 0.05);
 }
 
+/* Klingeln, Freiton und Nachrichtenton synthetisiert C.sound() (securecom-core.js)
+   – derselbe Code rendert auch die Hörproben offline. */
+let toneOuts = [];
+function synth(name) {
+  const ctx = audioCtx();
+  if (!ctx || !C || !C.sound) return;
+  try {
+    const s = C.sound(ctx, ctx.destination, name);
+    toneOuts.push(s.out);
+    // Verklungen: Knoten freigeben
+    setTimeout(() => { s.out.disconnect(); toneOuts = toneOuts.filter((o) => o !== s.out); }, Math.max(0, (s.end - ctx.currentTime) * 1000) + 300);
+  } catch (e) { /* ohne Ton weiter */ }
+}
+
+/** Eingehender Anruf: klassisches Telefon – 1 s Klingeln, 4 s Pause. */
 function playRing() {
   stopTones();
   if (!S.vault.settings.sound) return;
   const ring = () => {
-    beep(880, 0.35, 0, 0.09);
-    beep(660, 0.35, 0.4, 0.09);
+    synth('ring');
     // Android vibriert dazu (iPhones kennen das im Browser nicht).
-    if (IS_MOBILE && navigator.vibrate && !document.hidden) { try { navigator.vibrate([350, 150, 350]); } catch (e) { /* egal */ } }
+    if (IS_MOBILE && navigator.vibrate && !document.hidden) { try { navigator.vibrate([1000]); } catch (e) { /* egal */ } }
   };
   ring();
-  toneTimer = setInterval(ring, 2600);
+  toneTimer = setInterval(ring, C.RING_CYCLE * 1000);
 }
 
+/** Ausgehender Anruf: Freiton 425 Hz, 1 s an, 4 s aus. */
 function playRingback() {
   stopTones();
-  const tone = () => beep(440, 0.9, 0, 0.04);
-  tone();
-  toneTimer = setInterval(tone, 3500);
+  synth('ringback');
+  toneTimer = setInterval(() => synth('ringback'), C.RINGBACK_CYCLE * 1000);
 }
 
 function stopTones() {
   clearInterval(toneTimer);
   toneTimer = 0;
+  // Klingelt es gerade noch (Annehmen mitten im Klingeln): kurz ausblenden statt abreißen.
+  if (toneOuts.length && M.ctx) for (const o of toneOuts) C.fadeOut(M.ctx, o, 0.08);
+  toneOuts = [];
   if (IS_MOBILE && navigator.vibrate) { try { navigator.vibrate(0); } catch (e) { /* egal */ } }
 }
 
@@ -9784,7 +9801,7 @@ let lastBlip = 0;
 function notifySound() {
   if (!S.vault.settings.sound || Date.now() - lastBlip < 1500) return;
   lastBlip = Date.now();
-  if (M.ctx && M.ctx.state === 'running') beep(760, 0.09, 0, 0.04);
+  if (M.ctx && M.ctx.state === 'running') synth('message');
 }
 
 /* ==========================================================================
