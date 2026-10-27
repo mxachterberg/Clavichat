@@ -4,6 +4,15 @@ Was sich von Version zu Version ändert. Beim Veröffentlichen wird der
 Abschnitt einer Version zum Text des GitHub-Releases
 (`.github/workflows/windows.yml`).
 
+## 1.9.2 – 27.10.2026
+
+Einladungslinks länger gültig. Für installierte Apps ein kleines Update.
+
+- **Gültigkeit wählbar:** Im Einladen-Dialog legst du fest, wie lange ein
+  Link gilt – 1 Tag, 7 Tage (Standard), 30 oder 90 Tage. Der Hinweis nennt
+  das Ablaufdatum. Solange Einladungslinks offen sind, wechselt der
+  Raumschlüssel nicht wöchentlich.
+
 ## 1.9.1 – 27.10.2026
 
 Einladungs-Vorschau, Verlauf für neue Mitglieder und neue Töne. Für
