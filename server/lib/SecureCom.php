@@ -38,7 +38,7 @@
  *                            letzte Aktivität; von einer temporären Sitzung
  *                            angelegt: nach tempRoomDays() ohne Aktivität weg;
  *                            Einmal-Meeting (ot): nach ONCE_IDLE weg
- *    feeds/<rid>.jsonl|.n    Verlauf eines Raums
+ *    feeds/<rid>.jsonl|.n    Verlauf eines Raums (Beiträge von API-Zugängen: k "hook")
  *    avatars/<id>.json       Profilbild eines Kontos (öffentlich wie der Name)
  *    mem/<id>.json           Räume einer Identität
  *    presence.json           zuletzt gesehen, Kartenversion, sichtbar
@@ -96,6 +96,9 @@ class SecureCom
     const MAX_PEND      = 20;        // offene Beitrittsanfragen je Meeting
 
     const MAX_ENTRY     = 98304;     // verschlüsselter Eintrag (Base64)
+    const MAX_HOOK      = 22000;     // Beitrag eines API-Zugangs (Base64; 16 KB Klartext, aufgefüllt)
+    const MAX_HOOKS     = 5;         // API-Zugänge je Raum
+    const HOOK_SEEN     = 60;        // "zuletzt benutzt" höchstens so oft schreiben
     const MAX_SIGNAL    = 49152;
     const MAX_CARD      = 4096;
     const MAX_PUB       = 16384;
@@ -1414,6 +1417,109 @@ class SecureCom
     }
 
     /* ======================================================================
+       API-Zugänge: nur posten
+       Der Besitzer eines bleibenden Raums (Konto) legt einen Zugang an. Hier
+       liegt davon nur die Kennung und der SHA-256 eines zufälligen Tokens
+       (room['hk'][hid] = {h, c, u}); Name, Ziel-Kanal und der private
+       Schlüssel stehen verschlüsselt in den Raumdaten. Mit dem Token geht
+       genau eins: hook.post hängt einen verschlüsselten Beitrag an den
+       Verlauf. Lesen, Mitglieder, Raumschlüssel, andere Aktionen – nichts
+       davon nimmt ein Token an (es ist kein Sitzungstoken).
+       ====================================================================== */
+    public static function hookCreate(array $me, array $b)
+    {
+        if ($me['k'] !== 'account') {
+            throw new SecureComException('API-Zugänge gibt es nur für Konten.', 403);
+        }
+        $rid  = self::idOf(self::str($b, 'id'));
+        $hid  = self::idOf(self::str($b, 'hid'));
+        $hash = self::str($b, 'th');
+        if (!preg_match('/^[0-9a-f]{64}$/', $hash)) throw new SecureComException('Ungültiges Token.', 422);
+        return self::roomMutate($rid, function (&$room) use ($me, $hid, $hash) {
+            self::requireOwner($room, $me['id']);
+            if (!empty($room['tmp']) || !empty($room['ot'])) {
+                throw new SecureComException('API-Zugänge gibt es nicht für Meetings und temporäre Räume.', 422);
+            }
+            $hooks = (array)($room['hk'] ?? []);
+            if (isset($hooks[$hid])) throw new SecureComException('Diese Kennung ist vergeben.', 409);
+            if (count($hooks) >= self::MAX_HOOKS) {
+                throw new SecureComException('Mehr als ' . self::MAX_HOOKS . ' API-Zugänge je Raum gehen nicht.', 409);
+            }
+            $hooks[$hid] = ['h' => $hash, 'c' => time(), 'u' => 0];
+            $room['hk'] = $hooks;
+            $room['la'] = time();
+            return ['hid' => $hid];
+        });
+    }
+
+    /** Zugänge eines Raums für den Besitzer: Kennung, angelegt, zuletzt benutzt. */
+    public static function hookList(array $me, array $b)
+    {
+        $rid  = self::idOf(self::str($b, 'id'));
+        $room = self::readJson(self::roomFile($rid), true);
+        if (!$room) throw new SecureComException('Raum nicht gefunden.', 404);
+        self::requireOwner($room, $me['id']);
+        $out = [];
+        foreach ((array)($room['hk'] ?? []) as $hid => $h) {
+            $out[] = ['id' => (string)$hid, 'c' => (int)($h['c'] ?? 0), 'u' => (int)($h['u'] ?? 0)];
+        }
+        return $out;
+    }
+
+    /** Zugang widerrufen (Besitzer): Danach nimmt der Server kein Token dazu mehr an. */
+    public static function hookDel(array $me, array $b)
+    {
+        $rid = self::idOf(self::str($b, 'id'));
+        $hid = self::idOf(self::str($b, 'hid'));
+        return self::roomMutate($rid, function (&$room) use ($me, $hid) {
+            self::requireOwner($room, $me['id']);
+            unset($room['hk'][$hid]);
+            if (empty($room['hk'])) unset($room['hk']);
+            return ['n' => count((array)($room['hk'] ?? []))];
+        });
+    }
+
+    /**
+     * Ohne Anmeldung: Beitrag eines API-Zugangs. Prüft nur das Token und hängt
+     * den Chiffretext an – den Klartext sieht der Server nie (verschlüsselt
+     * mit dem öffentlichen Schlüssel des Zugangs, siehe securecom-core.js).
+     * Jeder Fehler beim Zugang selbst heißt gleich, damit nichts verrät, ob
+     * es Raum oder Zugang gibt. Antwort: nur "ok".
+     */
+    public static function hookPost(array $b)
+    {
+        $data  = self::b64(self::str($b, 'd'), self::MAX_HOOK, 'Beitrag');
+        $rid   = self::str($b, 'r');
+        $hid   = self::str($b, 'h');
+        $token = self::str($b, 't');
+        $deny  = new SecureComException('Zugang ungültig oder widerrufen.', 403);
+        if (!preg_match('/^[A-Za-z0-9_-]{22}$/', $rid) || !preg_match('/^[A-Za-z0-9_-]{22}$/', $hid)
+            || !preg_match('/^[A-Za-z0-9_-]{43}$/', $token)) {
+            throw $deny;
+        }
+        $room = self::readJson(self::roomFile($rid), true);
+        $hook = $room ? ($room['hk'][$hid] ?? null) : null;
+        // Immer einen Hash vergleichen, auch ohne Zugang (gleiche Laufzeit).
+        $want = is_array($hook) ? (string)($hook['h'] ?? '') : str_repeat('0', 64);
+        if (!hash_equals($want, hash('sha256', $token)) || !is_array($hook) || !empty($room['tmp']) || !empty($room['ot'])) {
+            throw $deny;
+        }
+        $now = time();
+        // Zuletzt benutzt (für die Liste des Besitzers) und letzte Aktivität – selten schreiben.
+        if ($now - (int)($hook['u'] ?? 0) >= self::HOOK_SEEN) {
+            self::roomMutate($rid, function (&$r) use ($hid, $now) {
+                if (!isset($r['hk'][$hid])) return;
+                $r['hk'][$hid]['u'] = $now;
+                if ($now - self::lastActive($r) >= self::ACTIVE_EVERY) $r['la'] = $now;
+            });
+        }
+        self::append(self::dir('feeds') . '/' . $rid, [
+            't' => $now, 'k' => 'hook', 'x' => $now + self::roomTtl($room), 'h' => $hid, 'd' => $data,
+        ], self::MAX_FEED);
+        return [];
+    }
+
+    /* ======================================================================
        Aufbewahrung: wie lange Nachrichten liegen bleiben
        Direktnachrichten: Die Unterhaltung legt es fest (beide Seiten, im
        Browser abgestimmt); jeder Eintrag bringt seine Dauer mit. Räume: der
@@ -1448,7 +1554,7 @@ class SecureCom
         });
         $cut = time() - self::roomTtl($room);
         self::rewriteLog(self::dir('feeds') . '/' . $rid, function ($e) use ($cut) {
-            return ($e['k'] ?? '') === 'msg' && (int)($e['t'] ?? 0) < $cut;
+            return in_array($e['k'] ?? '', ['msg', 'hook'], true) && (int)($e['t'] ?? 0) < $cut;
         });
         return self::publicRoom($room, $me['id']);
     }

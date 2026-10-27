@@ -113,6 +113,8 @@ const ICONS = {
   // Meetings (Knopf MEET, Meeting-Karten, Startseite): eine Gruppe – die Kamera bleibt beim Video-Anruf
   group: '<circle cx="12" cy="8" r="3"/><path d="M6.5 19.5a5.5 5.5 0 0 1 11 0"/><circle cx="5.5" cy="10" r="2.2"/><path d="M1.8 18.5a3.9 3.9 0 0 1 3.7-3.4"/><circle cx="18.5" cy="10" r="2.2"/><path d="M22.2 18.5a3.9 3.9 0 0 0-3.7-3.4"/>',
   bolt: '<path d="M13 2.5L4.5 13.5h6.5l-1 8 8.5-11h-6.5z"/>',
+  // API-Zugang (Beiträge per Skript)
+  code: '<path d="M8 7l-5 5 5 5M16 7l5 5-5 5M13.5 4.5l-3 15"/>',
   videoOff: '<rect x="3" y="6" width="13" height="12" rx="1"/><path d="M16 10l5-3v10l-5-3z"/><path d="M2 2l20 20"/>',
   mic: '<rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/>',
   micOff: '<rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/><path d="M3 3l18 18"/>',
@@ -3324,7 +3326,26 @@ function renderThread() {
   S.forceBottom = false;
 }
 
+/** Beitrag eines API-Zugangs: Name des Zugangs, Zeichen „API“, kein Profil, kein Bearbeiten. */
+function hookNode(m, grouped) {
+  const node = el('div', { class: 'sc-msg sc-msg--hook' + (grouped ? ' is-grouped' : ''), dataset: { id: m.id } });
+  node.appendChild(grouped
+    ? el('time', { class: 'sc-msg-gtime', text: fmtTime(m.ts) })
+    : el('span', { class: 'sc-msg-av sc-hook-av', title: 'Beitrag über einen API-Zugang' }, icon('bolt', 18)));
+  const body = el('div', { class: 'sc-msg-body' });
+  if (!grouped) {
+    body.appendChild(el('div', { class: 'sc-msg-head' },
+      el('span', { class: 'sc-msg-name sc-hook-name', text: m.hook.name }),
+      el('span', { class: 'sc-hook-tag', title: 'Gepostet über einen API-Zugang des Raums – der Zugang kann nur posten, nichts lesen.', text: 'API' }),
+      el('time', { text: fmtTime(m.ts), title: new Date(m.ts).toLocaleString('de-DE') })));
+  }
+  body.appendChild(el('div', { class: 'sc-msg-text' }, linkify(m.body)));
+  node.appendChild(body);
+  return node;
+}
+
 function messageNode(m, grouped) {
+  if (m.hook) return hookNode(m, grouped);
   const ident = S.ids.get(m.from);
   const own = m.from === S.me.id;
   const node = el('div', {
@@ -4834,8 +4855,10 @@ function voiceMembers(room, ch) {
 
 /** Raumdaten zum Verschlüsseln: alles Bisherige, dazu die Änderungen. */
 function metaOf(room, changes) {
-  const m = Object.assign({ name: room.meta.name, ch: room.meta.ch, vch: room.meta.vch, img: room.meta.img || '', aq: room.meta.aq || '', meet: room.meta.meet ? 1 : 0, once: room.meta.once ? 1 : 0 }, changes || {});
+  const m = Object.assign({ name: room.meta.name, ch: room.meta.ch, vch: room.meta.vch, img: room.meta.img || '', aq: room.meta.aq || '', meet: room.meta.meet ? 1 : 0, once: room.meta.once ? 1 : 0,
+    hooks: room.meta.hooks || {} }, changes || {});
   if (!m.img) delete m.img;
+  if (!m.hooks || !Object.keys(m.hooks).length) delete m.hooks;   // API-Zugänge: { hid: { n, ch, k, c } }
   if (!m.aq) delete m.aq;   // Sprachqualität des Raums (leer: jeder nach eigener Einstellung)
   if (!m.meet) delete m.meet;   // Meeting: Link führt gleich in den Meeting-Raum
   if (!m.once || !m.meet) delete m.once;   // Einmal-Meeting: Gäste nur mit Namen
@@ -4897,8 +4920,28 @@ async function decryptMeta(room) {
       && /^data:image\/(jpeg|png|webp);base64,[A-Za-z0-9+/]+=*$/.test(res.obj.img) ? res.obj.img : '';
     const aq = AUDIO_QUALITY.some((q) => q.id === res.obj.aq) ? res.obj.aq : '';
     const aqChanged = !!room.meta && (room.meta.aq || '') !== aq;
+    // API-Zugänge: Name, Ziel-Kanal und privater Schlüssel (liest die Beiträge)
+    const hooks = {};
+    if (res.obj.hooks && typeof res.obj.hooks === 'object' && !Array.isArray(res.obj.hooks)) {
+      for (const [hid, h] of Object.entries(res.obj.hooks).slice(0, 5)) {
+        if (!/^[A-Za-z0-9_-]{22}$/.test(hid) || !h || typeof h.k !== 'string' || !/^[A-Za-z0-9_-]{100,400}$/.test(h.k)) continue;
+        hooks[hid] = { n: cleanName(h.n) || 'API', ch: typeof h.ch === 'string' && /^[A-Za-z0-9_-]{1,22}$/.test(h.ch) ? h.ch : '', k: h.k, c: Number(h.c) || 0 };
+      }
+    }
     room.meta = { name: cleanName(res.obj.name) || 'Raum', ch: ch.length ? ch : [{ id: 'main', name: 'allgemein' }], vch: vch, img: img, aq: aq, meet: res.obj.meet === 1 ? 1 : 0,
-      once: res.obj.meet === 1 && res.obj.once === 1 ? 1 : 0 };
+      once: res.obj.meet === 1 && res.obj.once === 1 ? 1 : 0, hooks: hooks };
+    room.metaOk = true;
+    // Widerrufene Zugänge: ihre Beiträge verschwinden aus der Ansicht.
+    for (const [chId, list] of room.msgs) {
+      if (!list.some((m) => m.hook && !hooks[m.hook.id])) continue;
+      room.msgs.set(chId, list.filter((m) => !(m.hook && !hooks[m.hook.id])));
+    }
+    // Beiträge von API-Zugängen, die auf die Raumdaten gewartet haben
+    const early = room.pending.filter((p) => p.k === 'hook');
+    if (early.length) {
+      room.pending = room.pending.filter((p) => p.k !== 'hook');
+      for (const p of early) roomHook(room, p).catch(() => {});
+    }
     for (const c of room.meta.ch) if (!room.msgs.has(c.id)) room.msgs.set(c.id, []);
     // Sprachqualität des Raums geändert, während man drin ist: sofort übernehmen.
     if (aqChanged && S.voice && S.voice.rid === room.id) applyAudioQuality();
@@ -5575,7 +5618,9 @@ function roomMenu(room) {
           row('image', room.meta.img ? 'Raumbild ändern' : 'Raumbild festlegen', () => roomPicture(room), room.meta.img ? 'GESETZT' : 'KEINS'),
           row('clock', 'Nachrichten aufbewahren', () => roomTtlDialog(room), ttlLabel(roomTtl(room)).toUpperCase()),
           row('sliders', 'Sprachqualität im Raum', () => roomAudioDialog(room), aq ? aq.name.toUpperCase() : 'JEDER NACH WAHL'),
-          aoOk ? toggle('users', 'Nur Mitglieder mit Konto', room.ao, () => roomAccountsDialog(room), 'Neue Mitglieder brauchen ein Konto.') : null) : null,
+          aoOk ? toggle('users', 'Nur Mitglieder mit Konto', room.ao, () => roomAccountsDialog(room), 'Neue Mitglieder brauchen ein Konto.') : null,
+          // API-Zugang: nur Konten, nicht für Meetings und verfallende Räume
+          hooksOk(room) ? row('code', 'API-Zugang', () => hooksDialog(room), hookCount(room) ? hookCount(room) + ' / ' + HOOK_LIMIT : 'KEINER', 'Skripte posten in einen Kanal – nur posten.') : null) : null,
         owner ? sectionHead('SICHERHEIT') : null,
         owner ? el('div', { class: 'sc-rm-rows' },
           row('key', 'Raumschlüssel erneuern', () => rotateRoom(room.id, true), 'GEN. ' + room.epoch + ' → ' + (room.epoch + 1), 'Alte Einladungslinks werden ungültig.')) : null,
@@ -5584,6 +5629,129 @@ function roomMenu(room) {
           owner ? tile(once ? 'x' : 'trash', once ? 'Meeting beenden' : meet ? 'Meeting löschen' : 'Raum löschen', () => deleteRoom(room), 'is-danger') : null)));
     }
   });
+}
+
+/* ---------- API-Zugänge (Raum-Menü → EINSTELLUNGEN) --------------------------
+   Ein Skript (oder Claude) postet damit in einen Textkanal – nur posten. Der
+   Zugang besteht aus Server-Adresse, Raum, Kennung, Token und öffentlichem
+   Schlüssel; angezeigt wird er genau einmal. Der Server kennt nur den Hash
+   des Tokens, der private Schlüssel steht in den Raumdaten (alle Mitglieder
+   lesen damit die Beiträge). Siehe securecom-core.js und
+   tools/clavichat-post.mjs. */
+const HOOK_LIMIT = 5;
+
+function hooksOk(room) {
+  return room.owner === S.me.id && S.mode === 'account' && !room.meta.meet && !room.tmp;
+}
+
+function hookCount(room) {
+  return Object.keys(room.meta.hooks || {}).length;
+}
+
+function hookApiUrl() {
+  try { return new URL(API_URL, location.href).href; } catch (e) { return API_URL; }
+}
+
+/** fresh: { access, name, ch } direkt nach dem Anlegen – der Zugang erscheint nur dieses eine Mal. */
+function hooksDialog(room, fresh) {
+  openModal({
+    title: 'API-ZUGANG',
+    build: (body, close) => {
+      const chName = (id) => { const c = room.meta.ch.find((x) => x.id === id) || room.meta.ch[0]; return c ? c.name : ''; };
+      appendAll(body, el('p', { class: 'sc-p', text: 'Skripte oder Claude posten über einen Zugang in einen Textkanal. Der Zugang kann nur posten: Er liest nichts, sieht keine Mitglieder und kennt den Raumschlüssel nicht. Beiträge sind Ende-zu-Ende verschlüsselt.' }));
+
+      if (fresh) {
+        const input = el('textarea', { class: 'sc-hook-secret', rows: '6', readonly: true, spellcheck: 'false' });
+        input.value = fresh.access;
+        appendAll(body, el('div', { class: 'sc-hook-new tickbox' },
+          el('p', { class: 'sc-hook-new-head' }, icon('check', 14), 'Zugang „' + fresh.name + '“ für #' + chName(fresh.ch) + ' angelegt'),
+          input,
+          el('div', { class: 'sc-card-actions' },
+            el('button', { type: 'button', class: 'btn btn--primary', onclick: () => copyText(fresh.access, 'Zugang') }, icon('copy', 14), 'Kopieren')),
+          el('p', { class: 'sc-note', text: 'Wird nur jetzt angezeigt – danach nie wieder (nur widerrufen und neu anlegen). Wer ihn hat, kann in #' + chName(fresh.ch) + ' posten: Aufbewahren wie ein Passwort, nicht in Code oder Protokolle schreiben.' }),
+          el('p', { class: 'sc-hook-cli', text: 'node tools/clavichat-post.mjs "<zugang>" "Hallo"' })));
+        setTimeout(() => input.select(), 60);
+      }
+
+      // Liste: Namen aus den Raumdaten, angelegt/zuletzt benutzt vom Server
+      const list = el('div', { class: 'sc-hooks' }, el('p', { class: 'sc-empty-note', text: 'Lädt …' }));
+      appendAll(body, sectionHead('ZUGÄNGE'), list);
+      const drawList = (server) => {
+        list.textContent = '';
+        const seen = new Map((server || []).map((h) => [h.id, h]));
+        const ids = [...new Set(Object.keys(room.meta.hooks || {}).concat([...seen.keys()]))];
+        if (!ids.length) { list.appendChild(el('p', { class: 'sc-empty-note', text: 'Noch kein Zugang.' })); return; }
+        for (const hid of ids) {
+          const h = (room.meta.hooks || {})[hid];
+          const sv = seen.get(hid);
+          const gone = server && !sv;   // in den Raumdaten, beim Server schon widerrufen
+          const sub = h ? ['#' + chName(h.ch), gone ? 'WIDERRUFEN' : sv && sv.u ? 'ZULETZT ' + fmtWhen(sv.u).toUpperCase() : 'NOCH NICHT BENUTZT'] : ['UNBEKANNT (FEHLT IN DEN RAUMDATEN)'];
+          list.appendChild(el('div', { class: 'sc-hook-row' },
+            icon('code', 16),
+            el('span', { class: 'sc-hook-text' },
+              el('span', { class: 'sc-hook-title' }, el('span', { text: h ? h.n : 'Zugang ' + hid.slice(0, 6) }), el('span', { class: 'sc-hook-tag', text: 'API' })),
+              el('span', { class: 'sc-hook-sub', text: sub.join(' · ') })),
+            iconBtn('trash', 'Widerrufen', () => revokeHook(room, hid, h ? h.n : ''))));
+        }
+      };
+      api('hook.list', { id: room.id }).then((r) => drawList(r.list)).catch(() => drawList(null));
+
+      // Neuer Zugang
+      if (hookCount(room) < HOOK_LIMIT) {
+        const name = el('input', { type: 'text', maxlength: '30', placeholder: 'z. B. Claude' });
+        let ch = (room.meta.ch.find((c) => /news/i.test(c.name)) || room.meta.ch[0]).id;
+        const pick = choice(room.meta.ch.map((c) => ({ id: c.id, name: '#' + c.name })), ch, (id) => { ch = id; });
+        const go = el('button', { type: 'button', class: 'btn btn--primary btn--block' }, icon('plus', 14), 'Zugang anlegen');
+        go.addEventListener('click', async () => {
+          const n = cleanName(name.value).slice(0, 30);
+          if (!n) { name.focus(); return; }
+          go.disabled = true;
+          try {
+            const access = await createHook(room, n, ch);
+            close();
+            hooksDialog(S.rooms.get(room.id) || room, { access: access, name: n, ch: ch });
+          } catch (e) { go.disabled = false; toast(e.message, 'error'); }
+        });
+        name.addEventListener('keydown', (ev) => { if (ev.key === 'Enter') go.click(); });
+        appendAll(body, sectionHead('NEUER ZUGANG'), field('Name', name), field('Kanal', pick.el), go);
+      } else {
+        appendAll(body, el('p', { class: 'sc-note', text: 'Mehr als ' + HOOK_LIMIT + ' Zugänge je Raum gehen nicht – widerrufe einen, um einen neuen anzulegen.' }));
+      }
+      appendAll(body, el('p', { class: 'sc-note sc-hook-foot', text: 'Den Leseschlüssel eines Zugangs kennen alle Mitglieder – auch ehemalige. Nach dem Entfernen von Mitgliedern Zugang bei Bedarf widerrufen und neu anlegen.' }));
+    }
+  });
+}
+
+/** Zugang anlegen: erst beim Server (prüft Besitzer, Konto, Grenze), dann in die Raumdaten. Gibt den Zugang (Text) zurück. */
+async function createHook(room, name, ch) {
+  const keys = await C.newHookKeys();
+  const token = C.newHookToken();
+  const hid = C.randomId();
+  await api('hook.create', { id: room.id, hid: hid, th: await C.hookTokenHash(token) });
+  try {
+    const hooks = Object.assign({}, room.meta.hooks || {});
+    hooks[hid] = { n: name, ch: ch, k: keys.priv, c: Date.now() };
+    await updateMeta(room, metaOf(room, { hooks: hooks }));
+  } catch (e) {
+    await api('hook.del', { id: room.id, hid: hid }).catch(() => {});   // ohne Leseschlüssel nutzlos: zurücknehmen
+    throw e;
+  }
+  return C.hookAccess({ u: hookApiUrl(), r: room.id, h: hid, t: token, k: keys.pub });
+}
+
+async function revokeHook(room, hid, name) {
+  const ok = await confirmBox('ZUGANG WIDERRUFEN', (name ? '„' + name + '“' : 'Dieser Zugang') + ' kann danach nicht mehr posten. Bisherige Beiträge verschwinden aus der Ansicht.', 'Widerrufen', true);
+  if (!ok) { hooksDialog(room); return; }
+  try {
+    await api('hook.del', { id: room.id, hid: hid });
+    if (room.meta.hooks && room.meta.hooks[hid]) {
+      const hooks = Object.assign({}, room.meta.hooks);
+      delete hooks[hid];
+      await updateMeta(room, metaOf(room, { hooks: hooks }));
+    }
+    toast('Zugang widerrufen.', 'ok');
+  } catch (e) { toast(e.message, 'error'); }
+  hooksDialog(S.rooms.get(room.id) || room);
 }
 
 function inviteDialog(room) {
@@ -5954,6 +6122,7 @@ async function sendRoomMessage(room, ch, body, file) {
 async function handleFeedEntry(room, e) {
   if (e.k === 'sys') return roomSys(room, e);
   if (e.k === 'key') return roomKeyEnvelope(room, e);
+  if (e.k === 'hook') return roomHook(room, e);
   if (e.k !== 'msg' && e.k !== 'sig') return;
   const epoch = C.roomEpoch(e.d);
   const key = await roomKey(room.id, epoch);
@@ -6015,6 +6184,48 @@ function roomMessage(room, obj, from, e) {
   scheduleRender();
 }
 
+/* ---------- Beiträge von API-Zugängen ----------------------------------------
+   Verschlüsselt mit dem öffentlichen Schlüssel des Zugangs; den privaten
+   haben alle Mitglieder in den Raumdaten. Keine Signatur einer Identität:
+   Der Absender ist „der Zugang“ (Name und Ziel-Kanal legt der Besitzer fest).
+   Unbekannte oder widerrufene Zugänge: still ignorieren. */
+const HOOK_KEYS = new Map();   // "hid:priv" -> Promise<{ key, pub }>
+
+function hookKey(hid, priv) {
+  const id = hid + ':' + priv;
+  if (!HOOK_KEYS.has(id)) HOOK_KEYS.set(id, C.importHookKey(priv).catch(() => null));
+  return HOOK_KEYS.get(id);
+}
+
+async function roomHook(room, e) {
+  if (typeof e.h !== 'string' || typeof e.d !== 'string') return;
+  // Raumdaten noch nicht entschlüsselt (Raumschlüssel kommt noch): später.
+  if (!room.metaOk) { room.pending.push(e); return; }
+  const hook = room.meta.hooks && room.meta.hooks[e.h];
+  if (!hook) return;
+  const ts = e.t * 1000;
+  if (ts + roomTtl(room) * 1000 < serverNow()) return;
+  const k = await hookKey(e.h, hook.k);
+  if (!k) return;
+  let obj;
+  try { obj = await C.openHook(e.d, k, room.id, e.h); } catch (err) { return; }
+  if (!obj || obj.t !== 'hook') return;
+  const id = 'hook:' + (typeof obj.id === 'string' && /^[A-Za-z0-9_-]{8,40}$/.test(obj.id) ? obj.id : String(e.s));
+  if (room.byId.has(id)) return;   // derselbe Beitrag noch einmal (vom Server wiederholt)
+  const ch = room.meta.ch.some((c) => c.id === hook.ch) ? hook.ch : room.meta.ch[0].id;
+  const m = { id: id, from: 'hook:' + e.h, hook: { id: e.h, name: hook.n }, ts: ts, body: cleanText(obj.body) };
+  const list = room.msgs.get(ch) || [];
+  room.msgs.set(ch, list);
+  insertSorted(list, m);
+  room.byId.set(id, m);
+  if (ts > (S.vault.reads['room:' + room.id + ':' + ch] || 0)) {
+    noteArrival('room:' + room.id + ':' + ch, ts, isViewing('room', room.id, ch), () => {
+      room.unread.set(ch, (room.unread.get(ch) || 0) + 1);
+    }, hook.n + ' (API) in „' + room.meta.name + '“');
+  }
+  scheduleRender();
+}
+
 function roomSys(room, e) {
   if (typeof e.id !== 'string') return;
   const ts = e.t * 1000;
@@ -6055,10 +6266,11 @@ async function roomKeyEnvelope(room, e) {
   storeRoomKey(room.id, obj.epoch, obj.key);
   await saveVault(true).catch(() => {});
   room.pendingKey = !roomKeyRaw(room.id, room.epoch);
+  // Erst die Raumdaten (Kanäle, API-Zugänge), dann die wartenden Einträge.
+  if (room.metaEpoch === obj.epoch) await decryptMeta(room);
   const waiting = room.pending;
   room.pending = [];
   for (const p of waiting) await handleFeedEntry(room, p);
-  if (room.metaEpoch === obj.epoch) await decryptMeta(room);
   scheduleRender();
 }
 

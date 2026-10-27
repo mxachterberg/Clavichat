@@ -584,6 +584,120 @@ export async function openRoom(data, roomKey, rid, keyring) {
   return Object.assign({ obj: obj, epoch: epoch }, await signerOf(res.signatures, keyring));
 }
 
+/* ---------- API-Zugänge: nur posten ----------------------------------------
+   Ein Zugang ist ein Schlüsselpaar (ECDH P-256) plus ein zufälliges Token.
+   Der private Schlüssel steht nur in den verschlüsselten Raumdaten (alle
+   Mitglieder lesen damit die Beiträge), der Server kennt nur den Hash des
+   Tokens. Wer den Zugang hat (Token + öffentlicher Schlüssel), kann damit
+   nur verschlüsseln und posten – nichts lesen.
+   Beitrag („sealed box“): ein frischer ECDH-Schlüssel je Beitrag, daraus
+   mit dem öffentlichen Schlüssel des Zugangs per HKDF-SHA-256 ein
+   AES-256-GCM-Schlüssel. Salt = beide öffentlichen Schlüssel, Info und AAD
+   binden an Raum und Zugang – der Server kann einen Beitrag nicht in einen
+   anderen Raum oder unter einen anderen Zugang umhängen.
+   Paket: [1 Byte Version][65 Byte frischer öffentlicher Schlüssel][12 Byte IV][Chiffretext].
+   tools/clavichat-post.mjs rechnet genauso (ohne diese Datei). */
+export const HOOK_PREFIX = 'clavichat-hook:1:';
+export const HOOK_MAX = 16384;   // aufgefüllter Klartext eines Beitrags (Byte)
+const ECDH = { name: 'ECDH', namedCurve: 'P-256' };
+
+/** Neues Schlüsselpaar: priv (PKCS#8) und pub (roh, 65 Byte), beides Base64url. */
+export async function newHookKeys() {
+  const kp = await subtle.generateKey(ECDH, true, ['deriveBits']);
+  return {
+    priv: b64url(new Uint8Array(await subtle.exportKey('pkcs8', kp.privateKey))),
+    pub: b64url(new Uint8Array(await subtle.exportKey('raw', kp.publicKey)))
+  };
+}
+
+/** Zugangstoken: 256 Bit. Beim Server liegt nur hookTokenHash(). */
+export function newHookToken() {
+  return b64url(randomBytes(32));
+}
+
+export async function hookTokenHash(token) {
+  return toHex(new Uint8Array(await subtle.digest('SHA-256', te.encode(String(token)))));
+}
+
+function hookAad(rid, hid) {
+  return te.encode('clavichat hook ' + rid + ' ' + hid);
+}
+
+async function hookAesKey(shared, ephRaw, pubRaw, rid, hid) {
+  const salt = new Uint8Array(ephRaw.length + pubRaw.length);
+  salt.set(ephRaw, 0);
+  salt.set(pubRaw, ephRaw.length);
+  const ikm = await subtle.importKey('raw', shared, 'HKDF', false, ['deriveKey']);
+  return subtle.deriveKey({ name: 'HKDF', hash: 'SHA-256', salt: salt, info: te.encode('clavichat hook v1 ' + rid + ' ' + hid) },
+    ikm, { name: 'AES-GCM', length: 256 }, false, ['encrypt', 'decrypt']);
+}
+
+/** Beitrag verschlüsseln (wie das Kommandozeilen-Werkzeug). obj z. B. { t: 'hook', body }. */
+export async function sealHook(obj, pub, rid, hid) {
+  const pubRaw = unb64url(pub);
+  if (pubRaw.length !== 65) throw new Error('Ungültiger öffentlicher Schlüssel.');
+  const plain = te.encode(padJson(obj));
+  if (plain.length > HOOK_MAX) throw new Error('Text zu lang.');
+  const peer = await subtle.importKey('raw', pubRaw, ECDH, false, []);
+  const eph = await subtle.generateKey(ECDH, true, ['deriveBits']);
+  const ephRaw = new Uint8Array(await subtle.exportKey('raw', eph.publicKey));
+  const shared = await subtle.deriveBits({ name: 'ECDH', public: peer }, eph.privateKey, 256);
+  const key = await hookAesKey(shared, ephRaw, pubRaw, rid, hid);
+  const iv = randomBytes(12);
+  const ct = new Uint8Array(await subtle.encrypt({ name: 'AES-GCM', iv: iv, additionalData: hookAad(rid, hid) }, key, plain));
+  const out = new Uint8Array(1 + 65 + 12 + ct.length);
+  out[0] = 1;
+  out.set(ephRaw, 1);
+  out.set(iv, 66);
+  out.set(ct, 78);
+  return b64(out);
+}
+
+/**
+ * Privaten Schlüssel eines Zugangs laden (einmal je Zugang, dann
+ * zwischenspeichern): { key, pub } – den öffentlichen Schlüssel braucht der
+ * Salt, er entsteht hier aus dem privaten.
+ */
+export async function importHookKey(priv) {
+  const jwk = await subtle.exportKey('jwk', await subtle.importKey('pkcs8', unb64url(priv), ECDH, true, ['deriveBits']));
+  const x = unb64url(jwk.x), y = unb64url(jwk.y);
+  const pub = new Uint8Array(65);
+  pub[0] = 4;
+  pub.set(x, 33 - x.length);
+  pub.set(y, 65 - y.length);
+  delete jwk.key_ops;
+  const key = await subtle.importKey('jwk', jwk, ECDH, false, ['deriveBits']);
+  return { key: key, pub: b64url(pub) };
+}
+
+/** Beitrag öffnen. k: Ergebnis von importHookKey(). Wirft bei allem, was nicht passt. */
+export async function openHook(data, k, rid, hid) {
+  const bytes = unb64(data);
+  if (bytes.length < 1 + 65 + 12 + 16 || bytes[0] !== 1) throw new Error('Unbekanntes Format');
+  const ephRaw = bytes.slice(1, 66);
+  const eph = await subtle.importKey('raw', ephRaw, ECDH, false, []);
+  const shared = await subtle.deriveBits({ name: 'ECDH', public: eph }, k.key, 256);
+  const aes = await hookAesKey(shared, ephRaw, unb64url(k.pub), rid, hid);
+  const plain = await subtle.decrypt({ name: 'AES-GCM', iv: bytes.subarray(66, 78), additionalData: hookAad(rid, hid) }, aes, bytes.subarray(78));
+  return unpad(td.decode(plain));
+}
+
+/** Zugang als Text: Server, Raum, Zugang, Token, öffentlicher Schlüssel. */
+export function hookAccess(o) {
+  return HOOK_PREFIX + b64url(te.encode(JSON.stringify({ u: o.u, r: o.r, h: o.h, t: o.t, k: o.k })));
+}
+
+export function parseHookAccess(text) {
+  const s = String(text || '').trim();
+  if (s.indexOf(HOOK_PREFIX) !== 0) throw new Error('Das ist kein Clavichat-Zugang.');
+  const o = JSON.parse(td.decode(unb64url(s.slice(HOOK_PREFIX.length))));
+  const id = /^[A-Za-z0-9_-]{22}$/;
+  if (!o || typeof o.u !== 'string' || !id.test(o.r) || !id.test(o.h) || !/^[A-Za-z0-9_-]{43}$/.test(o.t) || !/^[A-Za-z0-9_-]{87}$/.test(o.k)) {
+    throw new Error('Der Zugang ist unvollständig.');
+  }
+  return o;
+}
+
 /* ---------- Sicherheitscode für Anrufe ----------------------------------- */
 /**
  * WebRTC verschlüsselt Ton und Bild mit Schlüsseln, die die beiden Geräte

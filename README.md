@@ -123,6 +123,7 @@ In der App zeigt „So funktioniert’s“ dieselben Grafiken zum Ausprobieren
 | Dateien | eigener AES-256-GCM-Schlüssel je Datei, 512-KiB-Stücke (Reihenfolge und Anzahl authentifiziert); Schlüssel nur in der verschlüsselten Nachricht; Bilder ohne Metadaten |
 | Auf dem Gerät | App-Sperre: PIN → PBKDF2 (600.000 Runden) → AES-256-GCM versiegelt die gespeicherte Anmeldung; Windows-App zusätzlich DPAPI |
 | Updates (Windows-App) | Update-Liste mit Ed25519 signiert, Datei mit SHA-256 geprüft; der Signaturschlüssel liegt nur beim Herausgeber |
+| API-Zugänge | nur posten: ECDH P-256 + HKDF-SHA-256 + AES-256-GCM an den Schlüssel des Zugangs, gebunden an Raum und Zugang; beim Server nur der Hash des Tokens |
 | Länge | jeder Klartext wird vor dem Verschlüsseln auf feste Größen aufgefüllt |
 
 Details, Grenzen und was der Server trotzdem sieht: [SECURITY.md](SECURITY.md).
@@ -143,10 +144,40 @@ Dockerfile         Server als Container (Apache + PHP)
 compose.yaml       Container samt Caddy für HTTPS – für einen eigenen Server
 docker/            Einstellungen für den Container
 tests/e2e.mjs      Ende-zu-Ende-Test gegen einen laufenden Server
+tools/             clavichat-post.mjs: Beiträge über einen API-Zugang (ohne Abhängigkeiten)
 ```
 
 Kein Build-Schritt für die Web-Fassung: Die Oberfläche ist reines JavaScript
 (ES-Module), der Server reines PHP.
+
+## Beiträge per API (nur posten)
+
+Skripte – oder Claude – posten über einen **API-Zugang** in einen Textkanal,
+etwa Server-Neuigkeiten in `#servernews`. Den Zugang legt der Besitzer des
+Raums an (Raum-Menü → EINSTELLUNGEN → API-Zugang: Name und Kanal; nur Konten,
+nicht in Meetings oder temporären Räumen, höchstens fünf je Raum). Er wird
+genau einmal angezeigt und lässt sich dort jederzeit widerrufen.
+
+```sh
+# Node 18 oder neuer, ohne Abhängigkeiten
+node tools/clavichat-post.mjs "clavichat-hook:1:…" "Wartung heute um 22 Uhr"
+echo "Backup fertig" | CLAVICHAT_HOOK="clavichat-hook:1:…" node tools/clavichat-post.mjs
+```
+
+Über `CLAVICHAT_HOOK` steht der Zugang weder im Verlauf der Shell noch in der
+Prozessliste. Ins Repository, in Logs oder Tickets gehört er nicht – wer ihn
+hat, kann in den Kanal posten.
+
+Warum der Zugang nichts lesen kann: Er enthält nur Server-Adresse, Raum,
+Kennung, ein zufälliges Token und einen **öffentlichen** Schlüssel. Das
+Werkzeug verschlüsselt jeden Beitrag selbst (frischer ECDH-Schlüssel →
+HKDF → AES-256-GCM, an Raum und Zugang gebunden); der passende private
+Schlüssel steht nur in den verschlüsselten Raumdaten der Mitglieder. Der
+Server kennt vom Token nur den SHA-256-Wert, nimmt es ausschließlich für
+`hook.post` an (Größe höchstens 16 KB, je Zugang 20 Beiträge pro Minute) und
+liefert darauf nichts zurück – keinen Verlauf, keine Mitglieder, keinen
+Raumschlüssel. Die Beiträge erscheinen mit dem Namen des Zugangs und dem
+Zeichen „API“; ältere Apps (bis 1.8.8) blenden sie aus.
 
 ## Eigenen Server einrichten
 

@@ -80,6 +80,14 @@ try {
             sc_limit('invi:' . $ipTag, 60, 3600);
             json_out(['ok' => true] + SecureCom::inviteInfo($body));
 
+        case 'hook.post':
+            // API-Zugang (nur posten, ohne Anmeldung): je Adresse und je Zugang begrenzt.
+            sc_limit('hookip:' . $ipTag, 60, 60);
+            $hookTag = hash('sha256', SecureCom::str($body, 'r') . '/' . SecureCom::str($body, 'h'));
+            sc_limit('hook:' . $hookTag, 20, 60);
+            sc_limit('hookh:' . $hookTag, 300, 3600);
+            json_out(['ok' => true] + SecureCom::hookPost($body));
+
         case 'sso.who':
             // Nur mit Ticket des Dashboards (gibt es auf eigenständigen Servern nicht).
             sc_limit('sso:' . $ipTag, 30, 600);
@@ -228,6 +236,17 @@ try {
         case 'room.post':
             sc_limit('post:' . $me['id'], 240, 60);
             json_out(['ok' => true] + SecureCom::post($me, $body));
+
+        case 'hook.create':
+            // API-Zugang anlegen (nur Besitzer, nur Konten, nur bleibende Räume).
+            sc_limit('hookc:' . $me['id'], 20, 3600);
+            json_out(['ok' => true] + SecureCom::hookCreate($me, $body));
+
+        case 'hook.list':
+            json_out(['ok' => true, 'list' => SecureCom::hookList($me, $body)]);
+
+        case 'hook.del':
+            json_out(['ok' => true] + SecureCom::hookDel($me, $body));
 
         case 'room.voice':
             json_out(['ok' => true] + SecureCom::voice($me, $body));

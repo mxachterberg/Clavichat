@@ -689,6 +689,104 @@ await call('room.delete', { id: aoOnce }, accToken);
 await call('room.leave', { id: aoId }, TB.token);
 r = await call('room.delete', { id: aoId }, accToken);
 ok(r.ok, 'Raum nur für Konten gelöscht');
+console.log('\n== Server: API-Zugänge (nur posten)');
+const hookRoom = C.randomId();
+const hookRk = await C.importRoomKey(C.newRoomKey());
+const hk = await C.newHookKeys();
+const hid = C.randomId();
+const hookToken = C.newHookToken();
+r = await call('room.create', { id: hookRoom, meta: await C.sealRoom({ t: 'meta', name: 'News', ch: [{ id: 'c1', name: 'allgemein' }, { id: 'news', name: 'servernews' }] }, hookRk, 1, hookRoom, acc.privateKey) }, accToken);
+ok(r.ok, 'Konto legt einen Raum für API-Beiträge an');
+r = await call('room.invite', { id: hookRoom }, accToken);
+r = await call('room.join', { id: hookRoom, code: r.code }, acc2Token);
+ok(r.ok && r.room.members.length === 2, 'zweites Konto ist Mitglied');
+r = await call('hook.create', { id: hookRoom, hid, th: await C.hookTokenHash(hookToken) }, acc2Token);
+ok(!r.ok && r._status === 403, 'hook.create: Mitglied (nicht Besitzer) → 403');
+r = await call('hook.create', { id: roomId, hid, th: await C.hookTokenHash(hookToken) }, TA.token);
+ok(!r.ok && r._status === 403, 'hook.create: temporäre Sitzung (eigener Raum) → 403');
+const hookMeet = C.randomId();
+await call('room.create', { id: hookMeet, meta: await C.sealRoom({ t: 'meta', name: 'M', ch: [], meet: 1, once: 1 }, onceKey, 1, hookMeet, acc.privateKey), once: 1 }, accToken);
+r = await call('hook.create', { id: hookMeet, hid, th: await C.hookTokenHash(hookToken) }, accToken);
+ok(!r.ok && r._status === 422, 'hook.create: Meeting → 422');
+await call('room.delete', { id: hookMeet }, accToken);
+const hookTmp = C.randomId();
+await call('room.create', { id: hookTmp, meta: await C.sealRoom({ t: 'meta', name: 'T', ch: [], meet: 1 }, onceKey, 1, hookTmp, acc.privateKey), tmp: 1 }, accToken);
+r = await call('hook.create', { id: hookTmp, hid, th: await C.hookTokenHash(hookToken) }, accToken);
+ok(!r.ok && r._status === 422, 'hook.create: verfallender Raum → 422');
+await call('room.delete', { id: hookTmp }, accToken);
+r = await call('hook.create', { id: hookRoom, hid, th: 'kein-hash' }, accToken);
+ok(!r.ok && r._status === 422, 'hook.create: Token-Hash im falschen Format → 422');
+r = await call('hook.create', { id: hookRoom, hid, th: await C.hookTokenHash(hookToken) }, accToken);
+ok(r.ok && r.hid === hid && Object.keys(r).filter(k => k !== '_status').sort().join() === 'hid,ok', 'hook.create: Besitzer (Konto) legt einen Zugang an');
+// Privater Schlüssel in die (verschlüsselten) Raumdaten
+r = await call('room.meta', { id: hookRoom, e: 1, meta: await C.sealRoom({ t: 'meta', name: 'News', ch: [{ id: 'c1', name: 'allgemein' }, { id: 'news', name: 'servernews' }],
+  hooks: { [hid]: { n: 'Claude', ch: 'news', k: hk.priv, c: Date.now() } } }, hookRk, 1, hookRoom, acc.privateKey) }, accToken);
+ok(r.ok, 'Leseschlüssel des Zugangs steht in den Raumdaten');
+const access = C.hookAccess({ u: API, r: hookRoom, h: hid, t: hookToken, k: hk.pub });
+const parsed = C.parseHookAccess(access);
+ok(parsed.r === hookRoom && parsed.h === hid && parsed.t === hookToken && parsed.k === hk.pub && !access.includes(hk.priv.slice(0, 20)), 'Zugang: Server, Raum, Kennung, Token, öffentlicher Schlüssel – kein privater');
+const hookPlain = 'Server-Neuigkeit: Wartung um 22 Uhr';
+const hookData = await C.sealHook({ v: 1, t: 'hook', id: C.randomId(), ts: Date.now(), body: hookPlain }, parsed.k, hookRoom, hid);
+r = await call('hook.post', { r: hookRoom, h: hid, t: C.newHookToken(), d: hookData });
+ok(!r.ok && r._status === 403, 'hook.post mit falschem Token → 403');
+r = await call('hook.post', { r: roomId, h: hid, t: hookToken, d: hookData });
+ok(!r.ok && r._status === 403 && r.error === 'Zugang ungültig oder widerrufen.', 'hook.post in einen anderen Raum → 403 (gleiche Meldung)');
+r = await call('hook.post', { r: hookRoom, h: hid, t: hookToken, d: hookData });
+ok(r.ok && Object.keys(r).filter(k => k !== '_status').join() === 'ok', 'hook.post: angenommen, Antwort nur „ok“');
+r = await call('hook.post', { r: hookRoom, h: hid, t: hookToken, d: 'A'.repeat(22004) });
+ok(!r.ok && r._status === 413, 'hook.post: Größenlimit (22 000 Zeichen Base64, 16 KB Klartext) → 413');
+let tooLong = false;
+try { await C.sealHook({ v: 1, t: 'hook', body: 'x'.repeat(16400) }, parsed.k, hookRoom, hid); } catch (e) { tooLong = true; }
+ok(tooLong, 'sealHook: mehr als 16 KB Klartext wird abgelehnt');
+r = await call('poll', { i: { s: 0, o: 0, g: 0 }, r: { [hookRoom]: { s: 0, o: 0, g: 0 } } }, acc2Token);
+const hookEntry = r.ok && r.r[hookRoom].e.find(e => e.k === 'hook');
+ok(hookEntry && hookEntry.h === hid && !('to' in hookEntry) && !hookEntry.d.includes(C.b64(C.te.encode('Server'))) && C.unb64(hookEntry.d)[0] === 1, 'Beitrag liegt als Chiffretext im Verlauf (k „hook“)');
+r = await call('rooms', {}, acc2Token);
+const memberMeta = await C.openRoom(r.rooms.find(x => x.id === hookRoom).meta, hookRk, hookRoom, [acc.publicKey]);
+const hookOpened = await C.openHook(hookEntry.d, await C.importHookKey(memberMeta.obj.hooks[hid].k), hookRoom, hid);
+ok(hookOpened.t === 'hook' && hookOpened.body === hookPlain && memberMeta.obj.hooks[hid].ch === 'news', 'Mitglied entschlüsselt den Beitrag mit dem Schlüssel aus den Raumdaten');
+let rehung = false;
+try { await C.openHook(hookEntry.d, await C.importHookKey(memberMeta.obj.hooks[hid].k), roomId, hid); } catch (e) { rehung = true; }
+ok(rehung, 'umgehängt (anderer Raum) lässt sich der Beitrag nicht öffnen');
+for (const a of ['rooms', 'poll', 'me', 'vault.get']) {
+  r = await call(a, { i: { s: 0, o: 0, g: 0 }, r: { [hookRoom]: { s: 0, o: 0, g: 0 } } }, hookToken);
+  ok(!r.ok && r._status === 401, 'Zugang kann nichts lesen: „' + a + '“ mit dem Token → 401');
+}
+r = await call('hook.list', { id: hookRoom }, accToken);
+ok(r.ok && r.list.length === 1 && r.list[0].id === hid && r.list[0].u > 0 && !('h' in r.list[0]), 'hook.list (Besitzer): Kennung, angelegt, zuletzt benutzt – kein Hash');
+r = await call('hook.list', { id: hookRoom }, acc2Token);
+ok(!r.ok && r._status === 403, 'hook.list: Mitglied → 403');
+r = await call('rooms', {}, acc2Token);
+ok(r.ok && !JSON.stringify(r).includes('"hk"') && !JSON.stringify(r).includes(await C.hookTokenHash(hookToken)), 'Raumliste der Mitglieder: keine Token-Hashes');
+// Zweiter Zugang: widerrufen → keine Beiträge mehr
+const hid2 = C.randomId();
+const tok2 = C.newHookToken();
+r = await call('hook.create', { id: hookRoom, hid: hid2, th: await C.hookTokenHash(tok2) }, accToken);
+ok(r.ok, 'zweiter Zugang angelegt');
+const data2 = await C.sealHook({ v: 1, t: 'hook', id: C.randomId(), body: 'zwei' }, hk.pub, hookRoom, hid2);
+r = await call('hook.post', { r: hookRoom, h: hid2, t: tok2, d: data2 });
+ok(r.ok, 'zweiter Zugang postet');
+r = await call('hook.del', { id: hookRoom, hid: hid2 }, acc2Token);
+ok(!r.ok && r._status === 403, 'hook.del: Mitglied → 403');
+r = await call('hook.del', { id: hookRoom, hid: hid2 }, accToken);
+ok(r.ok && r.n === 1, 'hook.del: Besitzer widerruft');
+r = await call('hook.post', { r: hookRoom, h: hid2, t: tok2, d: data2 });
+ok(!r.ok && r._status === 403, 'widerrufener Zugang → 403');
+// Höchstens fünf je Raum
+for (let i = 0; i < 4; i++) await call('hook.create', { id: hookRoom, hid: C.randomId(), th: await C.hookTokenHash(C.newHookToken()) }, accToken);
+r = await call('hook.create', { id: hookRoom, hid: C.randomId(), th: await C.hookTokenHash(C.newHookToken()) }, accToken);
+ok(!r.ok && r._status === 409, 'höchstens 5 Zugänge je Raum → 409');
+// Ratenbegrenzung je Zugang (20 je Minute)
+let limited = 0;
+for (let i = 0; i < 22; i++) {
+  r = await call('hook.post', { r: hookRoom, h: hid, t: hookToken, d: hookData });
+  if (!r.ok && r._status === 429) { limited = i; break; }
+}
+ok(limited > 0, 'Ratenbegrenzung: nach ' + limited + ' weiteren Beiträgen → 429');
+r = await call('room.delete', { id: hookRoom }, accToken);
+r = await call('hook.post', { r: hookRoom, h: hid, t: hookToken, d: hookData });
+ok(!r.ok && (r._status === 403 || r._status === 429), 'Raum gelöscht → Zugang wirkungslos');
+
 r = await call('delete', { auth: keys2.auth }, acc2Token);
 ok(r.ok, 'zweites Konto gelöscht');
 
