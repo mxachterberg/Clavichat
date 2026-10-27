@@ -4,6 +4,26 @@ Was sich von Version zu Version ändert. Beim Veröffentlichen wird der
 Abschnitt einer Version zum Text des GitHub-Releases
 (`.github/workflows/windows.yml`).
 
+## 1.9.1 – 27.10.2026
+
+Einladungs-Vorschau, Verlauf für neue Mitglieder und neue Töne. Für
+installierte Apps ein kleines Update.
+
+- **Einladungs-Vorschau:** Wer einen Einladungslink öffnet, sieht „Du wirst
+  eingeladen in …“ mit Raumbild, Name und Mitgliederzahl – auf der
+  Startseite, im Beitreten-Dialog und bei Meetings. Name und Bild bleiben
+  verschlüsselt; die App entschlüsselt sie mit dem Schlüssel aus dem Link.
+- **Neue Mitglieder sehen den Verlauf:** Neuer Schalter im Raum-Menü. Ist er
+  an, können Neue auch ältere Nachrichten lesen (soweit sie noch aufbewahrt
+  werden); die älteren Raumschlüssel liegen dafür verschlüsselt in den
+  Raumdaten. Gilt für alle Kanäle des Raums.
+- **Neue Töne:** Anrufe klingeln wie ein klassisches Telefon, neue
+  Nachrichten mit einem kurzen, warmen Zwei-Ton.
+- **Reagieren** sitzt jetzt unten links an der Nachricht, neben den
+  Reaktionen.
+- **Eingeschränkte Kanäle** zeigen in der Seitenleiste immer ein Schloss
+  (offen, wenn du schreiben darfst).
+
 ## 1.9.0 – 27.10.2026
 
 Ränge und Rechte, Reaktionen, API-Zugänge zum Posten, Aufbewahrung je Kanal
