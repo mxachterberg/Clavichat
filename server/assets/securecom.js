@@ -6851,19 +6851,33 @@ function inviteDialog(room) {
     title: 'EINLADEN',
     build: (body) => {
       const out = el('div', { class: 'sc-invite-out' });
+      // Gültigkeit des Links (je Gerät gemerkt); der Server erlaubt 1–90 Tage.
+      let days = 7;
+      try { days = [1, 7, 30, 90].includes(+localStorage.getItem('sc-invite-days')) ? +localStorage.getItem('sc-invite-days') : 7; } catch (e) { /* Standard */ }
+      const valid = choice([
+        { id: '1', name: '1 Tag' },
+        { id: '7', name: '7 Tage', info: 'Standard' },
+        { id: '30', name: '30 Tage' },
+        { id: '90', name: '90 Tage' }
+      ], String(days), (id) => {
+        days = +id;
+        try { localStorage.setItem('sc-invite-days', id); } catch (e) { /* egal */ }
+      });
       const mk = el('button', { type: 'button', class: 'btn btn--primary btn--block' }, icon('link', 14), 'Einladungslink erstellen');
       mk.addEventListener('click', async () => {
         mk.disabled = true;
         try {
-          const r = await api('room.invite', { id: room.id });
+          const r = await api('room.invite', { id: room.id, days: days });
           const raw = roomKeyRaw(room.id, r.epoch);
           if (!raw) throw new Error('Der aktuelle Raumschlüssel fehlt noch.');
+          const until = new Date((r.x || 0) * 1000).toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit', year: 'numeric' });
           const link = WEB_URL + '#join=' + room.id + '.' + r.code + '.' + raw + '.' + r.epoch;
           const input = el('input', { type: 'text', readonly: true, value: link });
           out.textContent = '';
           out.append(input,
             el('button', { type: 'button', class: 'btn', onclick: () => copyText(link, 'Link') }, icon('copy', 14), 'Kopieren'),
-            el('p', { class: 'sc-note', text: 'Gilt 7 Tage, höchstens 25-mal. Wer den Link hat, kann beitreten und mitlesen – teile ihn nur über einen sicheren Weg. Nach „Raumschlüssel erneuern“ ist er ungültig.' +
+            el('p', { class: 'sc-note', text: 'Gilt bis ' + until + ' (' + (days === 1 ? '1 Tag' : days + ' Tage') + '), höchstens 25-mal. Wer den Link hat, kann beitreten und mitlesen – teile ihn nur über einen sicheren Weg. Nach „Raumschlüssel erneuern“ ist er ungültig.' +
+              (days > 7 ? ' Solange Einladungslinks offen sind, wechselt der Raumschlüssel nicht wöchentlich.' : '') +
               (room.ao ? ' Nur mit Konto: Wer den Link ohne Konto öffnet, wird zur Kontoerstellung geführt.' : '') }));
           input.select();
         } catch (e) { toast(e.message, 'error'); }
@@ -6887,7 +6901,7 @@ function inviteDialog(room) {
       appendAll(body,
         el('p', { class: 'sc-p', text: 'Per Link oder direkt an eine Person – dann geht die Einladung samt Raumschlüssel PGP-verschlüsselt an genau sie.' }),
         room.ao ? el('p', { class: 'sc-gate-invite sc-ao-invite' }, icon('users', 15), 'Nur Mitglieder mit Konto: Der Link gilt nur für Konten. Wer ihn ohne Konto öffnet, wird zur Kontoerstellung geführt.') : null,
-        mk, out,
+        field('Gültig', valid.el), mk, out,
         sectionHead('DIREKT EINLADEN'),
         people.length ? list : el('p', { class: 'sc-empty-note', text: 'Niemand in Reichweite. Per Schlüssel verbundene oder online sichtbare Personen erscheinen hier.' }));
     }

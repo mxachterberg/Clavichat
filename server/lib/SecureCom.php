@@ -1120,7 +1120,7 @@ class SecureCom
         // Gäste: nur Links zu ihrem Einmal-Meeting – wer damit kommt, lässt der Gastgeber erst zu.
         $guest = self::isGuest($me);
         $rid  = self::idOf(self::str($b, 'id'));
-        $days = max(1, min(30, (int)($b['days'] ?? 7)));
+        $days = max(1, min(90, (int)($b['days'] ?? 7)));   // Gültigkeit: 1–90 Tage (Auswahl im Einladen-Dialog)
         $max  = max(1, min(100, (int)($b['max'] ?? 25)));
         return self::roomMutate($rid, function (&$room) use ($me, $days, $max, $guest) {
             if ($guest && (empty($room['ot']) || !isset($room['mem'][$me['id']]))) {
