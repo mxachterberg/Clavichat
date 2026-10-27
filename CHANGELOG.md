@@ -4,6 +4,38 @@ Was sich von Version zu Version ändert. Beim Veröffentlichen wird der
 Abschnitt einer Version zum Text des GitHub-Releases
 (`.github/workflows/windows.yml`).
 
+## 1.9.0 – 27.10.2026
+
+Ränge und Rechte, Reaktionen, API-Zugänge zum Posten, Aufbewahrung je Kanal
+und ein neues Raum-Menü. Für installierte Apps ein kleines Update.
+
+- **Ränge und Rechte (wie bei Discord):** Raum-Menü → Ränge: Name, Farbe,
+  Reihenfolge und Rechte – Nachrichten schreiben, reagieren, Sprachkanäle,
+  einladen, Kanäle verwalten, Raum verwalten, Nachrichten verwalten,
+  Mitglieder entfernen, API-Zugänge, Ränge verwalten, Administrator. Man
+  vergibt nur Ränge unterhalb des eigenen. Die Mitgliederliste ist nach Rang
+  gruppiert und farbig, Ränge vergibt man per Rechtsklick auf ein Mitglied.
+  Rangnamen und Farben sind verschlüsselt; der Server kennt nur zufällige
+  Kennungen und Rechte. Raumschlüssel, „Nur Konten“, Permanent und Löschen
+  des Raums bleiben beim Besitzer.
+- **Wer darf wo schreiben:** Rechtsklick auf einen Kanal → Berechtigungen,
+  z. B. „nur Moderatoren schreiben“. Lesen können weiter alle Mitglieder.
+  Server und Apps setzen das durch.
+- **Reaktionen:** zwölf eigene Symbole, per Rechtsklick oder Knopf an der
+  Nachricht; Ende-zu-Ende verschlüsselt.
+- **API-Zugänge – nur posten, nie lesen:** Der Besitzer legt für einen
+  Textkanal einen Zugang an und bekommt ihn einmalig angezeigt. Skripte
+  posten damit verschlüsselt (`node tools/clavichat-post.mjs`), lesen
+  können sie nichts. Beiträge tragen das Zeichen API, Anleitung im Dialog.
+- **Aufbewahrung:** neu „Permanent“ und eigene Aufbewahrung je Textkanal.
+- **Nachrichten löschen:** Besitzer (bzw. „Nachrichten verwalten“) löschen
+  per Rechtsklick jede Nachricht für alle.
+- **Kanäle verschieben:** per Drag & Drop oder „Nach oben/unten“.
+- **Raum-Menü neu** mit Raum-Karte und Gruppen; **24 Raum-Symbole** in
+  8 Farben; **MEET** mit Gruppen-Symbol und Rückfrage.
+- **Kleinigkeiten:** Kanalnamen behalten Groß- und Kleinschreibung;
+  Raumbilder in der Leiste werden nicht mehr gestaucht.
+
 ## 1.8.8 – 27.10.2026
 
 Kleinigkeit. Für installierte Apps ein kleines Update.
