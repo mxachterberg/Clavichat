@@ -457,6 +457,11 @@ console.log('\n== Server: Beitritt mit Bestätigung (Links von Teilnehmern)');
 r = await call('room.invite', { id: onceId, max: 100, days: 1 }, TG.token);
 ok(r.ok && r.code && r.ap === true, 'Gast erstellt einen Link zu seinem Meeting (Beitritt braucht Zustimmung)');
 const gCode = r.code;
+r = await call('invite.info', { id: onceId, code: onceCode });
+ok(r.ok && r.ao === false && r.m === onceMeta && r.n === 2, 'invite.info zum Meeting-Link der Gastgeberin: Raumdaten für die Vorschau');
+ok((await C.openRoom(r.m, onceKey, onceId, [])).obj.name === 'Schnell', 'Meeting-Vorschau: Name mit dem Link-Schlüssel lesbar');
+r = await call('invite.info', { id: onceId, code: gCode });
+ok(r.ok && r.ao === false && Object.keys(r).filter(k => k !== '_status').sort().join() === 'ao,ok', 'invite.info zum Link eines Teilnehmers (Zustimmung nötig): keine Raumdaten');
 r = await call('room.invite', { id: onceId, max: 100, days: 1 }, TG.token);
 ok(r.ok && r.code === gCode, 'Gast bekommt wieder denselben Link (keine Flut offener Einladungen)');
 const TW = await makeGuest('Gast Wanda', onceId, gCode);
@@ -648,13 +653,26 @@ ok(r.ok && r.code, 'Einladung zum Raum nur für Konten');
 const aoCode = r.code;
 r = await call('invite.info', { id: aoId, code: aoCode });
 ok(r.ok && r.ao === true, 'invite.info ohne Anmeldung: Raum lässt nur Konten zu');
-ok(r.ok && Object.keys(r).filter(k => k !== '_status').sort().join() === 'ao,ok', 'invite.info verrät nichts weiter');
+ok(r.ok && Object.keys(r).filter(k => k !== '_status').sort().join() === 'ao,m,me,n,ok', 'invite.info mit gültiger Einladung: nur Merkmal, verschlüsselte Raumdaten, Generation, Mitgliederzahl');
+ok(r.m === aoMeta && r.me === 1 && r.n === 1, 'invite.info: Raumdaten unverändert verschlüsselt (Generation 1, 1 Mitglied)');
+{
+  // Vorschau wie in der App: nur mit dem Schlüssel aus dem Link (ohne Unterschriftsprüfung).
+  const res = await C.openRoom(r.m, await C.importRoomKey(rk), aoId, []);
+  ok(res.obj.t === 'meta' && res.obj.name === 'Nur Konten' && C.roomEpoch(r.m) === 1, 'Vorschau: Raumdaten mit dem Link-Schlüssel entschlüsselbar');
+  let fail = false;
+  try { await C.openRoom(r.m, await C.importRoomKey(C.newRoomKey()), aoId, []); } catch (e) { fail = true; }
+  ok(fail, 'Vorschau: mit falschem Schlüssel nicht lesbar');
+  fail = false;
+  try { await C.openRoom(r.m, await C.importRoomKey(rk), C.randomId(), []); } catch (e) { fail = true; }
+  ok(fail, 'Vorschau: an den Raum gebunden (andere Kennung → nicht lesbar)');
+}
 r = await call('invite.info', { id: aoId, code: 'falsch' + aoCode.slice(6) });
 ok(r.ok && r.ao === false, 'invite.info mit falschem Code: nein (kein Hinweis auf das Merkmal)');
+ok(Object.keys(r).filter(k => k !== '_status').sort().join() === 'ao,ok', 'invite.info mit falschem Code: keine Raumdaten');
 r = await call('invite.info', { id: C.randomId(), code: aoCode });
-ok(r.ok && r.ao === false, 'invite.info zu unbekanntem Raum: nein');
+ok(r.ok && r.ao === false && !('m' in r), 'invite.info zu unbekanntem Raum: nein, keine Raumdaten');
 r = await call('invite.info', { id: 'kaputt', code: 'x' });
-ok(r.ok && r.ao === false, 'invite.info mit ungültigen Angaben: nein');
+ok(r.ok && r.ao === false && !('m' in r), 'invite.info mit ungültigen Angaben: nein');
 r = await call('room.join', { id: aoId, code: aoCode }, TB.token);
 ok(!r.ok && r._status === 403 && r.account === true, 'temporäre Sitzung wird abgelehnt (403, Kennzeichen „account“)');
 r = await call('room.join', { id: aoId, code: 'falsch' + aoCode.slice(6) }, TB.token);

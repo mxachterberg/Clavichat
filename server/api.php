@@ -76,7 +76,8 @@ try {
             json_out(['ok' => true] + SecureCom::startTemp($body));
 
         case 'invite.info':
-            // Vor dem Beitritt: Lässt der Raum nur Konten zu? (Nur mit gültiger Einladung.)
+            // Vor dem Beitritt: Lässt der Raum nur Konten zu? Dazu verschlüsselte Raumdaten
+            // für die Vorschau (nur mit gültiger Einladung).
             sc_limit('invi:' . $ipTag, 60, 3600);
             json_out(['ok' => true] + SecureCom::inviteInfo($body));
 

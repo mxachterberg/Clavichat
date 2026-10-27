@@ -2214,6 +2214,56 @@ html[data-theme="light"] .sc-modal { background: rgba(40, 40, 40, .3); }
 .sc-gate-invite--ao > .sc-ic, .sc-ao-invite > .sc-ic { flex: none; margin-top: 2px; }
 .sc-ao-invite { margin: 0 0 12px; }
 
+/* ---- Vorschau einer Einladung: „Du wirst eingeladen in …“ (wie die Raum-Karte) */
+.sc-inv-card {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 0 0 14px;
+  padding: 12px;
+  border: 1px solid var(--border-soft);
+  background: var(--sc-soft);
+  text-align: left;
+}
+.sc-inv-card .sc-rm-pic { width: 52px; height: 52px; font-size: 15px; }
+.sc-inv-card.is-gate { margin-bottom: 18px; border-color: var(--accent); background: var(--panel); }
+.sc-inv-label {
+  font-family: var(--mono);
+  font-size: 9.5px;
+  font-weight: 600;
+  letter-spacing: .14em;
+  line-height: 1.2;
+  color: var(--accent);
+}
+.sc-inv-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 18px;
+  font-weight: 600;
+  line-height: 1.25;
+  color: var(--text);
+}
+.sc-inv-facts {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 12px;
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: .08em;
+  color: var(--muted);
+}
+.sc-inv-facts > span:not(.sc-side-tag) { white-space: nowrap; }
+/* Auf der Startseite hängt der bisherige Hinweis direkt unter der Karte. */
+.sc-inv-slot:not([hidden]) + .sc-gate-invite { margin-top: -18px; border-top: 0; }
+.sc-inv-paste .sc-inv-slot:not([hidden]) { margin: -4px 0 14px; }
+.sc-inv-paste .sc-inv-card { margin: 0; }
+@media (max-width: 420px) {
+  .sc-inv-card .sc-rm-pic { width: 44px; height: 44px; }
+  .sc-inv-name { font-size: 16px; }
+}
+
 /* ---- Meeting-Modus (Gäste und Gastgeber von der Startseite): nur das Meeting */
 .sc-gate-card.is-guest { max-width: 430px; }
 .sc-guest-emblem { display: grid; place-items: center; width: 62px; height: 62px; margin: 6px 0 14px; border: 1px solid var(--accent); background: var(--accent-soft); color: var(--accent); }

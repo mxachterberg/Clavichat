@@ -1170,6 +1170,8 @@ function renderGate(tab, message) {
     el('h1', { class: 'sc-gate-title', text: 'Sicher schreiben & telefonieren' }),
     el('p', { class: 'sc-gate-sub', text: 'Ende-zu-Ende verschlüsselt: Deine Schlüssel entstehen ' + (DESKTOP ? 'in dieser App' : 'in diesem Browser') + '. Der Server leitet nur Verschlüsseltes weiter – auch der Hoster kann nicht mitlesen oder mithören.' })
   );
+  // Wohin die Einladung führt: Raumbild, Name, Mitglieder (sofern der Server es liefert).
+  if (S.pendingJoin) card.appendChild(invitePreviewSlot(S.pendingJoin, 'is-gate'));
   if (ao) {
     // Ohne Einladung weiter: dann wieder mit temporärer Sitzung.
     const drop = el('a', { href: '#', text: 'Ohne Einladung fortfahren', onclick: (ev) => {
@@ -1632,6 +1634,7 @@ function showGuestJoin(message) {
     el('span', { class: 'sc-guest-emblem' }, icon('group', 30)),
     el('h1', { class: 'sc-gate-title sc-guest-title', text: 'Meeting beitreten' }),
     el('p', { class: 'sc-gate-sub', text: 'Mit welchem Namen möchtest du dem Meeting beitreten?' }),
+    invitePreviewSlot(join, 'is-gate'),
     error, form,
     el('p', { class: 'sc-gate-note', text: 'Kein Konto nötig. Ende-zu-Ende verschlüsselt: Dein Schlüssel entsteht jetzt ' + LOCAL + ' und lebt nur ' + KEY_HOME + '. Verlässt du das Meeting, löscht der Server deine Gast-Sitzung.' }));
   bootDone();
@@ -2688,7 +2691,7 @@ async function offerPendingJoin() {
   if (join.meet) {
     if (S.rooms.has(join.rid)) { openRoom(join.rid); return; }
     // #meet= stammt von älteren (festen) Meetings – sie funktionieren weiter.
-    const ok = await confirmBox('MEETING', join.once
+    const ok = await inviteConfirm('MEETING', join, join.once
       ? 'Du wurdest zu einem Meeting eingeladen. Mit ' + (S.mode === 'account' ? 'deinem Konto' : 'deiner Sitzung') + ' beitreten? Dort könnt ihr schreiben und bei Bedarf einen Call starten – die anderen sehen dich in der Teilnehmerliste.'
       : 'Du wurdest in einen Meeting-Raum eingeladen. Beitreten? Dort könnt ihr schreiben und bei Bedarf einen Call starten – die anderen sehen dich in der Mitgliederliste.', 'Meeting beitreten');
     if (ok) joinRoom(join);
@@ -2697,8 +2700,25 @@ async function offerPendingJoin() {
   if (S.rooms.has(join.rid)) { openRoom(join.rid); return; }
   // Temporäre Sitzung, Raum nur für Konten: gleich zur Kontoerstellung anbieten.
   if (S.mode === 'temp' && await inviteAccountsOnly(join)) { accountOnlyDialog(join); return; }
-  const ok = await confirmBox('Einladung', 'Du wurdest in einen Raum eingeladen. Beitreten? Alle Mitglieder sehen dich danach in der Mitgliederliste.', 'Beitreten');
+  const ok = await inviteConfirm('EINLADUNG', join, 'Du wurdest in einen Raum eingeladen. Beitreten? Alle Mitglieder sehen dich danach in der Mitgliederliste.', 'Beitreten');
   if (ok) joinRoom(join);
+}
+
+/** Wie confirmBox, oben mit der Karte „Du wirst eingeladen in …“ (sofern es eine Vorschau gibt). */
+async function inviteConfirm(title, inv, text, okLabel) {
+  await Promise.race([inviteInfo(inv), sleep(2500)]);
+  return new Promise((resolve) => {
+    let done = false;
+    openModal({
+      title: title,
+      build: (body) => appendAll(body, invitePreviewSlot(inv), el('p', { class: 'sc-p', text: text })),
+      onClose: () => { if (!done) resolve(false); },
+      actions: [
+        { label: 'Abbrechen', onClick: (close) => close() },
+        { label: okLabel, primary: true, onClick: (close) => { done = true; close(); resolve(true); } }
+      ]
+    });
+  });
 }
 
 /* ---------- Ladebalken (steuert das kleine Skript in index.php) ---------- */
@@ -2754,15 +2774,21 @@ async function boot() {
   } else if (restored) {
     await enterApp();
   } else if (S.pendingJoin && S.pendingJoin.once) {
-    // Link zu einem Einmal-Meeting ohne Sitzung: nur nach dem Namen fragen.
+    // Link zu einem Einmal-Meeting ohne Sitzung: nur nach dem Namen fragen
+    // (die Vorschau des Meetings kurz abwarten, sonst springt die Karte nach).
+    await Promise.race([inviteInfo(S.pendingJoin), sleep(2500)]);
     showGuestJoin();
   } else if (guestEnd && typeof guestEnd === 'object') {
     showGuestEnd(guestEnd);
   } else {
-    // Link zu einem Raum nur für Konten: Kontoerstellung statt temporärer Sitzung.
-    if (S.pendingJoin && !S.pendingJoin.meet) {
-      S.pendingJoin.ao = await inviteAccountsOnly(S.pendingJoin);
-      ssSet(JOIN_KEY, S.pendingJoin);
+    // Link zu einem Raum nur für Konten: Kontoerstellung statt temporärer
+    // Sitzung. Dieselbe Abfrage bringt die Vorschau mit (Name, Bild).
+    if (S.pendingJoin) {
+      const info = await inviteInfo(S.pendingJoin);
+      if (!S.pendingJoin.meet) {
+        S.pendingJoin.ao = info.ao;
+        ssSet(JOIN_KEY, S.pendingJoin);
+      }
     }
     showGate(gateNote || undefined, gateNote ? 'login' : undefined);
   }
@@ -5344,9 +5370,7 @@ async function decryptMeta(room) {
       .filter((c) => c && typeof c.id === 'string' && (c.id === '' || /^[A-Za-z0-9_-]{1,22}$/.test(c.id))).slice(0, 20)
       .map((c) => ({ id: c.id, name: cleanName(c.name).slice(0, 30) || 'Sprache' })) : [];
     if (!vch.some((c) => c.id === '')) vch.unshift(FIRST_VOICE);
-    // Raumbild: nur ein eingebettetes Bild, nie eine Adresse.
-    const img = typeof res.obj.img === 'string' && res.obj.img.length <= 60000
-      && /^data:image\/(jpeg|png|webp);base64,[A-Za-z0-9+/]+=*$/.test(res.obj.img) ? res.obj.img : '';
+    const img = safeRoomImage(res.obj.img);
     const aq = AUDIO_QUALITY.some((q) => q.id === res.obj.aq) ? res.obj.aq : '';
     const aqChanged = !!room.meta && (room.meta.aq || '') !== aq;
     // API-Zugänge: Name, Ziel-Kanal und privater Schlüssel (liest die Beiträge)
@@ -5898,14 +5922,29 @@ function roomDialog() {
         } else {
           const link = el('input', { type: 'text', placeholder: WEB_URL + '#join=…' });
           const go = el('button', { type: 'button', class: 'btn btn--primary btn--block', text: 'Beitreten' });
-          go.addEventListener('click', () => {
+          const parse = () => {
             const m = /#(join|meet|once)=([A-Za-z0-9_-]{22})\.([A-Za-z0-9_-]{22})\.([A-Za-z0-9_-]{43})\.(\d{1,6})/.exec(link.value.trim());
-            if (!m) { toast('Das ist kein gültiger Einladungslink.', 'error'); return; }
+            return m ? { rid: m[2], code: m[3], key: m[4], epoch: parseInt(m[5], 10), meet: m[1] !== 'join', once: m[1] === 'once' } : null;
+          };
+          // Vorschau, sobald ein gültiger Link drinsteht: wohin er führt.
+          const preview = el('div', { class: 'sc-inv-paste' });
+          let shown = '';
+          const showPreview = () => {
+            const inv = parse();
+            const k = inv ? inv.rid + '.' + inv.code + '.' + inv.key : '';
+            if (k === shown) return;
+            shown = k;
+            preview.textContent = '';
+            if (inv) preview.appendChild(invitePreviewSlot(inv));
+          };
+          link.addEventListener('input', showPreview);
+          go.addEventListener('click', () => {
+            const inv = parse();
+            if (!inv) { toast('Das ist kein gültiger Einladungslink.', 'error'); return; }
             close();
-            const inv = { rid: m[2], code: m[3], key: m[4], epoch: parseInt(m[5], 10) };
-            joinRoom(inv);
+            joinRoom({ rid: inv.rid, code: inv.code, key: inv.key, epoch: inv.epoch });
           });
-          panel.append(field('Einladungslink', link, 'Der Teil nach „#“ enthält den Raumschlüssel. Er wird nie an den Server geschickt.'), go);
+          panel.append(field('Einladungslink', link, 'Der Teil nach „#“ enthält den Raumschlüssel. Er wird nie an den Server geschickt.'), preview, go);
         }
       };
       draw();
@@ -5955,13 +5994,96 @@ const AO_NOTE = 'Nur Mitglieder mit Konto: Neue Mitglieder brauchen ein Konto �
 
 /** Lässt der Raum hinter dieser Einladung nur Konten zu? Ältere Server kennen die Frage nicht: dann nein. */
 async function inviteAccountsOnly(inv) {
-  if (!inv || inv.meet) return false;
-  try {
-    const r = await api('invite.info', { id: inv.rid, code: inv.code });
-    return r.ao === true;
-  } catch (e) {
-    return false;
+  return (await inviteInfo(inv)).ao;
+}
+
+/* ---------- Vorschau einer Einladung ----------------------------------------
+   invite.info liefert mit gültiger Einladung auch die verschlüsselten
+   Raumdaten (m, Generation me) und die Mitgliederzahl (n). Entschlüsselt
+   wird hier mit dem Schlüssel aus dem Link – der Server sieht Name und Bild
+   nie. AES-GCM mit dem Raumschlüssel (gebunden an Raum und Generation)
+   genügt für die Vorschau; die Unterschrift prüft erst decryptMeta nach dem
+   Beitritt. Passt die Generation nicht zum Link, gibt es keine Vorschau.
+   Fehlt etwas (alter Server, Netz, ungültig): Seite wie ohne Vorschau. */
+const INVITE_INFO = new Map();   // "rid.code" → Promise<{ ao, preview }>
+
+function inviteInfo(inv) {
+  if (!inv || !inv.rid || !inv.code) return Promise.resolve({ ao: false, preview: null });
+  const k = inv.rid + '.' + inv.code;
+  let p = INVITE_INFO.get(k);
+  if (!p) {
+    p = (async () => {
+      let r;
+      try {
+        r = await api('invite.info', { id: inv.rid, code: inv.code });
+      } catch (e) {
+        INVITE_INFO.delete(k);   // Netz o. Ä.: beim nächsten Mal erneut fragen
+        return { ao: false, preview: null };
+      }
+      return { ao: !inv.meet && r.ao === true, preview: await invitePreview(inv, r) };
+    })();
+    INVITE_INFO.set(k, p);
   }
+  return p;
+}
+
+/** Raumbild: nur ein eingebettetes Bild, nie eine Adresse. */
+function safeRoomImage(v) {
+  return typeof v === 'string' && v.length <= 60000 && /^data:image\/(jpeg|png|webp);base64,[A-Za-z0-9+/]+=*$/.test(v) ? v : '';
+}
+
+async function invitePreview(inv, r) {
+  if (!r || typeof r.m !== 'string' || !r.m || Number(r.me) !== inv.epoch || !C) return null;
+  try {
+    if (C.roomEpoch(r.m) !== inv.epoch) return null;
+    const res = await C.openRoom(r.m, await C.importRoomKey(inv.key), inv.rid, []);
+    const o = res.obj;
+    if (!o || o.t !== 'meta') return null;
+    const meet = o.meet === 1;
+    const n = Number(r.n);
+    return {
+      name: cleanName(o.name) || (meet ? 'Meeting' : 'Raum'),
+      img: safeRoomImage(o.img),
+      meet: meet,
+      members: Number.isInteger(n) && n >= 0 && n <= 100000 ? n : null
+    };
+  } catch (e) {
+    return null;
+  }
+}
+
+/** Karte „Du wirst eingeladen in …“ (Bild bzw. Kürzel mit Farbstrich, Name, Mitglieder, NUR KONTEN). */
+function invitePreviewCard(inv, p, ao, cls) {
+  const pic = el('span', { class: 'sc-rm-pic' + (p.meet ? ' is-meeting' : '') },
+    p.img ? el('img', { src: p.img, alt: '' }) : p.meet ? icon('group', 20) : el('span', { text: initials(p.name) }));
+  pic.style.setProperty('--hue', hueOf(C.toHex(C.unb64url(inv.rid)).slice(-6)));
+  const n = p.members;
+  const count = n === null ? null : p.meet
+    ? n + ' TEILNEHMER'
+    : n + (n === 1 ? ' MITGLIED' : ' MITGLIEDER');
+  return el('div', { class: 'sc-inv-card' + (cls ? ' ' + cls : '') }, pic,
+    el('span', { class: 'sc-rm-id' },
+      el('span', { class: 'sc-inv-label', text: p.meet ? 'DU WIRST EINGELADEN ZUM MEETING' : 'DU WIRST EINGELADEN IN' }),
+      el('span', { class: 'sc-inv-name', text: p.name, title: p.name }),
+      count || ao ? el('span', { class: 'sc-inv-facts' },
+        count ? el('span', { text: count }) : null,
+        ao ? el('span', { class: 'sc-side-tag sc-side-tag--ao', title: AO_NOTE }, icon('users', 11), 'NUR KONTEN') : null) : null));
+}
+
+/**
+ * Platz für die Karte: leer, bis die Vorschau da ist (aus dem Zwischenspeicher
+ * sofort). Ohne Vorschau bleibt er leer. onInfo bekommt das Ergebnis mit.
+ */
+function invitePreviewSlot(inv, cls, onInfo) {
+  const slot = el('div', { class: 'sc-inv-slot', hidden: true });
+  inviteInfo(inv).then((info) => {
+    if (info.preview) {
+      slot.appendChild(invitePreviewCard(inv, info.preview, info.ao, cls));
+      slot.hidden = false;
+    }
+    if (onInfo) onInfo(info, slot);
+  });
+  return slot;
 }
 
 /**
@@ -5973,6 +6095,7 @@ function accountOnlyDialog(inv) {
   openModal({
     title: 'NUR MIT KONTO',
     build: (body) => appendAll(body,
+      invitePreviewSlot(inv),
       el('p', { class: 'sc-p', text: 'Diesem Raum treten nur Mitglieder mit Konto bei – mit einer temporären Sitzung geht es nicht.' }),
       el('p', { class: 'sc-note', text: '„Konto erstellen“ beendet deine temporäre Sitzung: Der Server löscht sie samt Unterhaltungen und Raummitgliedschaften. Danach erstellst du ein Konto – oder meldest dich an, wenn du schon eins hast. Die Einladung bleibt erhalten und wird gleich danach eingelöst.' })),
     actions: [

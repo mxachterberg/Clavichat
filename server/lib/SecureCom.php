@@ -1177,9 +1177,17 @@ class SecureCom
     /**
      * Ohne Anmeldung: Lässt der Raum hinter dieser Einladung nur Konten zu?
      * Damit zeigt die App zu einem Link gleich die Kontoerstellung statt der
-     * temporären Sitzung. Verrät nur dieses eine Merkmal und nur mit gültiger
-     * Einladung – sonst immer "ao": false (wie ein Raum ohne Merkmal). Der
-     * Beitritt selbst prüft es ohnehin (joinRoom).
+     * temporären Sitzung. Ohne gültige Einladung immer nur "ao": false (wie
+     * ein Raum ohne Merkmal) – kein Hinweis, ob es den Raum gibt. Der Beitritt
+     * selbst prüft das Merkmal ohnehin (joinRoom).
+     *
+     * Mit gültiger Einladung zusätzlich für die Vorschau „Du wirst eingeladen
+     * in …“: die verschlüsselten Raumdaten ("m", Generation "me") und die
+     * Zahl der Mitglieder ("n"). Name und Bild entschlüsselt nur, wer den
+     * Schlüssel aus dem Link hat – genau die Daten, die er beim Beitritt
+     * ohnehin bekäme. Ausnahme: Links von Teilnehmern eines Einmal-Meetings
+     * (Beitritt erst nach Zustimmung des Gastgebers) – dort bleibt es beim
+     * Merkmal, wie der Verlauf für Wartende verschlossen bleibt.
      */
     public static function inviteInfo(array $b)
     {
@@ -1187,7 +1195,14 @@ class SecureCom
         $code = self::str($b, 'code');
         if (!preg_match('/^[A-Za-z0-9_-]{22}$/', $rid) || !preg_match('/^[A-Za-z0-9_-]{22}$/', $code)) return ['ao' => false];
         $room = self::readJson(self::roomFile($rid), true);
-        return ['ao' => $room && !empty($room['ao']) && self::inviteValid($room, $code)];
+        if (!is_array($room) || !self::inviteValid($room, $code)) return ['ao' => false];
+        $out = ['ao' => !empty($room['ao'])];
+        if (!self::needsApproval($room, (string)($room['inv'][$code]['b'] ?? '')) && is_string($room['m'] ?? null) && $room['m'] !== '') {
+            $out['m']  = $room['m'];
+            $out['me'] = (int)($room['me'] ?? $room['e'] ?? 1);
+            $out['n']  = count((array)($room['mem'] ?? []));
+        }
+        return $out;
     }
 
     /**
