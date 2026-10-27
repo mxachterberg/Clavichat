@@ -34,6 +34,10 @@ return [
     // Aktivität (Nachricht, Beitritt, Sprachkanal), dann samt Verlauf weg.
     'securecom_temp_room_days' => 7,
 
+    // Räume mit Aufbewahrung „Permanent“: höchstens so viele MB Verlauf
+    // (1–64); darüber fallen die ältesten Nachrichten weg.
+    'securecom_permanent_mb' => 16,
+
     // Obergrenze aller Identitäten (Konten + temporäre Sitzungen).
     'securecom_max_identities' => 2000,
 

@@ -2343,6 +2343,11 @@ async function maintainRoomKeys() {
     if (!r || !r.k) continue;
     r.et = r.et || {};
     if (!r.et[room.epoch] && r.k[room.epoch]) { r.et[room.epoch] = now; changed = true; }   // ältere Räume: ab jetzt zählen
+    // „Permanent“: alle Generationen behalten (sonst wären ältere Nachrichten
+    // nach einem Schlüsselwechsel unlesbar) und kein Wechsel jede Woche – er
+    // brächte ohne Löschen keine Forward Secrecy, nur mehr Schlüssel.
+    // Nach Entfernen/Verlassen wechselt der Besitzer weiter (roomSys).
+    if (isPermanentRoom(room)) continue;
     // Alte Generationen löschen, sobald ihr Nachfolger länger da ist als die Aufbewahrung des Raums.
     const keep = roomTtl(room) * 1000 + KEY_GRACE;
     for (const e of Object.keys(r.k).map(Number).sort((a, b) => a - b)) {
@@ -3207,7 +3212,7 @@ function renderMainHead() {
     head.append(
       el('span', { class: 'sc-head-text' },
         el('span', { class: 'sc-head-title' }, icon('hash', 16), ch ? ch.name : '—'),
-        el('span', { class: 'sc-head-sub', text: room.meta.name + ' · ' + room.members.length + ' Mitglieder · bleibt ' + ttlLabel(roomTtl(room)) })),
+        el('span', { class: 'sc-head-sub', text: room.meta.name + ' · ' + room.members.length + ' Mitglieder · ' + (isPermanentRoom(room) ? 'bleibt dauerhaft' : 'bleibt ' + ttlLabel(roomTtl(room))) })),
       el('span', { class: 'sc-head-spacer' }),
       iconBtn(room.meta.meet ? 'phone' : 'speaker', S.voice && S.voice.rid === room.id
         ? (room.meta.meet ? 'Call verlassen' : 'Sprachkanal verlassen')
@@ -4081,7 +4086,18 @@ function maxTtl() { return ((S.cfg && S.cfg.retention_days) || 30) * 86400; }
 function defaultTtl() { return Math.min((S.cfg && S.cfg.default_ttl) || 604800, maxTtl()); }
 function ttlChoices() { return TTL_CHOICES.filter((c) => c.s <= maxTtl()); }
 
+/**
+ * Räume „Permanent“ (seit 1.8.9): Der Server meldet dafür einen sehr großen
+ * ttl-Wert (100 Jahre) – ältere Apps rechnen damit wie mit ihrer Höchstgrenze.
+ * 0: Der Server kennt „Permanent“ nicht.
+ */
+function permTtl() { return (S.cfg && Number(S.cfg.permanent)) || 0; }
+function isPermanentRoom(room) { return !!(room && permTtl() && room.ttl >= permTtl()); }
+/** „Permanent“ anbieten: Besitzer mit Konto, bleibender Raum, Server kennt es. */
+function permanentOk(room) { return !!(permTtl() && room.owner === S.me.id && S.mode === 'account' && !room.tmp && !room.meta.meet); }
+
 function ttlLabel(s) {
+  if (permTtl() && s >= permTtl()) return 'Permanent';
   const c = TTL_CHOICES.find((x) => x.s === s);
   if (c) return c.label;
   if (s >= 86400) { const d = Math.round(s / 86400); return d + (d === 1 ? ' Tag' : ' Tage'); }
@@ -4094,6 +4110,7 @@ function convTtl(peer) {
 }
 
 function roomTtl(room) {
+  if (isPermanentRoom(room)) return permTtl();   // nichts verfällt nach Zeit
   return Math.min(room && room.ttl ? room.ttl : defaultTtl(), maxTtl());
 }
 
@@ -4147,18 +4164,19 @@ function purgeExpired() {
 }
 
 /** Auswahl der Aufbewahrung – für Unterhaltungen und (Besitzer) Räume. */
-function ttlDialog(title, current, note, onPick) {
+function ttlDialog(title, current, note, onPick, extra) {
   openModal({
     title: title,
     build: (body, close) => {
       const list = el('div', { class: 'sc-quality' });
-      for (const c of ttlChoices()) {
+      for (const c of ttlChoices().concat(extra ? [extra] : [])) {
         list.appendChild(el('button', {
           type: 'button', class: 'sc-quality-opt', 'aria-pressed': c.s === current ? 'true' : 'false',
           onclick: () => { close(); onPick(c.s); }
         },
         el('span', { class: 'sc-quality-name', text: c.label + (c.s === defaultTtl() ? ' (Standard)' : '') }),
-        el('span', { class: 'sc-quality-info', text: c.s <= 86400 ? 'verschwindet schnell' : c.s <= 604800 ? 'eine Woche' : 'so lange es geht' })));
+        el('span', { class: 'sc-quality-info', text: c.info || (c.s <= 86400 ? 'verschwindet schnell' : c.s <= 604800 ? 'eine Woche' : 'so lange es geht') }),
+        c.note ? el('span', { class: 'sc-quality-note', text: c.note }) : null));
       }
       body.append(el('p', { class: 'sc-p', text: note }), list,
         el('p', { class: 'sc-note', text: 'Danach löscht der Server die verschlüsselten Einträge, und sie verschwinden aus der Ansicht. Wer eine Nachricht vorher kopiert oder abfotografiert, behält sie natürlich.' }));
@@ -4174,6 +4192,12 @@ function convTtlDialog(peer) {
 }
 
 function roomTtlDialog(room) {
+  // „Permanent“: Abwägung kurz und ehrlich – kein Löschen nach Zeit heißt auch: keine Forward Secrecy im Raum.
+  const perm = permanentOk(room) || isPermanentRoom(room) ? {
+    s: permTtl(), label: 'Permanent', info: 'bis der Raum gelöscht wird',
+    note: 'Kein Löschen nach Zeit (über ' + ((S.cfg && S.cfg.permanent_mb) || 16) + ' MB fallen die ältesten weg, Dateien nach ' + Math.round(maxTtl() / 86400) +
+      ' Tagen). Alte Raumschlüssel bleiben: Entfernte lesen nichts Neues – was sie früher lesen konnten, bleibt für sie lesbar.'
+  } : null;
   ttlDialog('NACHRICHTEN AUFBEWAHREN', roomTtl(room),
     'Wie lange bleiben die Nachrichten in „' + room.meta.name + '“? Gilt für alle Mitglieder – ältere Nachrichten verschwinden sofort.',
     async (s) => {
@@ -4181,9 +4205,9 @@ function roomTtlDialog(room) {
         await api('room.ttl', { id: room.id, ttl: s });
         await loadRooms();
         purgeExpired();
-        toast('Nachrichten in „' + room.meta.name + '“ bleiben jetzt ' + ttlLabel(s) + '.', 'ok');
+        toast('Nachrichten in „' + room.meta.name + '“ bleiben jetzt ' + (isPermanentRoom(room) ? 'dauerhaft' : ttlLabel(s)) + '.', 'ok');
       } catch (e) { toast(e.message, 'error'); }
-    });
+    }, perm && permanentOk(room) ? perm : null);
 }
 
 async function setConvTtl(peer, s) {

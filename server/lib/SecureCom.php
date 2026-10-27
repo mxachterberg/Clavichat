@@ -84,6 +84,9 @@ class SecureCom
     const SIGNAL_TTL    = 120;       // Anruf-Signale verfallen nach zwei Minuten
     const TOKEN_IDLE    = 2592000;   // Konto-Sitzungen: 30 Tage ohne Nutzung
     const DEFAULT_TTL   = 604800;    // Aufbewahrung, wenn nichts gewählt ist: 7 Tage
+    // Räume „Permanent“: 100 Jahre. Ein großer Wert statt 0 – ältere Apps (bis
+    // 1.8.8) rechnen damit wie mit ihrer Höchstgrenze (30 Tage) weiter.
+    const PERMANENT     = 3153600000;
     const PRES_TTL      = 150;       // Status-Fach eines Freundes: so lange gilt der letzte Stand
     const MAX_PRES      = 512;       // verschlüsselter Status (Base64)
     const MAX_SLOTS     = 200;       // Fächer je Aufruf (schreiben, lesen, löschen)
@@ -143,6 +146,15 @@ class SecureCom
         return max(1, min(365, (int)cfg('securecom_temp_room_days', 7)));
     }
 
+    /**
+     * Raumverlauf „Permanent“: höchstens so viele Megabyte (Standard 16 wie
+     * jeder Verlauf); ist er voll, fallen die ältesten Nachrichten weg.
+     */
+    public static function permanentBytes()
+    {
+        return max(1, min(64, (int)cfg('securecom_permanent_mb', 16))) * 1048576;
+    }
+
     public static function accessCode()
     {
         return trim((string)cfg('securecom_access_code', ''));
@@ -191,6 +203,9 @@ class SecureCom
             'sso'            => defined('CLAVICHAT_SSO') ? (string)CLAVICHAT_SSO : '',
             'file_max'       => self::fileMaxBytes(),        // Dateien: größte, Stückgröße
             'file_chunk'     => self::FILE_CHUNK,
+            'permanent'      => self::PERMANENT,             // Räume: Aufbewahrung „Permanent“ (ttl-Wert)
+            'permanent_mb'   => self::permanentBytes() / 1048576,
+            'hooks'          => self::MAX_HOOKS,             // API-Zugänge je Raum
             'limits'         => [
                 'voice'   => self::MAX_VOICE,
                 'members' => self::MAX_MEMBERS,
@@ -1374,9 +1389,9 @@ class SecureCom
             $room['rev']++;
             return $room;
         }, true);
-        self::append(self::dir('feeds') . '/' . $rid, [
+        self::feedAppend($rid, $room, [
             't' => time(), 'k' => 'key', 'x' => time() + self::retentionDays() * 86400, 'e' => $epoch, 'd' => $env,
-        ], self::MAX_FEED);
+        ]);
         return self::publicRoom($room, $me['id']);
     }
 
@@ -1413,7 +1428,7 @@ class SecureCom
             $entry['x'] = time() + self::roomTtl($room);   // legt der Besitzer fest
         }
         $entry['d'] = $data;
-        return ['s' => self::append(self::dir('feeds') . '/' . $rid, $entry, self::MAX_FEED)];
+        return ['s' => self::feedAppend($rid, $room, $entry)];
     }
 
     /* ======================================================================
@@ -1513,9 +1528,9 @@ class SecureCom
                 if ($now - self::lastActive($r) >= self::ACTIVE_EVERY) $r['la'] = $now;
             });
         }
-        self::append(self::dir('feeds') . '/' . $rid, [
+        self::feedAppend($rid, $room, [
             't' => $now, 'k' => 'hook', 'x' => $now + self::roomTtl($room), 'h' => $hid, 'd' => $data,
-        ], self::MAX_FEED);
+        ]);
         return [];
     }
 
@@ -1535,28 +1550,96 @@ class SecureCom
 
     private static function roomTtl(array $room)
     {
+        if (self::isPermanent($room)) return self::PERMANENT;
         $max = self::retentionDays() * 86400;
         return max(3600, min($max, (int)($room['ttl'] ?? self::DEFAULT_TTL)));
     }
 
-    /** Raum: Aufbewahrung ändern (nur der Besitzer). Ältere Nachrichten verfallen sofort. */
+    /** Raum mit Aufbewahrung „Permanent“: Nachrichten verfallen nicht nach Zeit. */
+    private static function isPermanent(array $room)
+    {
+        return (int)($room['ttl'] ?? 0) >= self::PERMANENT && empty($room['tmp']) && empty($room['ot']);
+    }
+
+    /**
+     * Raum: Aufbewahrung ändern (nur der Besitzer). Gilt auch für die schon
+     * vorhandenen Nachrichten: Ältere verfallen sofort, die übrigen bekommen
+     * die neue Frist. „Permanent“ (ttl >= PERMANENT) nur als Konto und nur für
+     * bleibende Räume – Meetings und temporäre Räume verfallen ohnehin.
+     */
     public static function setRoomTtl(array $me, array $b)
     {
         $rid = self::idOf(self::str($b, 'id'));
         $ttl = isset($b['ttl']) && is_numeric($b['ttl']) ? (int)$b['ttl'] : 0;
         if ($ttl < 3600) throw new SecureComException('Ungültige Aufbewahrung.', 422);
-        $room = self::roomMutate($rid, function (&$room) use ($me, $ttl) {
+        $perm = $ttl >= self::PERMANENT;
+        if ($perm && $me['k'] !== 'account') {
+            throw new SecureComException('„Permanent“ kann nur ein Konto einstellen.', 403);
+        }
+        $room = self::roomMutate($rid, function (&$room) use ($me, $ttl, $perm) {
             self::requireOwner($room, $me['id']);
-            $room['ttl'] = $ttl;
+            if ($perm && (!empty($room['tmp']) || !empty($room['ot']))) {
+                throw new SecureComException('„Permanent“ gibt es nicht für Meetings und temporäre Räume.', 422);
+            }
+            $room['ttl'] = $perm ? self::PERMANENT : $ttl;
             $room['la']  = time();
             $room['rev']++;
             return $room;
         });
-        $cut = time() - self::roomTtl($room);
-        self::rewriteLog(self::dir('feeds') . '/' . $rid, function ($e) use ($cut) {
-            return in_array($e['k'] ?? '', ['msg', 'hook'], true) && (int)($e['t'] ?? 0) < $cut;
-        });
+        self::retimeLog(self::dir('feeds') . '/' . $rid, self::roomTtl($room));
         return self::publicRoom($room, $me['id']);
+    }
+
+    /**
+     * Neue Aufbewahrung auf den Verlauf anwenden (unter der Sperre von
+     * append): Nachrichten und API-Beiträge bekommen Zeitpunkt + $ttl als
+     * Ablauf, was danach schon abgelaufen ist, fällt weg.
+     */
+    private static function retimeLog($base, $ttl)
+    {
+        if (!is_file($base . '.n')) return;
+        $h = fopen($base . '.n', 'c+');
+        if (!$h) return;
+        flock($h, LOCK_EX);
+        try {
+            $state = json_decode((string)stream_get_contents($h), true);
+            if (!is_array($state)) $state = ['n' => 0, 'c' => 0, 'g' => 0];
+            $src = $base . '.jsonl';
+            if (!is_file($src)) return;
+            $now = time();
+            $in  = fopen($src, 'r');
+            $out = fopen($src . '.tmp', 'w');
+            while (($line = fgets($in)) !== false) {
+                if (substr($line, -1) !== "\n") continue;              // halb geschrieben
+                $e = json_decode($line, true);
+                if (!is_array($e)) continue;
+                if (in_array($e['k'] ?? '', ['msg', 'hook'], true)) {
+                    $e['x'] = (int)($e['t'] ?? $now) + $ttl;
+                    $line = json_encode($e, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE) . "\n";
+                }
+                if (isset($e['x']) && (int)$e['x'] < $now) continue;
+                fwrite($out, $line);
+            }
+            fclose($in);
+            fclose($out);
+            rename($src . '.tmp', $src);
+            $state['g'] = (int)($state['g'] ?? 0) + 1;   // Byte-Stellen stimmen nicht mehr
+            $state['c'] = $now;
+            ftruncate($h, 0);
+            rewind($h);
+            fwrite($h, json_encode($state));
+            fflush($h);
+        } finally {
+            flock($h, LOCK_UN);
+            fclose($h);
+        }
+    }
+
+    /** An den Verlauf eines Raums anhängen; „Permanent“: größere Grenze, Älteste fallen weg statt „voll“. */
+    private static function feedAppend($rid, array $room, array $entry)
+    {
+        $perm = self::isPermanent($room);
+        return self::append(self::dir('feeds') . '/' . $rid, $entry, $perm ? self::permanentBytes() : self::MAX_FEED, $perm);
     }
 
     /**
@@ -2246,10 +2329,11 @@ class SecureCom
 
     private static function appendSys($rid, $event, $id)
     {
-        if (!is_file(self::roomFile($rid))) return;
-        self::append(self::dir('feeds') . '/' . $rid, [
+        $room = self::readJson(self::roomFile($rid), true);
+        if (!$room) return;
+        self::feedAppend($rid, $room, [
             't' => time(), 'k' => 'sys', 'x' => time() + self::retentionDays() * 86400, 'ev' => $event, 'id' => $id,
-        ], self::MAX_FEED);
+        ]);
     }
 
     private static function roomsOf($id)
@@ -2297,7 +2381,7 @@ class SecureCom
      * steht unter exklusiver Sperre, so kommen sich zwei Schreiber nie in
      * die Quere. Leser nehmen dieselbe Sperre geteilt.
      */
-    private static function append($base, array $entry, $maxBytes)
+    private static function append($base, array $entry, $maxBytes, $dropOldest = false)
     {
         $h = fopen($base . '.n', 'c+');
         if (!$h) throw new RuntimeException('Zähler nicht beschreibbar.');
@@ -2313,6 +2397,12 @@ class SecureCom
                 self::compact($base, $state);
                 clearstatcache(true, $file);
                 $size = is_file($file) ? filesize($file) : 0;
+                if ($size > $maxBytes - 131072 && $dropOldest) {
+                    // Verlauf ohne Ablauf („Permanent“): die ältesten Nachrichten fallen weg.
+                    self::dropOldest($base, $state, (int)($maxBytes * 0.75));
+                    clearstatcache(true, $file);
+                    $size = is_file($file) ? filesize($file) : 0;
+                }
                 if ($size > $maxBytes - 131072) {
                     throw new SecureComException('Der Briefkasten des Empfängers ist voll.', 507);
                 }
@@ -2374,6 +2464,38 @@ class SecureCom
         rename($tmp, $src);
         $state['g'] = (int)($state['g'] ?? 0) + 1;
         return $count;
+    }
+
+    /**
+     * Älteste Nachrichten, API-Beiträge und Hinweise (Beitritt, Verlassen)
+     * entfernen, bis der Verlauf höchstens $target Byte hat (unter der Sperre
+     * von append). Schlüsselpakete und Signale bleiben – sie sind klein und
+     * verfallen ohnehin nach Zeit.
+     */
+    private static function dropOldest($base, array &$state, $target)
+    {
+        $src = $base . '.jsonl';
+        if (!is_file($src)) return 0;
+        $excess = filesize($src) - $target;
+        if ($excess <= 0) return 0;
+        $tmp = $src . '.tmp';
+        $in  = fopen($src, 'r');
+        $out = fopen($tmp, 'w');
+        $dropped = 0;
+        while (($line = fgets($in)) !== false) {
+            if ($excess > 0 && preg_match('/^\{"s":\d+,"t":\d+,"k":"(msg|hook|sys)"/', $line)) {
+                $excess -= strlen($line);
+                $dropped++;
+                continue;
+            }
+            fwrite($out, $line);
+        }
+        fclose($in);
+        fclose($out);
+        rename($tmp, $src);
+        $state['g'] = (int)($state['g'] ?? 0) + 1;
+        $state['c'] = time();
+        return $dropped;
     }
 
     /** Verlauf unter der Sperre von append aufräumen: Abgelaufenes und was $drop sagt. */
