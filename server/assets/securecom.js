@@ -163,6 +163,8 @@ const ICONS = {
   clip: '<path d="M20 11.5l-8 8a5 5 0 0 1-7-7l8.5-8.5a3.3 3.3 0 0 1 4.7 4.7l-8.5 8.5a1.7 1.7 0 0 1-2.4-2.4l7.8-7.8"/>',
   file: '<path d="M6 3h8l5 5v13H6z"/><path d="M14 3v5h5"/>',
   camSwitch: '<path d="M3 8h3.5L8 5.5h8L17.5 8H21v11H3z"/><path d="M8.6 12.6a3.5 3.5 0 0 1 6.2-1.4"/><path d="M15.4 14.4a3.5 3.5 0 0 1-6.2 1.4"/><path d="M15.2 9.4v2h-2M8.8 17.6v-2h2"/>',
+  // Ränge (Raum-Menü)
+  tag: '<path d="M3.5 12.5V4h8.5l9 9-8.5 8.5z"/><circle cx="8" cy="8.5" r="1.4"/>',
   // Reagieren: Gesicht mit Plus
   react: '<circle cx="10.5" cy="13.5" r="7.5"/><path d="M7.6 15.6a3.6 3.6 0 0 0 5.8 0M8 11.6v.4M13 11.6v.4"/><path d="M19.5 2.5v5M17 5h5"/>'
 };
@@ -2981,7 +2983,7 @@ function closeContextMenu() {
 }
 
 /**
- * Einträge: { icon | dot, label, note?, checked?, danger?, disabled?, run },
+ * Einträge: { icon | dot | swatch (Farbe), label, note?, checked?, danger?, disabled?, run },
  * { sep: true } oder { bar: Element }. opts.above: über dem Punkt öffnen (Menü unten links).
  */
 function openContextMenu(x, y, items, opts) {
@@ -2993,10 +2995,11 @@ function openContextMenu(x, y, items, opts) {
     if (it.bar) { menu.appendChild(it.bar); continue; }   // eigener Baustein, z. B. die Reaktionsleiste
     const radio = it.checked !== undefined;
     menu.appendChild(el('button', {
-      type: 'button', role: radio ? 'menuitemradio' : 'menuitem', 'aria-checked': radio ? String(!!it.checked) : null,
+      type: 'button', role: radio ? (it.swatch ? 'menuitemcheckbox' : 'menuitemradio') : 'menuitem', 'aria-checked': radio ? String(!!it.checked) : null,
       class: 'sc-ctx-item' + (it.danger ? ' is-danger' : ''), disabled: !!it.disabled,
       onclick: () => { closeContextMenu(); it.run(); }
-    }, it.dot ? el('span', { class: 'sc-ctx-dot' }, el('span', { class: 'sc-on' + STATUS[it.dot].cls })) : icon(it.icon, 15),
+    }, it.swatch ? el('span', { class: 'sc-ctx-dot' }, el('span', { class: 'sc-role-dot', style: '--role:' + it.swatch }))
+      : it.dot ? el('span', { class: 'sc-ctx-dot' }, el('span', { class: 'sc-on' + STATUS[it.dot].cls })) : icon(it.icon, 15),
     el('span', { class: 'sc-ctx-text' }, el('span', { text: it.label }), it.note ? el('span', { class: 'sc-ctx-note', text: it.note }) : null),
     it.checked ? icon('check', 14) : null));
   }
@@ -3090,7 +3093,7 @@ function personRow(ident, onclick, opts) {
   },
     el('span', { class: 'sc-row-av' }, avatar(ident), statusDot(ident)),
     el('span', { class: 'sc-row-text' },
-      el('span', { class: 'sc-row-name' }, el('span', { class: 'sc-row-label', text: displayName(ident) }),
+      el('span', { class: 'sc-row-name' }, el('span', { class: 'sc-row-label', text: displayName(ident), style: o.color ? 'color:' + o.color : null }),
         isVerified(ident) ? icon('shieldCheck', 13) : null,
         ident && ident.kind === 'temp' ? (ident.guest ? kindBadge(ident) : el('span', { class: 'sc-kind', text: 'TEMP' })) : null),
       el('span', { class: 'sc-row-sub', text: o.sub || (ident ? fpTail(ident.fp) : '') })),
@@ -3100,7 +3103,7 @@ function personRow(ident, onclick, opts) {
 }
 
 function renderRoomSide(head, body, room) {
-  const isOwner = room.owner === S.me.id;
+  const isOwner = can(room, RIGHT.CHANNELS);   // Kanäle anlegen/verschieben: Besitzer oder Recht „Kanäle verwalten“
   appendAll(head, room.meta.img ? el('img', { class: 'sc-side-pic', src: room.meta.img, alt: '' }) : null,
     // Name in voller Breite, Merkmale klein in einer zweiten Zeile darunter
     el('span', { class: 'sc-side-name' },
@@ -3120,6 +3123,7 @@ function renderRoomSide(head, body, room) {
       'aria-current': S.view.ch === ch.id ? 'true' : 'false',
       onclick: () => openRoom(room.id, ch.id)
     }, icon('hash', 15), el('span', { class: 'sc-chan-name', text: ch.name }),
+    room.cw[ch.id] && rolesOk(room) ? el('span', { class: 'sc-chan-lock', title: 'Schreiben: ' + channelWho(room, room.cw[ch.id].r) }, icon(canWriteIn(room, S.me.id, ch.id) ? 'edit' : 'lock', 12)) : null,
     u ? el('span', { class: 'sc-count', text: String(u) }) : null);
     withMenu(btn, () => textChannelMenu(room, ch));
     if (isOwner) { sortable(btn, room, 'ch', ch.id); dropTarget(btn, room, 'ch', ch.id); }
@@ -3138,6 +3142,7 @@ function renderRoomSide(head, body, room) {
       title: inHere ? 'Du bist in diesem Sprachkanal' : 'Sprachkanal betreten',
       onclick: () => (inHere ? setView({ kind: 'room', rid: room.id, ch: S.view.ch }) : joinVoice(room.id, vch.id))
     }, icon('speaker', 15), el('span', { class: 'sc-chan-name', text: vch.name }),
+    room.vw[vch.id] && rolesOk(room) ? el('span', { class: 'sc-chan-lock', title: 'Betreten: ' + channelWho(room, room.vw[vch.id]) }, icon(canEnterVoice(room, S.me.id, vch.id) ? 'speaker' : 'lock', 12)) : null,
     el('span', { class: 'sc-chan-meta', text: people.length ? people.length + '/' + (S.cfg.limits.voice || 8) : '' }));
     withMenu(vbtn, () => voiceChannelMenu(room, vch));
     if (isOwner) { sortable(vbtn, room, 'vch', vch.id); dropTarget(vbtn, room, 'vch', vch.id); }
@@ -3257,18 +3262,19 @@ function renderMainHead() {
   } else if (S.view.kind === 'room' && S.rooms.has(S.view.rid)) {
     const room = S.rooms.get(S.view.rid);
     const ch = room.meta.ch.find((c) => c.id === S.view.ch);
-    head.append(
+    appendAll(head,
       el('span', { class: 'sc-head-text' },
         el('span', { class: 'sc-head-title' }, icon('hash', 16), ch ? ch.name : '—'),
         el('span', { class: 'sc-head-sub', text: room.meta.name + ' · ' + room.members.length + ' Mitglieder · ' + keepText(chanTtl(room, S.view.ch)) +
-          (hasChanTtl(room, S.view.ch) ? ' (Kanal)' : '') })),
+          (hasChanTtl(room, S.view.ch) ? ' (Kanal)' : '') +
+          (rolesOk(room) && room.cw[S.view.ch] ? ' · ' + channelWho(room, room.cw[S.view.ch].r) + ' schreiben' : '') })),
       el('span', { class: 'sc-head-spacer' }),
       iconBtn(room.meta.meet ? 'phone' : 'speaker', S.voice && S.voice.rid === room.id
         ? (room.meta.meet ? 'Call verlassen' : 'Sprachkanal verlassen')
         : (room.meta.meet ? (room.vc.length ? 'Call beitreten (' + room.vc.length + ' drin)' : 'Call starten') : 'Sprachkanal „' + room.meta.vch[0].name + '“ betreten'),
         () => (S.voice && S.voice.rid === room.id ? leaveVoice() : joinVoice(room.id)),
         room.meta.meet && room.vc.length && !(S.voice && S.voice.rid === room.id) ? { class: 'sc-ibtn is-live' } : undefined),
-      room.meta.meet ? iconBtn('link', 'Meeting-Link teilen', () => meetingDialog(room)) : iconBtn('userPlus', 'Einladen', () => inviteDialog(room)),
+      room.meta.meet ? iconBtn('link', 'Meeting-Link teilen', () => meetingDialog(room)) : can(room, RIGHT.INVITE) ? iconBtn('userPlus', 'Einladen', () => inviteDialog(room)) : null,
       iconBtn('users', 'Mitglieder', () => { S.membersOpen = !S.membersOpen; renderAll(); }, { 'aria-pressed': S.membersOpen ? 'true' : 'false' }));
   } else {
     head.append(el('span', { class: 'sc-head-text' },
@@ -3409,7 +3415,7 @@ function hookNode(m, grouped) {
 function messageMenu(m, node) {
   const own = m.from === S.me.id;
   const room = S.view.kind === 'room' ? S.rooms.get(S.view.rid) : null;
-  const admin = !!(room && room.owner === S.me.id && S.cfg && S.cfg.rdel);
+  const admin = !!(room && can(room, RIGHT.MESSAGES) && S.cfg && S.cfg.rdel);
   const ready = !m.deleted && m.state !== 'pending';
   const react = canReact(m);
   return [
@@ -3420,7 +3426,7 @@ function messageMenu(m, node) {
     own && ready && !m.invite && !admin ? { icon: 'trash', label: 'Löschen', danger: true, run: () => deleteMessage(m) } : null,
     admin && !m.sys ? {
       icon: 'trash', label: m.hook ? 'Beitrag löschen' : 'Nachricht löschen', danger: true, disabled: !m.seq,
-      note: own ? null : 'Als Besitzer – für alle', run: () => ownerDeleteMessage(room, m)
+      note: own ? null : room.owner === S.me.id ? 'Als Besitzer – für alle' : 'Moderation – für alle', run: () => ownerDeleteMessage(room, m)
     } : null
   ];
 }
@@ -3476,8 +3482,10 @@ function messageNode(m, grouped) {
     : el('button', { type: 'button', class: 'sc-msg-av', onclick: () => showProfile(m.from), 'aria-label': displayName(ident) }, avatar(ident)));
   const body = el('div', { class: 'sc-msg-body' });
   if (!grouped) {
+    const room = S.view.kind === 'room' ? S.rooms.get(S.view.rid) : null;
+    const color = room ? memberColor(room, m.from) : null;   // Farbe des höchsten Rangs
     body.appendChild(el('div', { class: 'sc-msg-head' },
-      el('button', { type: 'button', class: 'sc-msg-name', text: displayName(ident), onclick: () => showProfile(m.from) }),
+      el('button', { type: 'button', class: 'sc-msg-name', text: displayName(ident), style: color ? 'color:' + color : null, onclick: () => showProfile(m.from, room) }),
       ident && ident.kind === 'temp' ? el('span', { class: 'sc-msg-fp', text: fpTail(ident.fp) }) : null,
       el('time', { text: fmtTime(m.ts), title: new Date(m.ts).toLocaleString('de-DE') })));
   }
@@ -3522,7 +3530,7 @@ function canReact(m) {
   }
   if (S.view.kind !== 'room') return false;
   const room = S.rooms.get(S.view.rid);
-  return !!room && !!roomKeyRaw(room.id, room.epoch);
+  return !!room && !!roomKeyRaw(room.id, room.epoch) && can(room, RIGHT.REACT);
 }
 
 function hasMyReaction(m, id) {
@@ -3628,7 +3636,8 @@ async function toggleReaction(m, id) {
     else {
       const room = S.rooms.get(view.rid);
       if (!room) throw new Error('Raum nicht gefunden.');
-      await postRoom(room, Object.assign(obj, { ch: view.ch }));
+      // Darf ich hier nicht schreiben, geht die Reaktion als solche (rx) – der Server prüft dann „reagieren“.
+      await postRoom(room, Object.assign(obj, { ch: view.ch }), rolesOk(room) && !canWriteIn(room, S.me.id, view.ch) ? { rx: 1 } : null);
     }
   } catch (e) {
     setReaction(m, id, S.me.id, !on);
@@ -4084,6 +4093,13 @@ function renderCompose() {
     show = true;
     placeholder = room && room.meta.meet ? 'Nachricht an alle im Meeting' : 'Nachricht in #' + (ch ? ch.name : '');
     blocked = !roomKeyRaw(room.id, room.epoch);
+    // Rechte: kein Schreibrecht im Raum oder nur bestimmte Ränge in diesem Kanal
+    if (!blocked && rolesOk(room) && !canWriteIn(room, S.me.id, S.view.ch)) {
+      blocked = true;
+      const w = room.cw[S.view.ch];
+      placeholder = !(permsOf(room, S.me.id) & RIGHT.SEND) ? 'Du darfst in diesem Raum nicht schreiben'
+        : 'Hier dürfen ' + (w.r.length ? 'nur ' + w.r.map((r) => roleName(room, r)).join(', ') : 'nur der Besitzer') + ' schreiben';
+    }
   }
   form.hidden = !show;
   input.placeholder = placeholder;
@@ -4129,20 +4145,32 @@ function renderMembers() {
   // Sprachkanal ist (das sehen Mitglieder ohnehin). Andere Konten verraten
   // ihren Status nicht.
   const here = (i) => i.id === S.me.id || isHere(i) || room.vc.includes(i.id);
-  const on = members.filter(here);
-  const hidden = members.filter((i) => !here(i) && presenceOf(i) === null);
-  const off = members.filter((i) => !here(i) && presenceOf(i) === 'off');
+  // Wie Discord: zuerst nach höchstem Rang gruppiert (Online zuerst), der Rest nach Status
+  const ranked = rolesOk(room) ? rolesSorted(room).map((rid) => [rid, members.filter((i) => memberRoles(room, i.id)[0] === rid)]).filter((g) => g[1].length) : [];
+  const grouped = new Set(ranked.flatMap((g) => g[1].map((i) => i.id)));
+  const rest = members.filter((i) => !grouped.has(i.id));
+  const on = rest.filter(here);
+  const hidden = rest.filter((i) => !here(i) && presenceOf(i) === null);
+  const off = rest.filter((i) => !here(i) && presenceOf(i) === 'off');
   box.appendChild(el('div', { class: 'sc-members-head' },
     el('span', { class: 'sc-side-title', text: 'Mitglieder' }),
     iconBtn('x', 'Schließen', () => { S.membersOpen = false; renderAll(); }, { class: 'sc-ibtn sc-only-narrow' })));
-  for (const [label, list] of [['ONLINE — ' + on.length, on], ['STATUS VERBORGEN — ' + hidden.length, hidden], ['OFFLINE — ' + off.length, off]]) {
+  const groups = ranked.map(([rid, list]) => [roleName(room, rid).toUpperCase() + ' — ' + list.length, list.slice().sort((a, b) => Number(here(b)) - Number(here(a))), roleColor(room, rid)]);
+  for (const [label, list, color] of groups.concat([
+    ['ONLINE — ' + on.length, on], ['STATUS VERBORGEN — ' + hidden.length, hidden], ['OFFLINE — ' + off.length, off]])) {
     if (!list.length) continue;
-    box.appendChild(sectionHead(label));
+    const head = sectionHead(label);
+    if (color) {   // Rang-Gruppe: Quadrat in der Rangfarbe
+      head.classList.add('sc-role-head-sec');
+      head.style.setProperty('--role', color);
+    }
+    box.appendChild(head);
     const l = el('div', { class: 'sc-list' });
     for (const ident of list) {
-      const row = personRow(ident, () => showProfile(ident.id, room));
+      const row = personRow(ident, () => showProfile(ident.id, room), { color: memberColor(room, ident.id) });
       if (room.owner === ident.id) row.querySelector('.sc-row-name').appendChild(el('span', { class: 'sc-owner', title: 'Besitzer' }, icon('crown', 12)));
       if (room.vc.includes(ident.id)) row.appendChild(icon('speaker', 13));
+      if (!room.meta.meet) withMenu(row, () => memberMenu(room, ident));
       l.appendChild(row);
     }
     box.appendChild(l);
@@ -4191,10 +4219,22 @@ function showProfile(id, room) {
   if (!ident) return;
   openModal({
     title: id === S.me.id ? 'DEIN PROFIL' : 'PROFIL',
-    build: (body) => {
+    build: (body, close) => {
       body.appendChild(profileCard(ident, false));
-      if (room && room.owner === S.me.id && id !== S.me.id) {
-        body.appendChild(el('button', { type: 'button', class: 'btn sc-btn--danger btn--block', onclick: () => kickMember(room, ident) }, icon('leave', 14), 'Aus dem Raum entfernen'));
+      // Ränge im Raum (Abzeichen); wer Ränge vergibt, ändert sie per Rechtsklick in der Mitgliederliste
+      const badges = room && room.members.some((m) => m.id === id) ? roleBadges(room, id) : null;
+      if (badges) {
+        const card = body.querySelector('.sc-profile-kind');
+        if (card) card.after(badges); else body.appendChild(badges);
+      }
+      if (room && rolesOk(room) && can(room, RIGHT.ROLES) && room.members.some((m) => m.id === id) && rolesSorted(room).some((rid) => roleManageable(room, rid))) {
+        body.appendChild(el('button', { type: 'button', class: 'btn btn--block', onclick: (ev) => {
+          const r = ev.currentTarget.getBoundingClientRect();
+          openContextMenu(r.left, r.bottom + 4, memberMenu(room, ident).filter((it) => it.swatch || it.bar));
+        } }, icon('tag', 14), 'Ränge vergeben'));
+      }
+      if (room && room.members.some((m) => m.id === id) && canKick(room, id)) {
+        body.appendChild(el('button', { type: 'button', class: 'btn sc-btn--danger btn--block', onclick: () => { close(); kickMember(room, ident); } }, icon('leave', 14), 'Aus dem Raum entfernen'));
       }
       if (id === S.me.id) {
         body.appendChild(el('button', { type: 'button', class: 'btn btn--block', onclick: () => { closeModal(); showSettings(); } }, icon('settings', 14), 'Einstellungen'));
@@ -4338,7 +4378,7 @@ function ttlChoices() { return TTL_CHOICES.filter((c) => c.s <= maxTtl()); }
 function permTtl() { return (S.cfg && Number(S.cfg.permanent)) || 0; }
 function isPermanentRoom(room) { return !!(room && permTtl() && room.ttl >= permTtl()); }
 /** „Permanent“ anbieten: Besitzer mit Konto, bleibender Raum, Server kennt es. */
-function permanentOk(room) { return !!(permTtl() && room.owner === S.me.id && S.mode === 'account' && !room.tmp && !room.meta.meet); }
+function permanentOk(room) { return !!(permTtl() && (can(room, RIGHT.ROOM) || can(room, RIGHT.CHANNELS)) && S.mode === 'account' && !room.tmp && !room.meta.meet); }
 
 function ttlLabel(s) {
   if (permTtl() && s >= permTtl()) return 'Permanent';
@@ -4363,7 +4403,7 @@ function roomTtl(room) {
  * { Kanal: Sekunden } nur für Kanäle mit eigener – sonst gilt die des Raums.
  * Ältere Apps kennen ct nicht und zeigen nur die Raum-Aufbewahrung.
  */
-function chanTtlOk(room) { return !!(S.cfg && S.cfg.cttl) && room.owner === S.me.id; }
+function chanTtlOk(room) { return !!(S.cfg && S.cfg.cttl) && can(room, RIGHT.CHANNELS); }
 function hasChanTtl(room, ch) { return !!(room && room.ct && ch && room.ct[ch]); }
 function chanTtl(room, ch) {
   if (!hasChanTtl(room, ch)) return roomTtl(room);
@@ -4382,8 +4422,8 @@ function roomKeepTtl(room) {
 /** Bleibt irgendetwas im Raum dauerhaft (Raum oder ein Kanal „Permanent“)? */
 function keepsPermanent(room) { return !!(permTtl() && roomKeepTtl(room) >= permTtl()); }
 function keepText(s) { return permTtl() && s >= permTtl() ? 'bleibt dauerhaft' : 'bleibt ' + ttlLabel(s); }
-/** Für room.post: Kanal nur mitschicken, wenn er eine eigene Aufbewahrung hat. */
-function chanParam(room, ch) { return hasChanTtl(room, ch) ? { c: ch } : {}; }
+/** Für room.post: Kanal nur mitschicken, wenn er eine eigene Aufbewahrung oder eigene Schreibrechte hat. */
+function chanParam(room, ch) { return hasChanTtl(room, ch) || (room && room.cw && ch && room.cw[ch]) ? { c: ch } : {}; }
 
 /** Abgelaufene Einträge des eigenen Briefkastens beim Server löschen (gesammelt). */
 function noteExpired(seq) {
@@ -5199,7 +5239,8 @@ const FIRST_VOICE = { id: '', name: 'Sprache' };
 function newRoomState(raw) {
   return {
     id: raw.id, owner: raw.owner, epoch: raw.epoch, metaRaw: null, metaEpoch: 0,
-    meta: { name: 'Raum', ch: [{ id: 'main', name: 'allgemein' }], vch: [FIRST_VOICE], img: '' },
+    meta: { name: 'Raum', ch: [{ id: 'main', name: 'allgemein' }], vch: [FIRST_VOICE], img: '', roles: {} },
+    perm: raw.owner === S.me.id ? P_ALL : P_BASE, dp: P_BASE, rl: {}, mr: {}, cw: {}, vw: {},
     members: [], vc: [], vcs: {}, rev: -1, cursor: null, msgs: new Map(), byId: new Map(),
     unread: new Map(), pending: [], pendingKey: false, lastCh: null
   };
@@ -5228,8 +5269,9 @@ function voiceMembers(room, ch) {
 /** Raumdaten zum Verschlüsseln: alles Bisherige, dazu die Änderungen. */
 function metaOf(room, changes) {
   const m = Object.assign({ name: room.meta.name, ch: room.meta.ch, vch: room.meta.vch, img: room.meta.img || '', aq: room.meta.aq || '', meet: room.meta.meet ? 1 : 0, once: room.meta.once ? 1 : 0,
-    hooks: room.meta.hooks || {} }, changes || {});
+    hooks: room.meta.hooks || {}, roles: room.meta.roles || {} }, changes || {});
   if (!m.img) delete m.img;
+  if (!m.roles || !Object.keys(m.roles).length) delete m.roles;   // Ränge: { Kennung: { n: Name, c: Farbe } } – Rechte kennt der Server
   if (!m.hooks || !Object.keys(m.hooks).length) delete m.hooks;   // API-Zugänge: { hid: { n, ch, k, c } }
   if (!m.aq) delete m.aq;   // Sprachqualität des Raums (leer: jeder nach eigener Einstellung)
   if (!m.meet) delete m.meet;   // Meeting: Link führt gleich in den Meeting-Raum
@@ -5260,6 +5302,7 @@ async function loadRooms() {
     room.ot = !!raw.ot;                // Einmal-Meeting (der Server lässt Gäste mit Link hinein)
     room.ao = !!raw.ao;                // nur Mitglieder mit Konto treten bei (setzt der Besitzer)
     room.iv = typeof raw.iv === 'number' ? raw.iv : null;   // offene Einladungen (ältere Server: unbekannt)
+    applyRoleState(room, raw);                                // Ränge, eigene Rechte, Kanal-Rechte
     // Beitrittsanfragen (nur der Besitzer bekommt sie): [{ id, t, x }]
     room.knocks = Array.isArray(raw.pend) ? raw.pend.filter((k) => k && typeof k.id === 'string' && /^[A-Za-z0-9_-]{22}$/.test(k.id)) : [];
     if (room.knocks.length) await ensureIds(room.knocks.map((k) => k.id));
@@ -5283,9 +5326,16 @@ async function decryptMeta(room) {
   const key = await roomKey(room.id, room.metaEpoch);
   if (!key || !room.metaRaw) return;
   try {
-    const res = await C.openRoom(room.metaRaw, key, room.id, keyring());
+    let res = await C.openRoom(room.metaRaw, key, room.id, keyring());
+    // Seit es Ränge gibt, schreiben auch Mitglieder mit Verwaltungsrechten die
+    // Raumdaten – geht so jemand, bleibt seine Unterschrift gültig, bis der
+    // Besitzer den Schlüssel wechselt (und die Raumdaten neu unterschreibt).
+    if (!res.signer && res.obj && typeof res.obj.from === 'string') {
+      const [ident] = await ensureIds([res.obj.from]);
+      if (ident) res = await C.openRoom(room.metaRaw, key, room.id, [ident.key]);
+    }
     const signer = [...S.ids.values()].find((i) => i.fp === res.signer);
-    if (!signer || !room.members.some((m) => m.id === signer.id) || res.obj.t !== 'meta') return;
+    if (!signer || !(room.members.some((m) => m.id === signer.id) || res.obj.from === signer.id) || res.obj.t !== 'meta') return;
     const ch = Array.isArray(res.obj.ch) ? res.obj.ch
       .filter((c) => c && /^[A-Za-z0-9_-]{1,22}$/.test(c.id)).slice(0, 30)
       .map((c) => ({ id: c.id, name: cleanName(c.name).replace(/\s+/g, '-').slice(0, 30) || 'kanal' })) : [];
@@ -5307,8 +5357,16 @@ async function decryptMeta(room) {
         hooks[hid] = { n: cleanName(h.n) || 'API', ch: typeof h.ch === 'string' && /^[A-Za-z0-9_-]{1,22}$/.test(h.ch) ? h.ch : '', k: h.k, c: Number(h.c) || 0 };
       }
     }
+    // Ränge: nur Name und Farbe (verschlüsselt); Rechte und Reihenfolge kommen vom Server
+    const roles = {};
+    if (res.obj.roles && typeof res.obj.roles === 'object' && !Array.isArray(res.obj.roles)) {
+      for (const [rid, v] of Object.entries(res.obj.roles).slice(0, 40)) {
+        if (!/^[A-Za-z0-9_-]{6,22}$/.test(rid) || !v || typeof v !== 'object') continue;
+        roles[rid] = { n: cleanName(v.n).slice(0, 30) || 'Rang', c: ROLE_COLORS.some((x) => x.id === v.c) ? v.c : ROLE_COLORS[0].id };
+      }
+    }
     room.meta = { name: cleanName(res.obj.name) || 'Raum', ch: ch.length ? ch : [{ id: 'main', name: 'allgemein' }], vch: vch, img: img, aq: aq, meet: res.obj.meet === 1 ? 1 : 0,
-      once: res.obj.meet === 1 && res.obj.once === 1 ? 1 : 0, hooks: hooks };
+      once: res.obj.meet === 1 && res.obj.once === 1 ? 1 : 0, hooks: hooks, roles: roles };
     room.metaOk = true;
     // Widerrufene Zugänge: ihre Beiträge verschwinden aus der Ansicht.
     for (const [chId, list] of room.msgs) {
@@ -5325,6 +5383,458 @@ async function decryptMeta(room) {
     // Sprachqualität des Raums geändert, während man drin ist: sofort übernehmen.
     if (aqChanged && S.voice && S.voice.rid === room.id) applyAudioQuality();
   } catch (e) { /* bleibt beim Platzhalter */ }
+}
+
+/* ==========================================================================
+   Ränge und Rechte (an Discord angelehnt)
+   Der Server setzt die Rechte durch und kennt dafür Rang-Kennungen, Rechte
+   (Bits), Reihenfolge und wer welchen Rang hat – Namen und Farben stehen
+   nur verschlüsselt in den Raumdaten (meta.roles). Der Besitzer hat immer
+   alles; Raumschlüssel, „Nur Konten“, Beitrittsanfragen und „Raum löschen“
+   bleiben bei ihm allein.
+   ========================================================================== */
+const RIGHT = { SEND: 1, REACT: 2, VOICE: 4, INVITE: 8, CHANNELS: 16, ROOM: 32, MESSAGES: 64, KICK: 128, HOOKS: 256, ROLES: 512, ADMIN: 1024 };
+const P_ALL = 2047;
+const P_BASE = 15;   // „@alle“ ohne eigene Einstellung (so verhalten sich auch Räume älterer Server)
+const PERMS = [
+  { bit: RIGHT.SEND, label: 'Nachrichten schreiben', note: 'In Textkanälen schreiben – einzelne Kanäle können das weiter einschränken.' },
+  { bit: RIGHT.REACT, label: 'Reagieren', note: 'Mit Symbolen auf Nachrichten reagieren.' },
+  { bit: RIGHT.VOICE, label: 'Sprachkanäle betreten', note: 'Sprechen, Video und Bildschirm teilen.' },
+  { bit: RIGHT.INVITE, label: 'Einladen', note: 'Einladungslinks erstellen und Leute direkt einladen.' },
+  { bit: RIGHT.CHANNELS, label: 'Kanäle verwalten', note: 'Anlegen, umbenennen, löschen, verschieben; Aufbewahrung und Rechte je Kanal.' },
+  { bit: RIGHT.ROOM, label: 'Raum verwalten', note: 'Name, Raumbild, Aufbewahrung und Sprachqualität.' },
+  { bit: RIGHT.MESSAGES, label: 'Nachrichten verwalten', note: 'Nachrichten anderer für alle löschen.' },
+  { bit: RIGHT.KICK, label: 'Mitglieder entfernen', note: 'Nur mit niedrigerem Rang. Den neuen Raumschlüssel verteilt der Besitzer, sobald er online ist.' },
+  { bit: RIGHT.HOOKS, label: 'API-Zugänge', note: 'Zugänge für Skripte anlegen und widerrufen (nur Konten).' },
+  { bit: RIGHT.ROLES, label: 'Ränge verwalten', note: 'Ränge unter dem eigenen anlegen, ändern und vergeben – nur mit Rechten, die man selbst hat.' },
+  { bit: RIGHT.ADMIN, label: 'Administrator', note: 'Alle Rechte, Kanal-Beschränkungen gelten nicht. Schlüssel, „Nur Konten“ und Raum löschen bleiben beim Besitzer.', danger: true }
+];
+const ROLE_COLORS = [
+  { id: 'orange', label: 'Orange', hex: '#f97316' },
+  { id: 'red', label: 'Rot', hex: '#ef4444' },
+  { id: 'pink', label: 'Rosa', hex: '#ec4899' },
+  { id: 'violet', label: 'Violett', hex: '#a855f7' },
+  { id: 'blue', label: 'Blau', hex: '#3b82f6' },
+  { id: 'cyan', label: 'Türkis', hex: '#06b6d4' },
+  { id: 'green', label: 'Grün', hex: '#22c55e' },
+  { id: 'yellow', label: 'Gelb', hex: '#ca8a04' },
+  { id: 'sand', label: 'Sand', hex: '#a8a29e' },
+  { id: 'gray', label: 'Grau', hex: '#71717a' }
+];
+// Vorlagen beim Anlegen (nur Rechte, die man selbst vergeben darf, werden übernommen)
+const ROLE_TEMPLATES = [
+  { n: 'Moderator', c: 'blue', p: RIGHT.SEND | RIGHT.REACT | RIGHT.VOICE | RIGHT.INVITE | RIGHT.MESSAGES | RIGHT.KICK, note: 'Löscht Nachrichten, entfernt Störer' },
+  { n: 'Redaktion', c: 'orange', p: RIGHT.SEND | RIGHT.REACT | RIGHT.VOICE | RIGHT.INVITE, note: 'Für Ankündigungs-Kanäle: dort schreibt nur sie' },
+  { n: 'Admin', c: 'red', p: RIGHT.ADMIN | RIGHT.SEND | RIGHT.REACT | RIGHT.VOICE | RIGHT.INVITE | RIGHT.CHANNELS | RIGHT.ROOM | RIGHT.MESSAGES | RIGHT.KICK | RIGHT.HOOKS | RIGHT.ROLES, note: 'Alle Rechte außer den Schlüsseln' }
+];
+
+/** Ränge-Stand vom Server übernehmen (ältere Server: nichts davon – Besitzer alles, sonst „@alle“). */
+function applyRoleState(room, raw) {
+  const okId = (x) => typeof x === 'string' && /^[A-Za-z0-9_-]{6,22}$/.test(x);
+  room.perm = typeof raw.perm === 'number' ? raw.perm & P_ALL : (raw.owner === S.me.id ? P_ALL : P_BASE);
+  room.dp = typeof raw.dp === 'number' ? raw.dp & P_ALL : P_BASE;
+  room.rl = {};
+  if (raw.rl && typeof raw.rl === 'object' && !Array.isArray(raw.rl)) {
+    for (const [rid, v] of Object.entries(raw.rl).slice(0, 40)) {
+      if (okId(rid) && v && typeof v === 'object') room.rl[rid] = { p: Number(v.p) & P_ALL, o: Number(v.o) || 0 };
+    }
+  }
+  room.mr = {};
+  if (raw.mr && typeof raw.mr === 'object' && !Array.isArray(raw.mr)) {
+    for (const [id, list] of Object.entries(raw.mr)) {
+      if (Array.isArray(list)) room.mr[id] = list.filter((r) => okId(r) && room.rl[r]);
+    }
+  }
+  room.cw = {};
+  if (raw.cw && typeof raw.cw === 'object' && !Array.isArray(raw.cw)) {
+    for (const [c, v] of Object.entries(raw.cw)) {
+      if (/^[A-Za-z0-9_-]{1,22}$/.test(c) && v && Array.isArray(v.r)) room.cw[c] = { r: v.r.filter((r) => room.rl[r]), t: Number(v.t) || 0 };
+    }
+  }
+  room.vw = {};
+  if (raw.vw && typeof raw.vw === 'object' && !Array.isArray(raw.vw)) {
+    for (const [c, v] of Object.entries(raw.vw)) {
+      if ((c === '' || /^[A-Za-z0-9_-]{1,22}$/.test(c)) && Array.isArray(v)) room.vw[c] = v.filter((r) => room.rl[r]);
+    }
+  }
+}
+
+/** Gibt der Server Ränge her (und ist das kein Meeting)? */
+function rolesOk(room) { return !!(S.cfg && S.cfg.roles) && !!room && !room.meta.meet && !room.ot; }
+/** Eigenes Recht im Raum (Besitzer: immer). */
+function can(room, bit) { return !!room && (room.owner === S.me.id || !!(room.perm & bit)); }
+/** Ränge eines Mitglieds, höchster zuerst. */
+function memberRoles(room, id) { return (room.mr[id] || []).filter((r) => room.rl[r]).sort((a, b) => room.rl[b].o - room.rl[a].o); }
+/** Wirksame Rechte eines Mitglieds (wie beim Server). */
+function permsOf(room, id) {
+  if (room.owner === id) return P_ALL;
+  let p = room.dp;
+  for (const r of memberRoles(room, id)) p |= room.rl[r].p;
+  return p & RIGHT.ADMIN ? P_ALL : p;
+}
+/** Höchster Rang (Reihenfolge); Besitzer über allen, ohne Rang 0. */
+function topOf(room, id) {
+  if (room.owner === id) return Infinity;
+  return memberRoles(room, id).reduce((t, r) => Math.max(t, room.rl[r].o), 0);
+}
+/** Darf $id in Textkanal ch schreiben (aktueller Stand)? */
+function canWriteIn(room, id, ch) {
+  const p = permsOf(room, id);
+  if (room.owner === id || p & RIGHT.ADMIN) return true;
+  if (!(p & RIGHT.SEND)) return false;
+  const w = room.cw[ch];
+  return !w || memberRoles(room, id).some((r) => w.r.includes(r));
+}
+function canEnterVoice(room, id, ch) {
+  const p = permsOf(room, id);
+  if (room.owner === id || p & RIGHT.ADMIN) return true;
+  if (!(p & RIGHT.VOICE)) return false;
+  const w = room.vw[ch || ''];
+  return !w || memberRoles(room, id).some((r) => w.includes(r));
+}
+/** Darf ich diesen Rang ändern/vergeben (unter meinem höchsten)? */
+function roleManageable(room, rid) { return can(room, RIGHT.ROLES) && (room.owner === S.me.id || (room.rl[rid] && room.rl[rid].o < topOf(room, S.me.id))); }
+function roleName(room, rid) { return (room.meta.roles && room.meta.roles[rid] && room.meta.roles[rid].n) || 'Rang ' + rid.slice(0, 4); }
+function roleColor(room, rid) {
+  const c = room.meta.roles && room.meta.roles[rid] && room.meta.roles[rid].c;
+  return (ROLE_COLORS.find((x) => x.id === c) || ROLE_COLORS[9]).hex;
+}
+/** Farbe des höchsten Rangs mit Farbe (für Namen in Liste und Verlauf), sonst null. */
+function memberColor(room, id) {
+  if (!room || !rolesOk(room)) return null;
+  const top = memberRoles(room, id)[0];
+  return top ? roleColor(room, top) : null;
+}
+/** Ränge von oben nach unten. */
+function rolesSorted(room) { return Object.keys(room.rl).sort((a, b) => room.rl[b].o - room.rl[a].o); }
+function bitCount(p) { let n = 0; for (const x of PERMS) if (p & x.bit) n++; return n; }
+
+/** Wer darf hier schreiben/betreten – kurz, für Kopfzeile und Eingabefeld. */
+function channelWho(room, list) {
+  if (!list.length) return 'nur der Besitzer';
+  const names = list.map((r) => roleName(room, r));
+  return 'nur ' + (names.length > 3 ? names.slice(0, 3).join(', ') + ' …' : names.join(', '));
+}
+
+/**
+ * Raum-Eintrag in einem Kanal mit Schreibrecht nur für bestimmte Ränge
+ * anzeigen? Der Server prüft das Recht nur, wenn die App den Kanal (c)
+ * mitschickt – eine ältere oder manipulierte App lässt ihn weg. Gezeigt
+ * wird deshalb: was der Server geprüft hat (c = Kanal, keine Reaktion r),
+ * was vor der Beschränkung kam, und was ein laut aktuellen Rängen
+ * Berechtigter (signiert) geschrieben hat. Reaktionen: wer reagieren darf.
+ */
+function roomPostAllowed(room, who, ch, e, obj) {
+  if (!rolesOk(room)) return true;
+  if (obj.t === 'react') return e.r === 1 || !!(permsOf(room, who) & RIGHT.REACT);
+  if (e.r === 1) return false;   // als Reaktion geprüft, kein Text
+  const w = room.cw[ch];
+  if (!w) return true;
+  if (e.c === ch) return true;
+  if (w.t && e.t < w.t) return true;
+  return canWriteIn(room, who, ch);
+}
+
+/* ---------- Raum-Menü → Ränge ------------------------------------------------ */
+async function roleCall(room, a, body) {
+  const r = await api(a, Object.assign({ id: room.id }, body));
+  await loadRooms();
+  return r;
+}
+
+/** Name/Farbe in die Raumdaten (verschlüsselt). null = Eintrag entfernen. */
+async function saveRoleMeta(room, rid, entry) {
+  const cur = S.rooms.get(room.id) || room;
+  const roles = Object.assign({}, cur.meta.roles || {});
+  if (entry) roles[rid] = entry; else delete roles[rid];
+  // Ränge, die es beim Server nicht mehr gibt, bei der Gelegenheit vergessen
+  for (const k of Object.keys(roles)) if (!cur.rl[k]) delete roles[k];
+  await updateMeta(cur, metaOf(cur, { roles: roles }));
+}
+
+function rolesDialog(room) {
+  openModal({
+    title: 'RÄNGE',
+    build: (body, close) => {
+      room = S.rooms.get(room.id) || room;
+      const owner = room.owner === S.me.id;
+      appendAll(body, el('p', { class: 'sc-p', text: 'Ränge bündeln Rechte – wie bei Discord. Höher steht über niedriger: Wer Ränge verwaltet, ändert und vergibt nur Ränge unter seinem eigenen und nur Rechte, die er selbst hat. ' +
+        (owner ? 'Du bist Besitzer und stehst über allen.' : 'Der Besitzer steht über allen.') }));
+      const ids = rolesSorted(room);
+      const list = el('div', { class: 'sc-roles' });
+      const count = (rid) => room.members.filter((m) => (room.mr[m.id] || []).includes(rid)).length;
+      const move = async (rid, dir) => {
+        const up = ids.slice().reverse();   // unten → oben
+        const i = up.indexOf(rid);
+        const j = i + dir;
+        if (j < 0 || j >= up.length) return;
+        [up[i], up[j]] = [up[j], up[i]];
+        try { await roleCall(room, 'role.order', { ids: up }); close(); rolesDialog(room); } catch (e) { toast(e.message, 'error'); }
+      };
+      let drag = null;
+      ids.forEach((rid, idx) => {
+        const ok = roleManageable(room, rid);
+        const n = count(rid);
+        const below = ids[idx + 1];
+        const above = ids[idx - 1];
+        const row = el('div', { class: 'sc-role-row' + (ok ? '' : ' is-locked'), dataset: { role: rid } },
+          el('span', { class: 'sc-role-dot', style: '--role:' + roleColor(room, rid) }),
+          el('button', { type: 'button', class: 'sc-role-main', onclick: () => { close(); roleEditor(room, rid); } },
+            el('span', { class: 'sc-role-name', text: roleName(room, rid), style: 'color:' + roleColor(room, rid) }),
+            el('span', { class: 'sc-role-sub', text: (n === 1 ? '1 MITGLIED' : n + ' MITGLIEDER') + ' · ' + (room.rl[rid].p & RIGHT.ADMIN ? 'ADMINISTRATOR' : bitCount(room.rl[rid].p) + ' RECHTE') })),
+          ok ? null : el('span', { class: 'sc-role-lock', title: 'Steht nicht unter deinem Rang' }, icon('lock', 13)),
+          ok ? iconBtn('arrowUp', 'Nach oben', () => move(rid, 1), { class: 'sc-ibtn sc-ibtn--tiny', disabled: !above || !roleManageable(room, above) }) : null,
+          ok ? iconBtn('arrowDown', 'Nach unten', () => move(rid, -1), { class: 'sc-ibtn sc-ibtn--tiny', disabled: !below }) : null);
+        if (ok) {
+          // Ziehen wie bei den Kanälen
+          row.draggable = true;
+          row.addEventListener('dragstart', (ev) => { drag = rid; ev.dataTransfer.effectAllowed = 'move'; try { ev.dataTransfer.setData('text/plain', rid); } catch (e) { /* egal */ } row.classList.add('is-dragging'); });
+          row.addEventListener('dragend', () => { drag = null; row.classList.remove('is-dragging'); list.querySelectorAll('.drop-before, .drop-after').forEach((x) => x.classList.remove('drop-before', 'drop-after')); });
+          row.addEventListener('dragover', (ev) => {
+            if (!drag || drag === rid) return;
+            ev.preventDefault();
+            const r = row.getBoundingClientRect();
+            list.querySelectorAll('.drop-before, .drop-after').forEach((x) => x.classList.remove('drop-before', 'drop-after'));
+            row.classList.add(ev.clientY > r.top + r.height / 2 ? 'drop-after' : 'drop-before');
+          });
+          row.addEventListener('drop', async (ev) => {
+            if (!drag || drag === rid) return;
+            ev.preventDefault();
+            const after = row.classList.contains('drop-after');
+            const order = ids.filter((x) => x !== drag);   // oben → unten
+            order.splice(order.indexOf(rid) + (after ? 1 : 0), 0, drag);
+            drag = null;
+            try { await roleCall(room, 'role.order', { ids: order.slice().reverse() }); close(); rolesDialog(room); } catch (e) { toast(e.message, 'error'); close(); rolesDialog(room); }
+          });
+        }
+        list.appendChild(row);
+      });
+      // „@alle“ ganz unten
+      list.appendChild(el('div', { class: 'sc-role-row is-base' },
+        el('span', { class: 'sc-role-dot is-base' }),
+        el('button', { type: 'button', class: 'sc-role-main', onclick: () => { close(); roleEditor(room, ''); } },
+          el('span', { class: 'sc-role-name', text: '@alle' }),
+          el('span', { class: 'sc-role-sub', text: 'JEDES MITGLIED · ' + bitCount(room.dp) + ' RECHTE' }))));
+      appendAll(body, sectionHead('RANGORDNUNG — ' + ids.length + ' / ' + ((S.cfg && S.cfg.roles) || 20)), list,
+        ids.length ? el('p', { class: 'sc-note', text: 'Ziehen oder Pfeile ändern die Reihenfolge. Mitglieder erscheinen in der Farbe ihres höchsten Rangs.' }) : null);
+
+      if (ids.length < ((S.cfg && S.cfg.roles) || 20)) {
+        const tpl = el('div', { class: 'sc-role-tpls' });
+        for (const t of ROLE_TEMPLATES) {
+          tpl.appendChild(el('button', { type: 'button', class: 'sc-role-tpl', title: t.note, onclick: () => { close(); roleEditor(room, null, t); } },
+            el('span', { class: 'sc-role-dot', style: '--role:' + ROLE_COLORS.find((c) => c.id === t.c).hex }),
+            el('span', { class: 'sc-role-tpl-text' }, el('span', { text: t.n }), el('span', { class: 'sc-role-sub', text: t.note }))));
+        }
+        appendAll(body, sectionHead('NEUER RANG'), tpl,
+          el('button', { type: 'button', class: 'btn btn--primary btn--block', onclick: () => { close(); roleEditor(room, null); } }, icon('plus', 14), 'Eigenen Rang anlegen'));
+      }
+      appendAll(body, el('p', { class: 'sc-note sc-hook-foot', text: 'Der Server kennt nur zufällige Kennungen, Rechte und Reihenfolge der Ränge und wer welchen hat – Namen und Farben stehen verschlüsselt in den Raumdaten. Apps bis 1.8.8 zeigen keine Ränge; die Rechte gelten trotzdem.' }));
+    }
+  });
+}
+
+/** Rang bearbeiten (rid) oder anlegen (rid null, optional aus Vorlage); rid '' = „@alle“. */
+function roleEditor(room, rid, tpl) {
+  room = S.rooms.get(room.id) || room;
+  const base = rid === '';
+  const fresh = rid === null;
+  const myPerms = room.owner === S.me.id ? P_ALL : room.perm;
+  const editable = base ? can(room, RIGHT.ROLES) : fresh ? can(room, RIGHT.ROLES) : roleManageable(room, rid);
+  let p = base ? room.dp : fresh ? ((tpl ? tpl.p : RIGHT.SEND | RIGHT.REACT | RIGHT.VOICE | RIGHT.INVITE) & myPerms) : room.rl[rid].p;
+  let color = fresh ? (tpl ? tpl.c : ROLE_COLORS[4].id) : base ? '' : ((room.meta.roles[rid] && room.meta.roles[rid].c) || ROLE_COLORS[9].id);
+  openModal({
+    title: base ? 'RANG @ALLE' : fresh ? 'RANG ANLEGEN' : 'RANG BEARBEITEN',
+    build: (body, close) => {
+      const name = base ? null : el('input', { type: 'text', maxlength: '30', placeholder: 'z. B. Moderator', value: fresh ? (tpl ? tpl.n : '') : roleName(room, rid), disabled: !editable });
+      const preview = el('span', { class: 'sc-role-preview' });
+      const drawPreview = () => {
+        if (base) return;
+        preview.textContent = '';
+        const hex = (ROLE_COLORS.find((c) => c.id === color) || ROLE_COLORS[9]).hex;
+        preview.append(el('span', { class: 'sc-role-dot', style: '--role:' + hex }), el('span', { text: cleanName(name.value) || 'Rang', style: 'color:' + hex }));
+      };
+      if (!base) {
+        const sw = el('div', { class: 'sc-role-colors', role: 'listbox', 'aria-label': 'Farbe' });
+        const drawSw = () => {
+          sw.textContent = '';
+          for (const c of ROLE_COLORS) {
+            sw.appendChild(el('button', { type: 'button', class: 'sc-role-color', role: 'option', title: c.label, 'aria-label': c.label, 'aria-selected': c.id === color ? 'true' : 'false', disabled: !editable,
+              style: 'background:' + c.hex, onclick: () => { color = c.id; drawSw(); drawPreview(); } }));
+          }
+        };
+        drawSw();
+        name.addEventListener('input', drawPreview);
+        drawPreview();
+        appendAll(body, el('div', { class: 'sc-role-head' }, preview), field('Name', name), field('Farbe', sw));
+      } else {
+        appendAll(body, el('p', { class: 'sc-p', text: 'Rechte jedes Mitglieds – auch ohne Rang. Ränge geben nur zusätzliche Rechte dazu.' }));
+      }
+      if (!editable) appendAll(body, el('p', { class: 'sc-note', text: 'Dieser Rang steht nicht unter deinem eigenen – nur ansehen.' }));
+      // Rechte als Schalter
+      const box = el('div', { class: 'sc-rm-rows sc-role-perms' });
+      const drawPerms = () => {
+        box.textContent = '';
+        for (const x of PERMS) {
+          const on = !!(p & x.bit);
+          const mayToggle = editable && !!(myPerms & x.bit);
+          const b = el('button', { type: 'button', class: 'sc-menu-item sc-rm-row' + (x.danger ? ' is-danger' : ''), role: 'switch', 'aria-checked': on ? 'true' : 'false', disabled: !mayToggle,
+            title: mayToggle ? null : editable ? 'Dieses Recht hast du selbst nicht' : null,
+            onclick: () => { p ^= x.bit; drawPerms(); } },
+          el('span', { class: 'sc-rm-text' }, el('span', { text: x.label }), el('span', { class: 'sc-rm-note', text: x.note })),
+          el('span', { class: 'sc-rm-switch' }, el('span', { class: 'sc-rm-switch-text', text: on ? 'AN' : 'AUS' }), el('span', { class: 'sc-rm-knob' })));
+          box.appendChild(b);
+        }
+      };
+      drawPerms();
+      appendAll(body, sectionHead('RECHTE'), box);
+
+      // Mitglieder mit diesem Rang (nur bestehende Ränge)
+      if (!base && !fresh) {
+        const mem = el('div', { class: 'sc-list sc-role-members' });
+        const drawMem = () => {
+          mem.textContent = '';
+          const cur = S.rooms.get(room.id) || room;
+          for (const m of cur.members) {
+            const ident = S.ids.get(m.id);
+            const has = (cur.mr[m.id] || []).includes(rid);
+            const allowed = editable && (cur.owner === S.me.id || m.id === S.me.id || topOf(cur, m.id) < topOf(cur, S.me.id));
+            mem.appendChild(el('button', { type: 'button', class: 'sc-role-member', role: 'checkbox', 'aria-checked': has ? 'true' : 'false', disabled: !allowed,
+              onclick: async () => {
+                try { await roleCall(cur, 'role.assign', { r: rid, member: m.id, on: !has }); drawMem(); } catch (e) { toast(e.message, 'error'); }
+              } },
+            avatar(ident, 'xs'), el('span', { class: 'sc-role-member-name', text: displayName(ident) }), has ? icon('check', 14) : null));
+          }
+        };
+        drawMem();
+        appendAll(body, sectionHead('MITGLIEDER'), mem);
+      }
+
+      if (editable) {
+        const go = el('button', { type: 'button', class: 'btn btn--primary btn--block' }, icon('check', 14), fresh ? 'Rang anlegen' : 'Speichern');
+        go.addEventListener('click', async () => {
+          const n = base ? '' : cleanName(name.value).slice(0, 30);
+          if (!base && !n) { name.focus(); return; }
+          go.disabled = true;
+          try {
+            const id = fresh ? C.randomId().slice(0, 12) : rid;
+            const cur = S.rooms.get(room.id) || room;
+            if (fresh || base || cur.rl[id].p !== p) await roleCall(cur, 'role.set', { r: id, p: p });
+            if (!base) {
+              const old = cur.meta.roles[id];
+              if (fresh || !old || old.n !== n || old.c !== color) await saveRoleMeta(S.rooms.get(room.id) || cur, id, { n: n, c: color });
+            }
+            close();
+            toast(base ? 'Rechte von @alle gespeichert.' : fresh ? 'Rang „' + n + '“ angelegt.' : 'Rang gespeichert.', 'ok');
+            if (fresh) roleEditor(S.rooms.get(room.id) || room, id); else rolesDialog(S.rooms.get(room.id) || room);
+          } catch (e) { go.disabled = false; toast(e.message, 'error'); }
+        });
+        appendAll(body, go);
+        if (!base && !fresh) {
+          appendAll(body, el('button', { type: 'button', class: 'btn sc-btn--danger btn--block', onclick: async () => {
+            const ok = await confirmBox('Rang löschen', '„' + roleName(room, rid) + '“ verschwindet bei allen Mitgliedern und aus den Kanal-Rechten. Kanäle, in denen nur dieser Rang schreiben durfte, bleiben beschränkt.', 'Löschen', true);
+            if (!ok) { roleEditor(room, rid); return; }
+            try {
+              await roleCall(room, 'role.del', { r: rid });
+              await saveRoleMeta(S.rooms.get(room.id) || room, rid, null).catch(() => {});
+              toast('Rang gelöscht.', 'ok');
+            } catch (e) { toast(e.message, 'error'); }
+            rolesDialog(S.rooms.get(room.id) || room);
+          } }, icon('trash', 14), 'Rang löschen'));
+        }
+      }
+      appendAll(body, el('button', { type: 'button', class: 'btn btn--block', onclick: () => { close(); rolesDialog(S.rooms.get(room.id) || room); } }, icon('back', 14), 'Alle Ränge'));
+      if (name && fresh) setTimeout(() => name.focus(), 60);
+    }
+  });
+}
+
+/* ---------- Kanal → Berechtigungen ------------------------------------------ */
+function channelPermDialog(room, kind, c) {
+  room = S.rooms.get(room.id) || room;
+  const voice = kind === 'vch';
+  const cur = voice ? room.vw[c.id] : (room.cw[c.id] && room.cw[c.id].r);
+  let mode = !cur ? 'all' : cur.length ? 'roles' : 'owner';
+  let picked = new Set(cur || []);
+  const ids = rolesSorted(room);
+  openModal({
+    title: 'BERECHTIGUNGEN · ' + (voice ? c.name.toUpperCase() : '#' + c.name.toUpperCase()),
+    build: (body, close) => {
+      appendAll(body, el('p', { class: 'sc-p', text: voice ? 'Wer darf „' + c.name + '“ betreten?' : 'Wer darf in #' + c.name + ' schreiben?' }));
+      const opts = el('div', { class: 'sc-quality' });
+      const roles = el('div', { class: 'sc-list sc-role-pick' });
+      const draw = () => {
+        opts.textContent = '';
+        for (const o of [
+          { id: 'all', name: 'Alle Mitglieder', info: 'Standard', note: voice ? 'Jeder, der Sprachkanäle betreten darf.' : 'Jeder, der schreiben darf.' },
+          { id: 'roles', name: 'Nur bestimmte Ränge', info: ids.length ? '' : 'NOCH KEINE', note: ids.length ? 'Auswahl unten. Besitzer und Administratoren immer.' : 'Lege zuerst Ränge an (Raum-Menü → Ränge).' },
+          { id: 'owner', name: 'Nur Besitzer', info: '', note: 'Und Ränge mit „Administrator“.' }
+        ]) {
+          opts.appendChild(el('button', { type: 'button', class: 'sc-quality-opt', 'aria-pressed': mode === o.id ? 'true' : 'false', disabled: o.id === 'roles' && !ids.length,
+            onclick: () => { mode = o.id; draw(); } },
+          el('span', { class: 'sc-quality-name', text: o.name }), el('span', { class: 'sc-quality-info', text: o.info }), el('span', { class: 'sc-quality-note', text: o.note })));
+        }
+        roles.textContent = '';
+        roles.hidden = mode !== 'roles';
+        for (const rid of ids) {
+          const has = picked.has(rid);
+          roles.appendChild(el('button', { type: 'button', class: 'sc-role-member', role: 'checkbox', 'aria-checked': has ? 'true' : 'false',
+            onclick: () => { if (has) picked.delete(rid); else picked.add(rid); draw(); } },
+          el('span', { class: 'sc-role-dot', style: '--role:' + roleColor(room, rid) }), el('span', { class: 'sc-role-member-name', text: roleName(room, rid), style: 'color:' + roleColor(room, rid) }), has ? icon('check', 14) : null));
+        }
+      };
+      draw();
+      const go = el('button', { type: 'button', class: 'btn btn--primary btn--block' }, icon('check', 14), 'Speichern');
+      go.addEventListener('click', async () => {
+        const w = mode === 'all' ? null : mode === 'owner' ? [] : [...picked].filter((r) => room.rl[r]);
+        if (mode === 'roles' && !w.length) { toast('Wähle mindestens einen Rang – oder „Nur Besitzer“.', 'error'); return; }
+        go.disabled = true;
+        try {
+          await roleCall(room, 'room.cperm', { c: c.id, v: voice ? 1 : 0, w: w });
+          close();
+          toast(w === null ? (voice ? 'Alle dürfen „' + c.name + '“ betreten.' : 'Alle dürfen in #' + c.name + ' schreiben.')
+            : (voice ? '„' + c.name + '“ betreten jetzt ' : 'In #' + c.name + ' schreiben jetzt ') + channelWho(S.rooms.get(room.id) || room, w) + '.', 'ok');
+        } catch (e) { go.disabled = false; toast(e.message, 'error'); }
+      });
+      appendAll(body, opts, roles,
+        el('p', { class: 'sc-note', text: voice ? 'Zuhören heißt hier betreten – wer drin ist, hört und spricht.'
+          : 'Lesen können alle Mitglieder des Raums: Die Ende-zu-Ende-Verschlüsselung gilt für den ganzen Raum, nicht je Kanal. Reagieren bleibt allen erlaubt, die reagieren dürfen.' }),
+        voice ? null : el('p', { class: 'sc-note', text: 'Der Server prüft das Schreibrecht, wenn die App den Kanal nennt – er erfährt dafür, welche Beiträge zu diesem Kanal gehören (nicht Name oder Inhalt). Apps bis 1.8.8 kennen das nicht: Was sie ohne Recht hier schreiben, blenden neuere Apps aus.' }),
+        go);
+    }
+  });
+}
+
+/* ---------- Mitglied: Rechtsklick ------------------------------------------- */
+function canKick(room, id) {
+  return id !== S.me.id && room.owner !== id && can(room, RIGHT.KICK) && (room.owner === S.me.id || topOf(room, id) < topOf(room, S.me.id));
+}
+
+function memberMenu(room, ident) {
+  const items = [{ icon: 'users', label: 'Profil anzeigen', run: () => showProfile(ident.id, room) }];
+  if (rolesOk(room) && can(room, RIGHT.ROLES)) {
+    const list = rolesSorted(room).filter((rid) => roleManageable(room, rid));
+    const allowed = room.owner === S.me.id || ident.id === S.me.id || topOf(room, ident.id) < topOf(room, S.me.id);
+    if (list.length) {
+      items.push({ sep: true }, { bar: el('div', { class: 'sc-ctx-head', text: 'RÄNGE' }) });
+      for (const rid of list) {
+        const has = (room.mr[ident.id] || []).includes(rid);
+        items.push({ swatch: roleColor(room, rid), label: roleName(room, rid), checked: has, disabled: !allowed,
+          run: () => roleCall(room, 'role.assign', { r: rid, member: ident.id, on: !has }).catch((e) => toast(e.message, 'error')) });
+      }
+    }
+  }
+  if (canKick(room, ident.id)) items.push({ sep: true }, { icon: 'leave', label: 'Aus dem Raum entfernen', danger: true, run: () => kickMember(room, ident) });
+  return items;
+}
+
+/** Rang-Abzeichen (Profil). */
+function roleBadges(room, id) {
+  if (!rolesOk(room)) return null;
+  const list = memberRoles(room, id);
+  if (!list.length && room.owner !== id) return null;
+  return el('div', { class: 'sc-role-badges' },
+    room.owner === id ? el('span', { class: 'sc-role-badge is-owner' }, icon('crown', 11), 'Besitzer') : null,
+    ...list.map((rid) => el('span', { class: 'sc-role-badge', style: '--role:' + roleColor(room, rid) }, el('span', { class: 'sc-role-dot' }), roleName(room, rid))));
 }
 
 /** Räume aus temporären Sitzungen löscht der Server nach so vielen Tagen ohne Aktivität. */
@@ -5983,20 +6493,32 @@ function roomMenu(room) {
       const aq = AUDIO_QUALITY.find((q) => q.id === room.meta.aq);
       // Nur Mitglieder mit Konto: nicht für Meetings und verfallende Räume; einschalten nur als Konto.
       const aoOk = owner && !meet && !room.tmp && (room.ao || S.mode === 'account');
+      // Was ich verwalten darf: Besitzer alles, sonst nach Rang (Schlüssel bleiben beim Besitzer)
+      const mRoom = can(room, RIGHT.ROOM);
+      const mChan = can(room, RIGHT.CHANNELS);
+      const mRoles = rolesOk(room) && can(room, RIGHT.ROLES);
+      const nRoles = Object.keys(room.rl).length;
+      const settings = mRoom || aoOk || hooksOk(room) || mRoles;
+      const invite = meet || can(room, RIGHT.INVITE);
+      const voiceOk = inVoice || canEnterVoice(room, S.me.id, '');
+      const myRoles = rolesOk(room) && !owner ? memberRoles(room, S.me.id) : [];
       appendAll(body, el('div', { class: 'sc-rm' },
         card,
+        myRoles.length ? el('p', { class: 'sc-rm-hint sc-rm-myroles' }, 'DEIN RANG', ...myRoles.slice(0, 3).map((rid) => el('span', { class: 'sc-role-badge', style: '--role:' + roleColor(room, rid) }, el('span', { class: 'sc-role-dot' }), roleName(room, rid)))) : null,
         expiry ? el('p', { class: 'sc-rm-hint', text: expiry }) : null,
         sectionHead(meet ? 'TEILNEHMER & CALL' : 'MITGLIEDER & SPRACHE'),
-        pair(meet ? tile('link', 'Meeting-Link teilen', () => meetingDialog(room), 'is-accent') : tile('userPlus', 'Einladen', () => inviteDialog(room), 'is-accent'),
-          inVoice ? tile('leave', 'Sprachkanal verlassen', () => leaveVoice()) : tile(meet ? 'phone' : 'speaker', meet ? 'Call beitreten' : 'Sprachkanal betreten', () => joinVoice(room.id))),
-        owner ? sectionHead('KANÄLE') : null,
-        owner ? pair(tile('hash', 'Textkanal anlegen', () => addChannel(room)), tile('speaker', 'Sprachkanal anlegen', () => addVoiceChannel(room))) : null,
-        owner ? sectionHead('EINSTELLUNGEN') : null,
-        owner ? el('div', { class: 'sc-rm-rows' },
-          row('edit', 'Raum umbenennen', () => renameRoom(room)),
-          row('image', room.meta.img ? 'Raumbild ändern' : 'Raumbild festlegen', () => roomPicture(room), room.meta.img ? 'GESETZT' : 'KEINS'),
-          row('clock', 'Nachrichten aufbewahren', () => roomTtlDialog(room), ttlLabel(roomTtl(room)).toUpperCase(), ownTtlSummary(room)),
-          row('sliders', 'Sprachqualität im Raum', () => roomAudioDialog(room), aq ? aq.name.toUpperCase() : 'JEDER NACH WAHL'),
+        invite || voiceOk ? pair(invite ? (meet ? tile('link', 'Meeting-Link teilen', () => meetingDialog(room), 'is-accent') : tile('userPlus', 'Einladen', () => inviteDialog(room), 'is-accent')) : null,
+          inVoice ? tile('leave', 'Sprachkanal verlassen', () => leaveVoice()) : voiceOk ? tile(meet ? 'phone' : 'speaker', meet ? 'Call beitreten' : 'Sprachkanal betreten', () => joinVoice(room.id)) : null) : null,
+        mChan ? sectionHead('KANÄLE') : null,
+        mChan ? pair(tile('hash', 'Textkanal anlegen', () => addChannel(room)), tile('speaker', 'Sprachkanal anlegen', () => addVoiceChannel(room))) : null,
+        settings ? sectionHead('EINSTELLUNGEN') : null,
+        settings ? el('div', { class: 'sc-rm-rows' },
+          mRoom ? row('edit', 'Raum umbenennen', () => renameRoom(room)) : null,
+          mRoom ? row('image', room.meta.img ? 'Raumbild ändern' : 'Raumbild festlegen', () => roomPicture(room), room.meta.img ? 'GESETZT' : 'KEINS') : null,
+          mRoom ? row('clock', 'Nachrichten aufbewahren', () => roomTtlDialog(room), ttlLabel(roomTtl(room)).toUpperCase(), ownTtlSummary(room)) : null,
+          mRoom ? row('sliders', 'Sprachqualität im Raum', () => roomAudioDialog(room), aq ? aq.name.toUpperCase() : 'JEDER NACH WAHL') : null,
+          // Ränge: Rechte bündeln und vergeben (an Discord angelehnt)
+          mRoles ? row('tag', 'Ränge', () => rolesDialog(room), nRoles ? String(nRoles) : 'KEINE', 'Wer was darf: Kanäle, Nachrichten, Mitglieder …') : null,
           aoOk ? toggle('users', 'Nur Mitglieder mit Konto', room.ao, () => roomAccountsDialog(room), 'Neue Mitglieder brauchen ein Konto.') : null,
           // API-Zugang: nur Konten, nicht für Meetings und verfallende Räume
           hooksOk(room) ? row('code', 'API-Zugang', () => hooksDialog(room), hookCount(room) ? hookCount(room) + ' / ' + HOOK_LIMIT : 'KEINER', 'Skripte posten in einen Kanal – nur posten.') : null) : null,
@@ -6020,7 +6542,7 @@ function roomMenu(room) {
 const HOOK_LIMIT = 5;
 
 function hooksOk(room) {
-  return room.owner === S.me.id && S.mode === 'account' && !room.meta.meet && !room.tmp;
+  return can(room, RIGHT.HOOKS) && S.mode === 'account' && !room.meta.meet && !room.tmp;
 }
 
 function hookCount(room) {
@@ -6299,7 +6821,7 @@ async function moveChannel(room, kind, id, toIndex) {
 }
 
 function moveItems(room, kind, id) {
-  if (room.owner !== S.me.id || (kind === 'vch' && id === '')) return [];
+  if (!can(room, RIGHT.CHANNELS) || (kind === 'vch' && id === '')) return [];
   const list = room.meta[kind];
   const i = list.findIndex((c) => c.id === id);
   const min = kind === 'vch' ? 1 : 0;
@@ -6362,11 +6884,13 @@ function dropTarget(btn, room, kind, id) {
 }
 
 function textChannelMenu(room, ch) {
-  const owner = room.owner === S.me.id;
+  const owner = can(room, RIGHT.CHANNELS);   // Besitzer oder Recht „Kanäle verwalten“
+  const w = room.cw[ch.id];
   return [
     { icon: 'check', label: 'Als gelesen markieren', disabled: !(room.unread.get(ch.id) || 0), run: () => markChannelRead(room, ch.id) },
     owner ? { icon: 'edit', label: 'Kanal umbenennen', run: () => renameChannel(room, 'ch', ch) } : null,
     ...moveItems(room, 'ch', ch.id),
+    owner && rolesOk(room) ? { icon: 'lock', label: 'Berechtigungen', note: 'Schreiben: ' + (w ? channelWho(room, w.r) : 'alle'), run: () => channelPermDialog(room, 'ch', ch) } : null,
     owner ? { icon: 'clock', label: 'Nachrichten aufbewahren: ' + ttlLabel(chanTtl(room, ch.id)) + (chanTtlOk(room) && !hasChanTtl(room, ch.id) ? ' (wie Raum)' : ''),
       run: () => (chanTtlOk(room) ? channelTtlDialog(room, ch) : roomTtlDialog(room)) } : null,
     owner ? { icon: 'trash', label: 'Kanal löschen', danger: true, disabled: room.meta.ch.length <= 1, run: () => deleteChannel(room, 'ch', ch) } : null
@@ -6374,14 +6898,16 @@ function textChannelMenu(room, ch) {
 }
 
 function voiceChannelMenu(room, vch) {
-  const owner = room.owner === S.me.id;
+  const owner = can(room, RIGHT.CHANNELS);
+  const w = room.vw[vch.id];
   const inHere = !!(S.voice && S.voice.rid === room.id && S.voice.ch === vch.id);
   const aq = AUDIO_QUALITY.find((q) => q.id === room.meta.aq);
   return [
     inHere ? { icon: 'leave', label: 'Sprachkanal verlassen', run: () => leaveVoice() } : { icon: 'speaker', label: 'Beitreten', run: () => joinVoice(room.id, vch.id) },
     owner ? { icon: 'edit', label: 'Sprachkanal umbenennen', run: () => renameChannel(room, 'vch', vch) } : null,
     ...moveItems(room, 'vch', vch.id),
-    owner ? { icon: 'sliders', label: 'Sprachqualität im Raum: ' + (aq ? aq.name : 'jeder nach Wahl'), run: () => roomAudioDialog(room) } : null,
+    owner && rolesOk(room) ? { icon: 'lock', label: 'Berechtigungen', note: 'Betreten: ' + (w ? channelWho(room, w) : 'alle'), run: () => channelPermDialog(room, 'vch', vch) } : null,
+    can(room, RIGHT.ROOM) ? { icon: 'sliders', label: 'Sprachqualität im Raum: ' + (aq ? aq.name : 'jeder nach Wahl'), run: () => roomAudioDialog(room) } : null,
     owner ? { icon: 'trash', label: 'Sprachkanal löschen', danger: true, disabled: vch.id === '', run: () => deleteChannel(room, 'vch', vch) } : null
   ];
 }
@@ -6429,6 +6955,8 @@ async function deleteChannel(room, kind, c) {
     await updateMeta(room, metaOf(room, voice ? { vch: list } : { ch: list }));
     // Eigene Aufbewahrung des Kanals beim Server wieder vergessen.
     if (!voice && hasChanTtl(room, c.id)) await api('room.cttl', { id: room.id, c: c.id, ttl: 0 }).then(loadRooms).catch(() => {});
+    // Eigene Rechte des Kanals ebenso
+    if (voice ? room.vw[c.id] : room.cw[c.id]) await api('room.cperm', { id: room.id, c: c.id, v: voice ? 1 : 0, w: null }).then(loadRooms).catch(() => {});
     if (!voice && S.view.kind === 'room' && S.view.rid === room.id && S.view.ch === c.id) openRoom(room.id, room.meta.ch[0].id);
   } catch (e) { toast(e.message, 'error'); }
 }
@@ -6658,10 +7186,17 @@ async function deleteRoom(room) {
 }
 
 async function kickMember(room, ident) {
-  const ok = await confirmBox('Entfernen', displayName(ident) + ' wird aus dem Raum entfernt. Danach bekommt der Raum einen neuen Schlüssel, damit spätere Nachrichten für ' + displayName(ident) + ' unlesbar bleiben.', 'Entfernen', true);
+  const ok = await confirmBox('Entfernen', displayName(ident) + ' wird aus dem Raum entfernt. Danach bekommt der Raum einen neuen Schlüssel, damit spätere Nachrichten für ' + displayName(ident) + ' unlesbar bleiben' +
+    (room.owner === S.me.id ? '.' : ' – den verteilt der Besitzer, sobald seine App online ist.'), 'Entfernen', true);
   if (!ok) return;
   try {
     await api('room.kick', { id: room.id, member: ident.id });
+    if (room.owner !== S.me.id) {
+      // Schlüssel verteilt nur der Besitzer – seine App erneuert ihn, sobald sie den Hinweis sieht.
+      await loadRooms();
+      toast(displayName(ident) + ' entfernt. Den neuen Raumschlüssel verteilt der Besitzer, sobald er online ist.', 'ok', 7000);
+      return;
+    }
     await rotateRoom(room.id);
     toast(displayName(ident) + ' entfernt, Raumschlüssel erneuert.' + (room.meta.meet ? ' Bisherige Meeting-Links gelten nicht mehr – teile bei Bedarf einen neuen.' : ''), 'ok', room.meta.meet ? 7000 : undefined);
   } catch (e) { toast(e.message, 'error'); }
@@ -6706,13 +7241,13 @@ async function rotateRoom(rid, manual, quiet) {
   }
 }
 
-async function postRoom(room, obj) {
+async function postRoom(room, obj, extra) {
   const key = await roomKey(room.id, room.epoch);
   if (!key) throw new Error('Der aktuelle Raumschlüssel fehlt noch.');
   const msg = Object.assign({ v: 1, id: C.randomId(), from: S.me.id, room: room.id, ts: Date.now() }, obj);
   const d = await C.sealRoom(msg, key, room.epoch, room.id, S.me.priv);
   // Änderungen/Löschungen verfallen mit der Frist ihres Kanals (sonst käme der alte Text zurück).
-  await api('room.post', Object.assign({ id: room.id, k: 'msg', d: d }, chanParam(room, obj.ch)));
+  await api('room.post', Object.assign({ id: room.id, k: 'msg', d: d }, chanParam(room, obj.ch), extra || {}));
   return msg;
 }
 
@@ -6774,6 +7309,8 @@ function roomMessage(room, obj, from, e) {
   // erscheinen, sobald der Kanal bekannt ist.
   const ch = typeof obj.ch === 'string' && /^[A-Za-z0-9_-]{1,22}$/.test(obj.ch) ? obj.ch : room.meta.ch[0].id;
   if (ts + chanTtl(room, ch) * 1000 < serverNow()) return;   // älter als die Aufbewahrung des Kanals
+  // Kanal mit Schreibrecht nur für bestimmte Ränge: nur Berechtigtes zeigen (siehe roomPostAllowed)
+  if (!roomPostAllowed(room, from.id, ch, e, obj)) return;
   const ref = typeof obj.ref === 'string' ? room.byId.get(obj.ref) : null;
   // Nummern von Änderungen merken: Bekommt der Kanal eine eigene Aufbewahrung, ordnet der Besitzer sie mit zu.
   // Reaktionen anderer zählen mit (Löschen der Nachricht nimmt sie mit).
@@ -8233,6 +8770,11 @@ async function joinVoice(rid, ch) {
   if (!room) return;
   const chan = typeof ch === 'string' ? ch : room.meta.vch[0].id;
   if (S.voice && S.voice.rid === rid && S.voice.ch === chan) return;
+  if (rolesOk(room) && !canEnterVoice(room, S.me.id, chan)) {
+    const w = room.vw[chan];
+    toast(w ? 'Diesen Sprachkanal betreten ' + channelWho(room, w) + '.' : 'Du darfst in diesem Raum keine Sprachkanäle betreten.', 'error');
+    return;
+  }
   if (S.voice) await leaveVoice(S.voice.rid === rid);
   if (!roomKeyRaw(rid, room.epoch)) { toast('Der aktuelle Raumschlüssel fehlt noch.', 'error'); return; }
   audioCtx();

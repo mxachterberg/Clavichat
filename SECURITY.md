@@ -83,6 +83,43 @@ erfunden. Im Überblick – wo verschlüsselt wird und was der Server davon sieh
 - Zusätzlich wechselt der Besitzer den Schlüssel jede Woche – nicht, solange
   Einladungslinks offen sind (sie würden sonst ungültig). Siehe Forward
   Secrecy.
+- Reaktionen sind Raum-Einträge wie Nachrichten (`t: 'react'`, verschlüsselt
+  und signiert); der Server unterscheidet sie nicht von Nachrichten – außer
+  in Kanälen, in denen der Reagierende nicht schreiben darf (siehe Ränge).
+
+### Ränge und Rechte
+
+- Wie bei Discord: Ränge bündeln Rechte (schreiben, reagieren, Sprachkanäle,
+  einladen, Kanäle/Raum/Nachrichten/API-Zugänge/Ränge verwalten, Mitglieder
+  entfernen, Administrator). Der Server setzt sie durch und kennt dafür je
+  Rang eine zufällige Kennung, die Rechte (Bits), die Reihenfolge und wer
+  welchen Rang hat. Namen und Farben der Ränge stehen nur verschlüsselt in
+  den Raumdaten.
+- Rangordnung: Wer Ränge verwaltet oder Mitglieder entfernt, wirkt nur auf
+  Ränge und Mitglieder unter seinem höchsten Rang und gibt nur Rechte
+  weiter, die er selbst hat. Der Besitzer steht über allen.
+- Beim Besitzer bleiben immer: Raumschlüssel (Wechsel, Wochenwechsel,
+  Schlüsselpakete), „Nur Mitglieder mit Konto“, Beitrittsanfragen in
+  Meetings, „Permanent“ nur als Konto, Raum löschen. Entfernt ein Rang ein
+  Mitglied, erneuert die App des Besitzers den Raumschlüssel, sobald sie den
+  Hinweis im Verlauf sieht – bis dahin kennt der Entfernte den aktuellen
+  Schlüssel noch, bekommt aber keine Einträge mehr vom Server.
+- Raumdaten (Kanäle, Name, Bild, API-Zugänge, Rang-Namen) darf neu
+  verschlüsseln, wer eines der Verwaltungsrechte hat. Was genau sich darin
+  ändert, sieht der Server nicht: Ein Rang mit „Kanäle verwalten“ könnte
+  technisch auch den Raumnamen ändern.
+- Schreibrecht je Textkanal („nur bestimmte Ränge“): Lesen können weiter
+  alle Mitglieder – der Raumschlüssel gilt für den ganzen Raum, nicht je
+  Kanal. Neue Apps nennen dem Server bei solchen Kanälen die Kanal-Kennung
+  (`c`); er lehnt Beiträge ohne Recht ab und erfährt dafür, welche
+  Einträge zu diesem Kanal gehören. Weil eine ältere oder veränderte App die
+  Kennung weglassen kann, zeigen die Apps in beschränkten Kanälen nur, was
+  der Server geprüft hat (`c` passt), was vor der Beschränkung kam oder was
+  ein laut aktuellen Rängen Berechtigter signiert hat. Reaktionen von
+  Mitgliedern ohne Schreibrecht gehen mit `rx` (der Server prüft dann
+  „reagieren“ und vermerkt `r` am Eintrag – er erfährt damit, dass es eine
+  Reaktion ist).
+- Sprachkanäle lassen sich ebenso auf Ränge beschränken (betreten).
 
 ### Forward Secrecy
 
@@ -179,10 +216,11 @@ erfunden. Im Überblick – wo verschlüsselt wird und was der Server davon sieh
   zufällige Kanal-Kennung, nie Name oder Inhalt) – aber nur für solche
   Kanäle: Nachrichten anderer Kanäle gehen weiter ohne Kennung. Zurück auf
   „wie der Raum“ entfernt die Zuordnung wieder aus dem Verlauf.
-- Der Besitzer eines Raums kann einzelne Nachrichten und API-Beiträge beim
-  Server löschen (`room.del`, nach Eintragsnummer). Wer etwas geschrieben
-  hat, weiß der Server nicht – deshalb nur der Besitzer; andere löschen
-  eigene Nachrichten verschlüsselt. Zurück bleibt ein Hinweis-Eintrag mit
+- Der Besitzer eines Raums (oder ein Rang mit „Nachrichten verwalten“) kann
+  einzelne Nachrichten und API-Beiträge beim Server löschen (`room.del`, nach
+  Eintragsnummer). Wer etwas geschrieben hat, weiß der Server nicht –
+  deshalb nur mit diesem Recht; andere löschen eigene Nachrichten
+  verschlüsselt. Zurück bleibt ein Hinweis-Eintrag mit
   den Nummern, damit verbundene Apps sie sofort ausblenden.
 - Abgelaufenes wird nicht mehr ausgeliefert und stündlich aus den Dateien
   gelöscht.
@@ -340,6 +378,9 @@ erfunden. Im Überblick – wo verschlüsselt wird und was der Server davon sieh
   welche öffentlichen Schlüssel, Namen und Profilbilder
   (nur Konten) es gibt, wer in welchem Raum ist und wer in welchem Sprachkanal
   (ohne dessen Namen).
+- In Räumen mit Rängen: welche Rechte welcher Rang hat, wer welchen Rang hat
+  und welche Kanäle (nur Kennung) auf welche Ränge beschränkt sind – nicht
+  die Namen der Ränge oder Kanäle.
 - Welcher Briefkasten wann wie viele Einträge bekommt. Wer eine Nachricht
   abschickt, sieht er im Moment der Anfrage, speichert es aber nicht.
 - Dass Status-Fächer beschrieben und gelesen werden – im Moment der Anfrage

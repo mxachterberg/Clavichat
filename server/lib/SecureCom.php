@@ -35,7 +35,9 @@
  *    inbox/<id>.jsonl|.n     Briefkasten (Einträge + Zähler)
  *    rooms/<rid>.json        Raum: Mitglieder, Einladungen, wer in welchem
  *                            Sprachkanal ist (Namen der Kanäle: verschlüsselt),
- *                            letzte Aktivität; von einer temporären Sitzung
+ *                            letzte Aktivität, Ränge (Kennung, Rechte, Reihenfolge,
+ *                            wer welchen hat; Namen verschlüsselt) und Kanal-Rechte;
+ *                            von einer temporären Sitzung
  *                            angelegt: nach tempRoomDays() ohne Aktivität weg;
  *                            Einmal-Meeting (ot): nach ONCE_IDLE weg
  *    feeds/<rid>.jsonl|.n    Verlauf eines Raums (Beiträge von API-Zugängen: k "hook")
@@ -105,6 +107,27 @@ class SecureCom
     const MAX_CTTL      = 30;        // Textkanäle mit eigener Aufbewahrung je Raum (wie Kanäle höchstens)
     const MAX_TAG       = 50000;     // Einträge, die room.cttl nachträglich einem Kanal zuordnet
     const MAX_DEL       = 200;       // Einträge je room.del (Nachricht samt Änderungen)
+    const MAX_ROLES     = 20;        // Ränge je Raum
+    const MAX_CPERM     = 50;        // Kanäle mit eigenen Rechten (Schreiben bzw. Betreten) je Raum
+
+    // Rechte (Bits) – an Discord angelehnt. Der Besitzer hat immer alle;
+    // Schlüssel (erneuern, an neue Mitglieder verteilen), „Nur Konten“,
+    // Beitrittsanfragen und Raum löschen bleiben trotzdem bei ihm allein.
+    const P_SEND      = 1;      // Nachrichten schreiben
+    const P_REACT     = 2;      // auf Nachrichten reagieren
+    const P_VOICE     = 4;      // Sprachkanäle betreten
+    const P_INVITE    = 8;      // Einladungslinks erstellen
+    const P_CHANNELS  = 16;     // Kanäle anlegen/umbenennen/löschen/verschieben, Kanal-Aufbewahrung und -Rechte
+    const P_ROOM      = 32;     // Name, Bild, Aufbewahrung, Sprachqualität des Raums
+    const P_MESSAGES  = 64;     // fremde Nachrichten löschen (room.del)
+    const P_KICK      = 128;    // Mitglieder entfernen (nur unterhalb des eigenen Rangs)
+    const P_HOOKS     = 256;    // API-Zugänge
+    const P_ROLES     = 512;    // Ränge unterhalb des eigenen verwalten und vergeben
+    const P_ADMIN     = 1024;   // alle Rechte, Kanal-Beschränkungen gelten nicht
+    const P_ALL       = 2047;
+    const P_BASE      = 15;     // Rang „@alle“ ohne eigene Einstellung: schreiben, reagieren, Sprache, einladen
+    // Wer davon eins hat, darf die (verschlüsselten) Raumdaten neu schreiben.
+    const P_META      = self::P_CHANNELS | self::P_ROOM | self::P_HOOKS | self::P_ROLES | self::P_ADMIN;
     const MAX_SIGNAL    = 49152;
     const MAX_CARD      = 4096;
     const MAX_PUB       = 16384;
@@ -211,6 +234,7 @@ class SecureCom
             'hooks'          => self::MAX_HOOKS,             // API-Zugänge je Raum
             'cttl'           => self::MAX_CTTL,              // Aufbewahrung je Textkanal (room.cttl)
             'rdel'           => self::MAX_DEL,               // Besitzer entfernt Raumnachrichten (room.del)
+            'roles'          => self::MAX_ROLES,             // Ränge und Rechte (role.*, room.cperm)
             'limits'         => [
                 'voice'   => self::MAX_VOICE,
                 'members' => self::MAX_MEMBERS,
@@ -1078,7 +1102,10 @@ class SecureCom
         $meta = self::b64(self::str($b, 'meta'), self::MAX_META, 'Raumdaten');
         $epoch = (int)($b['e'] ?? 0);
         return self::roomMutate($rid, function (&$room) use ($me, $meta, $epoch) {
-            self::requireOwner($room, $me['id']);
+            // Besitzer oder ein Rang, der Kanäle, Raum, API-Zugänge oder Ränge
+            // verwaltet: Was davon sich in den verschlüsselten Daten ändert,
+            // sieht der Server nicht.
+            self::requirePerm($room, $me['id'], self::P_META, 'Das darf nur der Besitzer oder ein Rang mit Verwaltungsrechten.');
             if ($epoch !== (int)$room['e']) throw new SecureComException('Veralteter Raumschlüssel.', 409);
             $room['m']  = $meta;
             $room['me'] = $epoch;
@@ -1100,6 +1127,7 @@ class SecureCom
                 throw new SecureComException('Gäste eines Meetings können nur Links zu ihrem Meeting erstellen.', 403);
             }
             self::requireMember($room, $me['id']);
+            self::requirePerm($room, $me['id'], self::P_INVITE, 'Du darfst in diesem Raum niemanden einladen.');
             $now = time();
             foreach ($room['inv'] as $code => $inv) {
                 if ((int)$inv['x'] < $now || (int)$inv['n'] >= (int)$inv['max']) unset($room['inv'][$code]);
@@ -1365,8 +1393,14 @@ class SecureCom
         }
         $room = self::readJson(self::roomFile($rid), true);
         if (!$room) throw new SecureComException('Raum nicht gefunden.', 404);
-        self::requireOwner($room, $me['id']);
+        // Besitzer oder Recht „Mitglieder entfernen“ – dann nur unterhalb des
+        // eigenen höchsten Rangs. Den neuen Raumschlüssel verteilt danach der
+        // Besitzer (seine App reagiert auf den Hinweis „kick“ im Verlauf).
+        self::requirePerm($room, $me['id'], self::P_KICK, 'Das darf nur der Besitzer oder ein Rang mit dem Recht „Mitglieder entfernen“.');
         if ($member === $me['id']) throw new SecureComException('Dich selbst entfernst du über „Raum verlassen“.', 422);
+        if (isset($room['mem'][$member]) && $room['o'] !== $me['id'] && self::topOf($room, $member) >= self::topOf($room, $me['id'])) {
+            throw new SecureComException('Du kannst nur Mitglieder mit niedrigerem Rang entfernen.', 403);
+        }
         self::removeMember($rid, $member, 'kick');
     }
 
@@ -1418,6 +1452,17 @@ class SecureCom
         $room = self::readJson(self::roomFile($rid), true);
         if (!$room) throw new SecureComException('Raum nicht gefunden.', 404);
         self::requireMember($room, $me['id']);
+        // Rechte: Reaktionen (rx) brauchen „reagieren“, alles andere „schreiben“
+        // und – in Kanälen mit Schreibrecht nur für bestimmte Ränge (c) – einen
+        // davon. Ohne c weiß der Server nicht, wohin ein Beitrag geht; solche
+        // Beiträge zeigen die Apps in beschränkten Kanälen nur von Berechtigten.
+        $rx = $kind === 'msg' && !empty($b['rx']);
+        $c  = $kind === 'msg' ? self::taggedChannel($room, $b['c'] ?? '') : '';
+        if ($rx) {
+            self::requirePerm($room, $me['id'], self::P_REACT, 'Du darfst in diesem Raum nicht reagieren.');
+        } elseif ($kind === 'msg' && !self::canWrite($room, $me['id'], $c)) {
+            throw new SecureComException('Hier darfst du nicht schreiben.', 403);
+        }
         // Letzte Aktivität (fürs Aufräumen temporärer Räume) – höchstens stündlich schreiben.
         if ($kind === 'msg' && time() - self::lastActive($room) >= self::ACTIVE_EVERY) {
             self::roomMutate($rid, function (&$r) { $r['la'] = time(); });
@@ -1430,11 +1475,12 @@ class SecureCom
             $entry['x']  = time() + self::SIGNAL_TTL;
             $entry['to'] = $to;
         } else {
-            // Kanal nur, wenn er eine eigene Aufbewahrung hat (sonst schickt der
-            // Browser keinen) – so lernt der Server möglichst wenig Zuordnung.
-            $c = self::taggedChannel($room, $b['c'] ?? '');
+            // Kanal nur, wenn er eine eigene Aufbewahrung oder eigene Rechte hat
+            // (sonst schickt der Browser keinen) – so lernt der Server möglichst
+            // wenig Zuordnung.
             $entry['x'] = time() + self::chanTtl($room, $c);   // legt der Besitzer fest
             if ($c !== '') $entry['c'] = $c;
+            if ($rx) $entry['r'] = 1;                         // nur als Reaktion geprüft
         }
         $entry['d'] = $data;
         return ['s' => self::feedAppend($rid, $room, $entry)];
@@ -1460,7 +1506,7 @@ class SecureCom
         if (!$want) throw new SecureComException('Keine Nachricht angegeben.', 422);
         $room = self::readJson(self::roomFile($rid), true);
         if (!$room) throw new SecureComException('Raum nicht gefunden.', 404);
-        self::requireOwner($room, $me['id']);
+        self::requirePerm($room, $me['id'], self::P_MESSAGES, 'Das darf nur der Besitzer oder ein Rang mit dem Recht „Nachrichten verwalten“.');
         $gone = [];
         self::rewriteLog(self::dir('feeds') . '/' . $rid, function ($e) use ($want, &$gone) {
             $hit = in_array($e['k'] ?? '', ['msg', 'hook'], true) && isset($want[(int)($e['s'] ?? 0)]);
@@ -1486,6 +1532,170 @@ class SecureCom
     }
 
     /* ======================================================================
+       Ränge (an Discord angelehnt)
+       Wer „Ränge verwalten“ hat, legt Ränge unterhalb seines eigenen
+       höchsten an, ändert, löscht, verschiebt und vergibt sie – und gibt
+       dabei nur Rechte weiter, die er selbst hat. Der Besitzer steht über
+       allen. Der Server kennt Kennung, Rechte und Reihenfolge, Namen und
+       Farben nur verschlüsselt (Raumdaten). Für Meetings mit Gästen nicht.
+       ====================================================================== */
+    private static function roleMutate(array $me, array $b, callable $fn)
+    {
+        $rid = self::idOf(self::str($b, 'id'));
+        return self::roomMutate($rid, function (&$room) use ($me, $fn) {
+            self::requirePerm($room, $me['id'], self::P_ROLES, 'Das darf nur der Besitzer oder ein Rang mit dem Recht „Ränge verwalten“.');
+            if (!empty($room['ot'])) throw new SecureComException('Ränge gibt es nicht für Meetings mit Gästen.', 422);
+            $fn($room, self::permsOf($room, $me['id']), self::topOf($room, $me['id']), $room['o'] === $me['id']);
+            $room['la'] = time();
+            $room['rev']++;
+            return self::publicRoom($room, $me['id']);
+        });
+    }
+
+    /** Ändert $from → $to nur Rechte, die der Handelnde selbst hat? */
+    private static function requireGrantable($from, $to, $mine)
+    {
+        if ((($from ^ $to) & self::P_ALL) & ~$mine) {
+            throw new SecureComException('Du kannst nur Rechte vergeben oder entziehen, die du selbst hast.', 403);
+        }
+    }
+
+    /**
+     * Rang anlegen oder seine Rechte ändern: r (Kennung; "" = „@alle“), p (Bits).
+     * Neue Ränge kommen ganz nach unten (direkt über „@alle“).
+     */
+    public static function setRole(array $me, array $b)
+    {
+        $r = isset($b['r']) && $b['r'] === '' ? '' : self::roleIdOf($b['r'] ?? null);
+        $p = isset($b['p']) && is_numeric($b['p']) ? ((int)$b['p'] & self::P_ALL) : 0;
+        return self::roleMutate($me, $b, function (&$room, $mine, $top, $owner) use ($r, $p) {
+            if ($r === '') {
+                if (!$owner) self::requireGrantable(self::basePerms($room), $p, $mine);
+                if ($p === self::P_BASE) unset($room['dp']); else $room['dp'] = $p;
+                return;
+            }
+            if (isset($room['rl'][$r])) {
+                if (!$owner && (int)$room['rl'][$r]['o'] >= $top) {
+                    throw new SecureComException('Du kannst nur Ränge unterhalb deines eigenen ändern.', 403);
+                }
+                if (!$owner) self::requireGrantable((int)$room['rl'][$r]['p'], $p, $mine);
+                $room['rl'][$r]['p'] = $p;
+                return;
+            }
+            if (count((array)($room['rl'] ?? [])) >= self::MAX_ROLES) {
+                throw new SecureComException('Mehr als ' . self::MAX_ROLES . ' Ränge je Raum gehen nicht.', 409);
+            }
+            if (!$owner) self::requireGrantable(0, $p, $mine);
+            foreach (array_keys((array)($room['rl'] ?? [])) as $k) $room['rl'][$k]['o']++;
+            $room['rl'][$r] = ['p' => $p, 'o' => 1];
+        });
+    }
+
+    /** Rang löschen: weg bei allen Mitgliedern und aus den Kanal-Rechten. */
+    public static function deleteRole(array $me, array $b)
+    {
+        $r = self::roleIdOf($b['r'] ?? null);
+        return self::roleMutate($me, $b, function (&$room, $mine, $top, $owner) use ($r) {
+            if (!isset($room['rl'][$r])) throw new SecureComException('Diesen Rang gibt es nicht (mehr).', 404);
+            if (!$owner && (int)$room['rl'][$r]['o'] >= $top) {
+                throw new SecureComException('Du kannst nur Ränge unterhalb deines eigenen löschen.', 403);
+            }
+            unset($room['rl'][$r]);
+            foreach ((array)($room['mr'] ?? []) as $id => $list) {
+                $list = array_values(array_diff((array)$list, [$r]));
+                if ($list) $room['mr'][$id] = $list; else unset($room['mr'][$id]);
+            }
+            if (empty($room['mr'])) unset($room['mr']);
+            // Kanäle bleiben beschränkt (ohne den Rang) – lieber zu streng als plötzlich offen.
+            foreach ((array)($room['cw'] ?? []) as $c => $v) $room['cw'][$c]['r'] = array_values(array_diff((array)($v['r'] ?? []), [$r]));
+            foreach ((array)($room['vw'] ?? []) as $c => $v) $room['vw'][$c] = array_values(array_diff((array)$v, [$r]));
+            self::renumberRoles($room);
+        });
+    }
+
+    /**
+     * Reihenfolge: ids = alle Ränge von unten nach oben. Ränge ab dem
+     * eigenen höchsten aufwärts müssen bleiben, wo sie sind.
+     */
+    public static function orderRoles(array $me, array $b)
+    {
+        $ids = isset($b['ids']) && is_array($b['ids']) ? array_values($b['ids']) : null;
+        if ($ids === null) throw new SecureComException('Reihenfolge fehlt.', 422);
+        return self::roleMutate($me, $b, function (&$room, $mine, $top, $owner) use ($ids) {
+            $have = array_map('strval', array_keys((array)($room['rl'] ?? [])));
+            $want = array_map(function ($x) { return is_string($x) ? $x : ''; }, $ids);
+            $a = $have; $c = $want;
+            sort($a); sort($c);
+            if ($a !== $c) throw new SecureComException('Die Ränge haben sich inzwischen geändert – bitte neu laden.', 409);
+            foreach ($want as $i => $r) {
+                $old = (int)$room['rl'][$r]['o'];
+                if (!$owner && $old >= $top && $old !== $i + 1) {
+                    throw new SecureComException('Du kannst nur Ränge unterhalb deines eigenen verschieben.', 403);
+                }
+            }
+            foreach ($want as $i => $r) $room['rl'][$r]['o'] = $i + 1;
+        });
+    }
+
+    /** Rang vergeben oder entziehen: member, r, on. */
+    public static function assignRole(array $me, array $b)
+    {
+        $r      = self::roleIdOf($b['r'] ?? null);
+        $member = self::idOf(self::str($b, 'member'));
+        $on     = !empty($b['on']);
+        return self::roleMutate($me, $b, function (&$room, $mine, $top, $owner) use ($r, $member, $on, $me) {
+            if (!isset($room['rl'][$r])) throw new SecureComException('Diesen Rang gibt es nicht (mehr).', 404);
+            if (!isset($room['mem'][$member])) throw new SecureComException('Kein Mitglied dieses Raums.', 404);
+            if (!$owner) {
+                if ((int)$room['rl'][$r]['o'] >= $top) throw new SecureComException('Du kannst nur Ränge unterhalb deines eigenen vergeben.', 403);
+                if ($member !== $me['id'] && self::topOf($room, $member) >= $top) {
+                    throw new SecureComException('Du kannst nur Mitgliedern mit niedrigerem Rang Ränge geben oder nehmen.', 403);
+                }
+            }
+            $list = self::rolesOf($room, $member);
+            if ($on && !in_array($r, $list, true)) $list[] = $r;
+            if (!$on) $list = array_values(array_diff($list, [$r]));
+            if ($list) $room['mr'][$member] = $list; else unset($room['mr'][$member]);
+            if (empty($room['mr'])) unset($room['mr']);
+        });
+    }
+
+    /**
+     * Kanal-Rechte (Recht „Kanäle verwalten“): c = Kanal, w = Ränge, die dort
+     * schreiben (Textkanal) bzw. ihn betreten (v: 1, Sprachkanal) dürfen;
+     * [] = nur Besitzer und Administratoren, null = wieder alle. Lesen
+     * können immer alle Mitglieder – der Raumschlüssel gilt raumweit.
+     */
+    public static function setChannelPerms(array $me, array $b)
+    {
+        $rid   = self::idOf(self::str($b, 'id'));
+        $voice = !empty($b['v']);
+        $c     = $voice ? self::channelOf(self::str($b, 'c')) : self::str($b, 'c');
+        if (!$voice && !preg_match('/^[A-Za-z0-9_-]{1,22}$/', $c)) throw new SecureComException('Ungültiger Kanal.', 422);
+        $w = $b['w'] ?? null;
+        return self::roomMutate($rid, function (&$room) use ($me, $c, $w, $voice) {
+            self::requirePerm($room, $me['id'], self::P_CHANNELS, 'Das darf nur der Besitzer oder ein Rang mit dem Recht „Kanäle verwalten“.');
+            if (!empty($room['ot'])) throw new SecureComException('Kanal-Rechte gibt es nicht für Meetings mit Gästen.', 422);
+            $key = $voice ? 'vw' : 'cw';
+            $map = (array)($room[$key] ?? []);
+            if ($w === null) {
+                unset($map[$c]);
+            } else {
+                $list = self::roleList($room, $w);
+                if (!isset($map[$c]) && count((array)($room['cw'] ?? [])) + count((array)($room['vw'] ?? [])) >= self::MAX_CPERM) {
+                    throw new SecureComException('Mehr als ' . self::MAX_CPERM . ' Kanäle mit eigenen Rechten gehen nicht.', 409);
+                }
+                // seit wann beschränkt: ältere Beiträge zeigen die Apps weiter
+                $map[$c] = $voice ? $list : ['r' => $list, 't' => (int)($map[$c]['t'] ?? time())];
+            }
+            if ($map) $room[$key] = $map; else unset($room[$key]);
+            $room['la'] = time();
+            $room['rev']++;
+            return self::publicRoom($room, $me['id']);
+        });
+    }
+
+    /* ======================================================================
        API-Zugänge: nur posten
        Der Besitzer eines bleibenden Raums (Konto) legt einen Zugang an. Hier
        liegt davon nur die Kennung und der SHA-256 eines zufälligen Tokens
@@ -1506,7 +1716,7 @@ class SecureCom
         if (!preg_match('/^[0-9a-f]{64}$/', $hash)) throw new SecureComException('Ungültiges Token.', 422);
         $chan = $b['c'] ?? '';   // Ziel-Kanal – nur, wenn er eine eigene Aufbewahrung hat
         return self::roomMutate($rid, function (&$room) use ($me, $hid, $hash, $chan) {
-            self::requireOwner($room, $me['id']);
+            self::requirePerm($room, $me['id'], self::P_HOOKS, 'Das darf nur der Besitzer oder ein Rang mit dem Recht „API-Zugänge“.');
             if (!empty($room['tmp']) || !empty($room['ot'])) {
                 throw new SecureComException('API-Zugänge gibt es nicht für Meetings und temporäre Räume.', 422);
             }
@@ -1530,7 +1740,7 @@ class SecureCom
         $rid  = self::idOf(self::str($b, 'id'));
         $room = self::readJson(self::roomFile($rid), true);
         if (!$room) throw new SecureComException('Raum nicht gefunden.', 404);
-        self::requireOwner($room, $me['id']);
+        self::requirePerm($room, $me['id'], self::P_HOOKS, 'Das darf nur der Besitzer oder ein Rang mit dem Recht „API-Zugänge“.');
         $out = [];
         foreach ((array)($room['hk'] ?? []) as $hid => $h) {
             $out[] = ['id' => (string)$hid, 'c' => (int)($h['c'] ?? 0), 'u' => (int)($h['u'] ?? 0)];
@@ -1544,7 +1754,7 @@ class SecureCom
         $rid = self::idOf(self::str($b, 'id'));
         $hid = self::idOf(self::str($b, 'hid'));
         return self::roomMutate($rid, function (&$room) use ($me, $hid) {
-            self::requireOwner($room, $me['id']);
+            self::requirePerm($room, $me['id'], self::P_HOOKS, 'Das darf nur der Besitzer oder ein Rang mit dem Recht „API-Zugänge“.');
             unset($room['hk'][$hid]);
             if (empty($room['hk'])) unset($room['hk']);
             return ['n' => count((array)($room['hk'] ?? []))];
@@ -1632,10 +1842,10 @@ class SecureCom
         return max(3600, min(self::retentionDays() * 86400, $ttl));
     }
 
-    /** Kanal-Kennung nur übernehmen, wenn der Kanal eine eigene Aufbewahrung hat – sonst "". */
+    /** Kanal-Kennung nur übernehmen, wenn der Kanal eine eigene Aufbewahrung oder eigene Schreibrechte hat – sonst "". */
     private static function taggedChannel(array $room, $c)
     {
-        return is_string($c) && $c !== '' && isset($room['ct'][$c]) && preg_match('/^[A-Za-z0-9_-]{1,22}$/', $c) ? $c : '';
+        return is_string($c) && $c !== '' && (isset($room['ct'][$c]) || isset($room['cw'][$c])) && preg_match('/^[A-Za-z0-9_-]{1,22}$/', $c) ? $c : '';
     }
 
     /** Gültige Aufbewahrung je Kanal mit eigener (für die Mitglieder). */
@@ -1672,7 +1882,7 @@ class SecureCom
             throw new SecureComException('„Permanent“ kann nur ein Konto einstellen.', 403);
         }
         $room = self::roomMutate($rid, function (&$room) use ($me, $ttl, $perm) {
-            self::requireOwner($room, $me['id']);
+            self::requirePerm($room, $me['id'], self::P_ROOM, 'Das darf nur der Besitzer oder ein Rang mit dem Recht „Raum verwalten“.');
             if ($perm && (!empty($room['tmp']) || !empty($room['ot']))) {
                 throw new SecureComException('„Permanent“ gibt es nicht für Meetings und temporäre Räume.', 422);
             }
@@ -1722,7 +1932,7 @@ class SecureCom
             }
         }
         $room = self::roomMutate($rid, function (&$room) use ($me, $c, $ttl, $perm, $reset, $hids) {
-            self::requireOwner($room, $me['id']);
+            self::requirePerm($room, $me['id'], self::P_CHANNELS, 'Das darf nur der Besitzer oder ein Rang mit dem Recht „Kanäle verwalten“.');
             if ($perm && (!empty($room['tmp']) || !empty($room['ot']))) {
                 throw new SecureComException('„Permanent“ gibt es nicht für Meetings und temporäre Räume.', 422);
             }
@@ -1746,8 +1956,10 @@ class SecureCom
             $room['rev']++;
             return $room;
         }, true);
+        // Kanal mit eigenen Schreibrechten: Zuordnung behalten (sie belegt, dass
+        // der Server das Schreibrecht geprüft hat).
         self::retimeLog(self::dir('feeds') . '/' . $rid, $room,
-            $reset ? null : ['c' => $c, 's' => $seqs, 'h' => $hids], $reset ? $c : null);
+            $reset ? null : ['c' => $c, 's' => $seqs, 'h' => $hids], $reset && !isset($room['cw'][$c]) ? $c : null);
         return self::publicRoom($room, $me['id']);
     }
 
@@ -1862,6 +2074,9 @@ class SecureCom
                 if ($now - (int)$seen > self::VOICE_WINDOW || !isset($room['mem'][$id])) {
                     unset($room['vc'][$id], $room['vch'][$id]);
                 }
+            }
+            if ($on && !self::canEnter($room, $me['id'], $ch)) {
+                throw new SecureComException('Diesen Sprachkanal darfst du nicht betreten.', 403);
             }
             if ($on) {
                 $here = isset($room['vc'][$me['id']]) && (string)($room['vch'][$me['id']] ?? '') === $ch;
@@ -2387,7 +2602,8 @@ class SecureCom
             'iv'      => $open,                             // offene Einladungen
             'vc'      => self::voiceList($room),            // erster Sprachkanal (ältere Apps)
             'vcs'     => (object)self::voiceMap($room),     // alle: Kanal => wer drin ist
-        ];
+            'perm'    => self::permsOf($room, $selfId),     // eigene Rechte (Bits)
+        ] + self::publicRoles($room);                       // Ränge, Vergabe, Kanal-Rechte
     }
 
     /** Offene Beitrittsanfragen: wer (Identität noch da) und bis wann. */
@@ -2471,6 +2687,129 @@ class SecureCom
         if ($room['o'] !== $id) throw new SecureComException('Das darf nur der Besitzer des Raums.', 403);
     }
 
+    /* ---------- Ränge und Rechte -------------------------------------------
+       room['rl'][Rang] = {p: Rechte, o: Reihenfolge 1…n, höher = mächtiger}
+       room['mr'][Mitglied] = [Ränge]      room['dp'] = Rechte von „@alle“
+       room['cw'][Textkanal] = {r: [Ränge], t: seit}   wer schreiben darf
+       room['vw'][Sprachkanal] = [Ränge]                wer betreten darf
+       Kennungen sind zufällig; Namen und Farben der Ränge stehen nur
+       verschlüsselt in den Raumdaten. */
+
+    /** Rechte von „@alle“ (Mitglieder ohne Rang). */
+    private static function basePerms(array $room)
+    {
+        return isset($room['dp']) ? ((int)$room['dp'] & self::P_ALL) : self::P_BASE;
+    }
+
+    /** Gültige Ränge eines Mitglieds. */
+    private static function rolesOf(array $room, $id)
+    {
+        $out = [];
+        foreach ((array)($room['mr'][$id] ?? []) as $r) {
+            if (is_string($r) && isset($room['rl'][$r])) $out[] = $r;
+        }
+        return $out;
+    }
+
+    /** Wirksame Rechte: Besitzer alle, sonst „@alle“ plus die der Ränge (Administrator: alle). */
+    private static function permsOf(array $room, $id)
+    {
+        if ($room['o'] === $id) return self::P_ALL;
+        if (!isset($room['mem'][$id])) return 0;
+        $p = self::basePerms($room);
+        foreach (self::rolesOf($room, $id) as $r) $p |= (int)$room['rl'][$r]['p'];
+        return ($p & self::P_ADMIN) ? self::P_ALL : ($p & self::P_ALL);
+    }
+
+    /** Höchster Rang (Reihenfolge); Besitzer über allen, ohne Rang 0. */
+    private static function topOf(array $room, $id)
+    {
+        if ($room['o'] === $id) return PHP_INT_MAX;
+        $top = 0;
+        foreach (self::rolesOf($room, $id) as $r) $top = max($top, (int)$room['rl'][$r]['o']);
+        return $top;
+    }
+
+    /** Eines der Rechte in $bits (oder Besitzer) – sonst 403. */
+    private static function requirePerm(array $room, $id, $bits, $message)
+    {
+        self::requireMember($room, $id);
+        if (!(self::permsOf($room, $id) & $bits)) throw new SecureComException($message, 403);
+    }
+
+    /** Hat $id einen der Ränge in $list? */
+    private static function hasRoleIn(array $room, $id, $list)
+    {
+        return (bool)array_intersect(self::rolesOf($room, $id), array_map('strval', (array)$list));
+    }
+
+    /** Darf $id schreiben – im Kanal $c ("" = unbekannt bzw. ohne eigene Rechte)? */
+    private static function canWrite(array $room, $id, $c)
+    {
+        $p = self::permsOf($room, $id);
+        if ($room['o'] === $id || ($p & self::P_ADMIN)) return true;
+        if (!($p & self::P_SEND)) return false;
+        return $c === '' || !isset($room['cw'][$c]) || self::hasRoleIn($room, $id, $room['cw'][$c]['r'] ?? []);
+    }
+
+    /** Darf $id den Sprachkanal $ch betreten? */
+    private static function canEnter(array $room, $id, $ch)
+    {
+        $p = self::permsOf($room, $id);
+        if ($room['o'] === $id || ($p & self::P_ADMIN)) return true;
+        if (!($p & self::P_VOICE)) return false;
+        return !isset($room['vw'][$ch]) || self::hasRoleIn($room, $id, $room['vw'][$ch]);
+    }
+
+    /** Rang-Kennung prüfen (zufällig, 6–22 Zeichen). */
+    private static function roleIdOf($v)
+    {
+        if (!is_string($v) || !preg_match('/^[A-Za-z0-9_-]{6,22}$/', $v)) throw new SecureComException('Ungültiger Rang.', 422);
+        return $v;
+    }
+
+    /** Liste vorhandener Ränge (für Kanal-Rechte); Unbekanntes fällt weg. */
+    private static function roleList(array $room, $list)
+    {
+        if (!is_array($list)) throw new SecureComException('Ungültige Ränge.', 422);
+        $out = [];
+        foreach (array_slice($list, 0, self::MAX_ROLES) as $r) {
+            if (is_string($r) && isset($room['rl'][$r]) && !in_array($r, $out, true)) $out[] = $r;
+        }
+        return $out;
+    }
+
+    /** Reihenfolge 1…n neu vergeben (nach Anlegen/Löschen), Lücken schließen. */
+    private static function renumberRoles(array &$room)
+    {
+        $rl = (array)($room['rl'] ?? []);
+        uasort($rl, function ($a, $b) { return (int)$a['o'] <=> (int)$b['o']; });
+        $i = 0;
+        foreach (array_keys($rl) as $r) $rl[$r]['o'] = ++$i;
+        if ($rl) $room['rl'] = $rl; else unset($room['rl']);
+    }
+
+    /** Ränge für die Mitglieder: Kennung => {p, o}, Mitglied => [Ränge], Kanal-Rechte. */
+    private static function publicRoles(array $room)
+    {
+        $rl = [];
+        foreach ((array)($room['rl'] ?? []) as $r => $v) $rl[(string)$r] = ['p' => (int)$v['p'], 'o' => (int)$v['o']];
+        $mr = [];
+        foreach (array_keys((array)$room['mem']) as $id) {
+            $list = self::rolesOf($room, (string)$id);
+            if ($list) $mr[(string)$id] = $list;
+        }
+        $cw = [];
+        foreach ((array)($room['cw'] ?? []) as $c => $v) {
+            $cw[(string)$c] = ['r' => array_values(array_filter((array)($v['r'] ?? []), function ($r) use ($room) { return isset($room['rl'][$r]); })), 't' => (int)($v['t'] ?? 0)];
+        }
+        $vw = [];
+        foreach ((array)($room['vw'] ?? []) as $c => $v) {
+            $vw[(string)$c] = array_values(array_filter((array)$v, function ($r) use ($room) { return isset($room['rl'][$r]); }));
+        }
+        return ['dp' => self::basePerms($room), 'rl' => (object)$rl, 'mr' => (object)$mr, 'cw' => (object)$cw, 'vw' => (object)$vw];
+    }
+
     /**
      * Mitglied entfernen; geht der Besitzer, übernimmt das älteste Mitglied,
      * das kein Gast ist. Sind nur noch Gäste da, endet der Raum (Gäste können
@@ -2481,7 +2820,8 @@ class SecureCom
         $destroy = false;
         $room = self::roomMutate($rid, function (&$room) use ($member, &$destroy) {
             if (!isset($room['mem'][$member])) return $room;
-            unset($room['mem'][$member], $room['vc'][$member], $room['vch'][$member]);
+            unset($room['mem'][$member], $room['vc'][$member], $room['vch'][$member], $room['mr'][$member]);
+            if (empty($room['mr'])) unset($room['mr']);
             if (!$room['mem']) { $destroy = true; return $room; }
             if ($room['o'] === $member) {
                 asort($room['mem']);

@@ -57,6 +57,11 @@ Signaturen.
 - **Reagieren** mit zwölf eigenen Symbolen (Rechtsklick oder Knopf an der
   Nachricht) – in Räumen und Direktnachrichten, verschlüsselt wie die
   Nachrichten selbst.
+- **Ränge und Rechte** wie bei Discord: Ränge mit Farbe und Rechten
+  (Kanäle, Raum, Nachrichten, Mitglieder, API-Zugänge, Ränge verwalten,
+  Administrator), Rangordnung, Vorlagen; je Kanal festlegen, wer schreiben
+  bzw. einen Sprachkanal betreten darf (Rechtsklick auf den Kanal). Die
+  Raumschlüssel bleiben beim Besitzer.
 - **Dateien und Bilder** bis 25 MB, Ende-zu-Ende verschlüsselt mit eigenem
   Schlüssel je Datei; Bilder ohne Metadaten (etwa den Aufnahmeort), mit
   Vorschau. Per Büroklammer, Hereinziehen oder Einfügen.

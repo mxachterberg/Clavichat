@@ -207,7 +207,7 @@ try {
             json_out(['ok' => true, 'room' => SecureCom::setRoomTtl($me, $body)]);
 
         case 'room.cttl':
-            // Aufbewahrung eines Textkanals (nur der Besitzer; ttl 0 = wie der Raum).
+            // Aufbewahrung eines Textkanals (Besitzer oder „Kanäle verwalten“; ttl 0 = wie der Raum).
             sc_limit('cttl:' . $me['id'], 120, 3600);
             json_out(['ok' => true, 'room' => SecureCom::setChannelTtl($me, $body)]);
 
@@ -243,12 +243,34 @@ try {
             json_out(['ok' => true] + SecureCom::post($me, $body));
 
         case 'room.del':
-            // Besitzer entfernt Nachrichten/API-Beiträge aus dem Verlauf.
+            // Besitzer oder „Nachrichten verwalten“ entfernt Nachrichten/API-Beiträge aus dem Verlauf.
             sc_limit('rdel:' . $me['id'], 300, 3600);
             json_out(['ok' => true] + SecureCom::deleteEntries($me, $body));
 
+        case 'role.set':
+            // Ränge: anlegen/ändern, löschen, Reihenfolge, vergeben (Recht „Ränge verwalten“).
+            sc_limit('role:' . $me['id'], 300, 3600);
+            json_out(['ok' => true, 'room' => SecureCom::setRole($me, $body)]);
+
+        case 'role.del':
+            sc_limit('role:' . $me['id'], 300, 3600);
+            json_out(['ok' => true, 'room' => SecureCom::deleteRole($me, $body)]);
+
+        case 'role.order':
+            sc_limit('role:' . $me['id'], 300, 3600);
+            json_out(['ok' => true, 'room' => SecureCom::orderRoles($me, $body)]);
+
+        case 'role.assign':
+            sc_limit('role:' . $me['id'], 300, 3600);
+            json_out(['ok' => true, 'room' => SecureCom::assignRole($me, $body)]);
+
+        case 'room.cperm':
+            // Wer in einem Kanal schreiben bzw. einen Sprachkanal betreten darf.
+            sc_limit('cperm:' . $me['id'], 120, 3600);
+            json_out(['ok' => true, 'room' => SecureCom::setChannelPerms($me, $body)]);
+
         case 'hook.create':
-            // API-Zugang anlegen (nur Besitzer, nur Konten, nur bleibende Räume).
+            // API-Zugang anlegen (Besitzer oder „API-Zugänge“, nur Konten, nur bleibende Räume).
             sc_limit('hookc:' . $me['id'], 20, 3600);
             json_out(['ok' => true] + SecureCom::hookCreate($me, $body));
 
