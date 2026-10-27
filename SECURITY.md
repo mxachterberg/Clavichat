@@ -106,7 +106,8 @@ erfunden. Im Überblick – wo verschlüsselt wird und was der Server davon sieh
   Server nur mit demselben Fingerabdruck an; ob er wirklich dazu passt,
   prüfen die anderen Geräte selbst.
 - **Räume:** Jedes Mitglied löscht alte Schlüsselgenerationen, sobald ihre
-  Nachfolgerin länger da ist als die Aufbewahrung des Raums plus zwei Tage.
+  Nachfolgerin länger da ist als die längste Aufbewahrung im Raum (Raum
+  oder ein Textkanal mit eigener) plus zwei Tage.
   Gelöscht bleibt gelöscht, auch auf den anderen Geräten (Tresor).
 - **Anrufe** haben ohnehin eigene Schlüssel je Gespräch (DTLS-SRTP).
 
@@ -173,6 +174,11 @@ erfunden. Im Überblick – wo verschlüsselt wird und was der Server davon sieh
   (nur im eigenen Briefkasten – welche zu welcher Unterhaltung gehören, weiß
   nur der Browser). In Räumen setzt der Server die Dauer des Besitzers
   selbst durch.
+- Der Besitzer kann einzelnen Textkanälen eine eigene Dauer geben. Dafür
+  erfährt der Server, welche Einträge zu diesem Kanal gehören (eine
+  zufällige Kanal-Kennung, nie Name oder Inhalt) – aber nur für solche
+  Kanäle: Nachrichten anderer Kanäle gehen weiter ohne Kennung. Zurück auf
+  „wie der Raum“ entfernt die Zuordnung wieder aus dem Verlauf.
 - Abgelaufenes wird nicht mehr ausgeliefert und stündlich aus den Dateien
   gelöscht.
 - Räume, die eine temporäre Sitzung angelegt hat, löscht der Server nach

@@ -828,6 +828,140 @@ r = await call('poll', { i: { s: 0, o: 0, g: 0 }, r: { [permRoom]: { s: 0, o: 0,
 ok(r.ok && r.r[permRoom].e.some(e => e.k === 'msg'), 'die junge Nachricht bleibt auch bei 24 Stunden');
 await call('room.delete', { id: permRoom }, accToken);
 
+console.log('\n== Server: Aufbewahrung je Textkanal');
+// Ablaufzeiten (x) liefert der Server nicht aus – mit SECURECOM_STORAGE=<Ablage
+// des Testservers> liest der Test sie direkt aus dem Verlauf.
+const STORE = process.env.SECURECOM_STORAGE || '';
+const fs = STORE ? await import('node:fs') : null;
+const feedOf = (id) => {
+  const out = new Map();
+  for (const line of fs.readFileSync(STORE + '/securecom/feeds/' + id + '.jsonl', 'utf8').split('\n')) {
+    if (line) { const e = JSON.parse(line); out.set(e.s, e); }
+  }
+  return out;
+};
+const roomJson = (id) => JSON.parse(fs.readFileSync(STORE + '/securecom/rooms/' + id + '.json', 'utf8'));
+if (!STORE) console.log('  (ohne SECURECOM_STORAGE: Ablaufzeiten im Verlauf werden nicht geprüft)');
+r = await call('config');
+ok(r.ok && r.cttl === 30, 'config nennt die Aufbewahrung je Kanal (höchstens ' + r.cttl + ' Kanäle)');
+const ctRoom = C.randomId();
+const ctKey = await C.importRoomKey(C.newRoomKey());
+const ctMsg = async (ch, body) => C.sealRoom({ t: 'msg', ch, body, from: accId }, ctKey, 1, ctRoom, acc.privateKey);
+r = await call('room.create', { id: ctRoom, meta: await C.sealRoom({ t: 'meta', name: 'Kanäle', ch: [{ id: 'c1', name: 'allgemein' }, { id: 'arch', name: 'archiv' }, { id: 'c3', name: 'kurz' }] }, ctKey, 1, ctRoom, acc.privateKey) }, accToken);
+ok(r.ok && r.room.ct && Object.keys(r.room.ct).length === 0, 'neuer Raum: keine Kanäle mit eigener Aufbewahrung (ct leer)');
+r = await call('room.invite', { id: ctRoom }, accToken);
+await call('room.join', { id: ctRoom, code: r.code }, acc2Token);
+r = await call('room.ttl', { id: ctRoom, ttl: 604800 }, accToken);
+ok(r.ok && r.room.ttl === 604800, 'Raum: 7 Tage');
+// Ein API-Zugang, der in #archiv postet – angelegt, bevor der Kanal eine eigene Aufbewahrung hat
+const ctHid = C.randomId();
+const ctTok = C.newHookToken();
+const ctHk = await C.newHookKeys();
+r = await call('hook.create', { id: ctRoom, hid: ctHid, th: await C.hookTokenHash(ctTok), c: 'arch' }, accToken);
+ok(r.ok, 'API-Zugang für #archiv angelegt (Kanal ohne eigene Aufbewahrung: Server merkt ihn sich nicht)');
+if (STORE) ok(!('ch' in roomJson(ctRoom).hk[ctHid]), 'Zugang ohne Kanal-Zuordnung beim Server');
+r = await call('room.post', { id: ctRoom, k: 'msg', d: await ctMsg('arch', 'alt im Archiv'), c: 'arch' }, accToken);
+const sOld = r.s;
+ok(r.ok, 'ältere Nachricht in #archiv (c ohne eigene Aufbewahrung wird ignoriert)');
+if (STORE) ok(!('c' in feedOf(ctRoom).get(sOld)), 'Eintrag ohne Kanal-Kennung');
+r = await call('room.post', { id: ctRoom, k: 'msg', d: await ctMsg('c1', 'alt allgemein') }, accToken);
+const sOther = r.s;
+r = await call('hook.post', { r: ctRoom, h: ctHid, t: ctTok, d: await C.sealHook({ v: 1, t: 'hook', id: C.randomId(), body: 'vorher' }, ctHk.pub, ctRoom, ctHid) });
+ok(r.ok, 'API-Beitrag vor der Kanal-Aufbewahrung');
+// Rechte und Werte
+r = await call('room.cttl', { id: ctRoom, c: 'arch', ttl: 86400 }, acc2Token);
+ok(!r.ok && r._status === 403, 'room.cttl: Mitglied (nicht Besitzer) → 403');
+r = await call('room.cttl', { id: ctRoom, c: 'arch', ttl: 60 }, accToken);
+ok(!r.ok && r._status === 422, 'room.cttl: weniger als 1 Stunde → 422');
+r = await call('room.cttl', { id: ctRoom, c: 'arch', ttl: 'bald' }, accToken);
+ok(!r.ok && r._status === 422, 'room.cttl: kein Zahlenwert → 422');
+r = await call('room.cttl', { id: ctRoom, c: 'kein kanal!', ttl: 86400 }, accToken);
+ok(!r.ok && r._status === 422, 'room.cttl: ungültige Kanal-Kennung → 422');
+r = await call('room.cttl', { id: roomId, c: 'c1', ttl: PERM }, TA.token);
+ok(!r.ok && r._status === 403, 'room.cttl „Permanent“: temporäre Sitzung → 403');
+const ctTmp = C.randomId();
+await call('room.create', { id: ctTmp, meta: await C.sealRoom({ t: 'meta', name: 'T', ch: [{ id: 'c1', name: 'chat' }], meet: 1 }, onceKey, 1, ctTmp, acc.privateKey), tmp: 1 }, accToken);
+r = await call('room.cttl', { id: ctTmp, c: 'c1', ttl: PERM }, accToken);
+ok(!r.ok && r._status === 422, 'room.cttl „Permanent“: verfallender Raum → 422');
+r = await call('room.cttl', { id: ctTmp, c: 'c1', ttl: 3600 }, accToken);
+ok(r.ok && r.room.ct.c1 === 3600 && r.room.tmp, 'verfallender Raum: eigene Aufbewahrung (1 Stunde) geht');
+await call('room.delete', { id: ctTmp }, accToken);
+r = await call('room.cttl', { id: roomId, c: 'c1', ttl: 7200 }, TA.token);
+ok(r.ok && r.room.ct.c1 === 7200, 'temporäre Sitzung als Besitzer: Kanal 2 Stunden');
+await call('room.cttl', { id: roomId, c: 'c1', ttl: 0 }, TA.token);
+// #archiv „Permanent“ in einem 7-Tage-Raum; ältere Einträge per Nummer, der Zugang per Kennung
+r = await call('room.cttl', { id: ctRoom, c: 'arch', ttl: PERM, s: [sOld], h: [ctHid] }, accToken);
+ok(r.ok && r.room.ct.arch === PERM && r.room.ttl === 604800, 'Besitzer: #archiv „Permanent“, Raum bleibt bei 7 Tagen');
+r = await call('rooms', {}, acc2Token);
+ok(r.ok && r.rooms.find(x => x.id === ctRoom).ct.arch === PERM, 'Mitglieder sehen ct = { arch: Permanent }');
+let f;
+if (STORE) {
+  f = feedOf(ctRoom);
+  const e = f.get(sOld);
+  ok(e.c === 'arch' && e.x === e.t + PERM, 'ältere Nachricht nachträglich #archiv zugeordnet, Ablauf = Zeitpunkt + Permanent');
+  ok(!('c' in f.get(sOther)) && f.get(sOther).x === f.get(sOther).t + 604800, 'Nachricht in #allgemein: weiter 7 Tage, ohne Kanal');
+  const he = [...f.values()].find(x => x.k === 'hook');
+  ok(he.c === 'arch' && he.x === he.t + PERM, 'älterer API-Beitrag des Zugangs ebenfalls zugeordnet');
+  ok(roomJson(ctRoom).hk[ctHid].ch === 'arch', 'Zugang beim Server jetzt mit Ziel-Kanal');
+}
+r = await call('room.post', { id: ctRoom, k: 'msg', d: await ctMsg('arch', 'neu im Archiv'), c: 'arch' }, acc2Token);
+const sNew = r.s;
+r = await call('room.post', { id: ctRoom, k: 'msg', d: await ctMsg('c1', 'neu allgemein') }, acc2Token);
+const sPlain = r.s;
+r = await call('room.post', { id: ctRoom, k: 'msg', d: await ctMsg('c3', 'kurz'), c: 'c3' }, acc2Token);
+const sC3 = r.s;
+r = await call('hook.post', { r: ctRoom, h: ctHid, t: ctTok, d: await C.sealHook({ v: 1, t: 'hook', id: C.randomId(), body: 'nachher' }, ctHk.pub, ctRoom, ctHid) });
+ok(r.ok, 'neue Nachrichten (mit und ohne c) und ein API-Beitrag');
+if (STORE) {
+  f = feedOf(ctRoom);
+  ok(f.get(sNew).c === 'arch' && f.get(sNew).x === f.get(sNew).t + PERM, 'Nachricht mit c = arch: Ablauf nach Kanal (Permanent)');
+  ok(!('c' in f.get(sPlain)) && f.get(sPlain).x === f.get(sPlain).t + 604800, 'Nachricht ohne c: Ablauf nach Raum (7 Tage)');
+  ok(!('c' in f.get(sC3)) && f.get(sC3).x === f.get(sC3).t + 604800, 'c für einen Kanal ohne eigene Aufbewahrung: nicht gespeichert, Raum-Frist');
+  const hs = [...f.values()].filter(x => x.k === 'hook');
+  ok(hs.length === 2 && hs.every(x => x.c === 'arch' && x.x === x.t + PERM), 'API-Beitrag: Kanal-Frist über die Zuordnung des Zugangs');
+}
+r = await call('poll', { i: { s: 0, o: 0, g: 0 }, r: { [ctRoom]: { s: 0, o: 0, g: 0 } } }, acc2Token);
+ok(r.ok && r.r[ctRoom].e.filter(e => e.k === 'msg').length === 5 && !r.r[ctRoom].e.some(e => 'x' in e), 'Mitglied liest alle Einträge (ohne Ablaufzeit)');
+// Raum-Aufbewahrung ändern: Kanäle mit eigener behalten ihre
+r = await call('room.ttl', { id: ctRoom, ttl: 3600 }, accToken);
+ok(r.ok && r.room.ttl === 3600 && r.room.ct.arch === PERM, 'Raum auf 1 Stunde, #archiv bleibt „Permanent“');
+if (STORE) {
+  f = feedOf(ctRoom);
+  ok(f.get(sPlain).x === f.get(sPlain).t + 3600 && f.get(sOther).x === f.get(sOther).t + 3600, 'Raum-Einträge: neue Frist (1 Stunde)');
+  ok(f.get(sNew).x === f.get(sNew).t + PERM && f.get(sOld).x === f.get(sOld).t + PERM, '#archiv-Einträge: unverändert');
+}
+// Kanal-Aufbewahrung ändern: nur seine Einträge
+r = await call('room.cttl', { id: ctRoom, c: 'arch', ttl: 86400, h: [ctHid] }, accToken);
+ok(r.ok && r.room.ct.arch === 86400, '#archiv auf 24 Stunden');
+if (STORE) {
+  f = feedOf(ctRoom);
+  ok(f.get(sNew).x === f.get(sNew).t + 86400 && f.get(sOld).x === f.get(sOld).t + 86400, '#archiv-Einträge: neue Frist (24 Stunden)');
+  ok(f.get(sPlain).x === f.get(sPlain).t + 3600, 'Raum-Einträge: unverändert');
+}
+r = await call('room.cttl', { id: ctRoom, c: 'arch', ttl: PERM * 3 }, accToken);
+ok(r.ok && r.room.ct.arch === PERM, 'größere Werte gelten als „Permanent“');
+// Zurücksetzen: Zuordnung beim Server wieder weg
+r = await call('room.cttl', { id: ctRoom, c: 'arch', ttl: 0 }, accToken);
+ok(r.ok && Object.keys(r.room.ct).length === 0, 'zurück auf „wie der Raum“ (ct leer)');
+if (STORE) {
+  f = feedOf(ctRoom);
+  ok([...f.values()].every(x => !('c' in x)), 'Verlauf ohne Kanal-Kennungen');
+  ok(f.get(sNew).x === f.get(sNew).t + 3600, '#archiv-Einträge: wieder Raum-Frist');
+  ok(!('ch' in roomJson(ctRoom).hk[ctHid]) && !('ct' in roomJson(ctRoom)), 'Zugang und Raum ohne Kanal-Zuordnung');
+}
+r = await call('room.post', { id: ctRoom, k: 'msg', d: await ctMsg('arch', 'danach'), c: 'arch' }, acc2Token);
+if (STORE) ok(!('c' in feedOf(ctRoom).get(r.s)), 'nach dem Zurücksetzen: c wird nicht mehr gespeichert');
+// Höchstens 30 Kanäle mit eigener Aufbewahrung
+let ctLimit = 0;
+for (let i = 0; i < 31; i++) {
+  r = await call('room.cttl', { id: ctRoom, c: 'k' + i, ttl: 7200 }, accToken);
+  if (!r.ok) { ctLimit = i; break; }
+}
+ok(ctLimit === 30 && r._status === 409, 'höchstens 30 Kanäle mit eigener Aufbewahrung → 409');
+r = await call('room.cttl', { id: ctRoom, c: 'k0', ttl: 3600 }, accToken);
+ok(r.ok && r.room.ct.k0 === 3600, 'vorhandenen Eintrag ändern geht auch an der Grenze');
+await call('room.delete', { id: ctRoom }, accToken);
+
 r = await call('delete', { auth: keys2.auth }, acc2Token);
 ok(r.ok, 'zweites Konto gelöscht');
 

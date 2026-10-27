@@ -2349,9 +2349,12 @@ async function maintainRoomKeys() {
     // nach einem Schlüsselwechsel unlesbar) und kein Wechsel jede Woche – er
     // brächte ohne Löschen keine Forward Secrecy, nur mehr Schlüssel.
     // Nach Entfernen/Verlassen wechselt der Besitzer weiter (roomSys).
-    if (isPermanentRoom(room)) continue;
-    // Alte Generationen löschen, sobald ihr Nachfolger länger da ist als die Aufbewahrung des Raums.
-    const keep = roomTtl(room) * 1000 + KEY_GRACE;
+    // Maßgeblich ist die längste Aufbewahrung im Raum: Ein permanenter (oder
+    // längerer) Textkanal braucht die alten Generationen auch in einem Raum
+    // mit kürzerer Frist.
+    if (keepsPermanent(room)) continue;
+    // Alte Generationen löschen, sobald ihr Nachfolger länger da ist als die längste Aufbewahrung im Raum.
+    const keep = roomKeepTtl(room) * 1000 + KEY_GRACE;
     for (const e of Object.keys(r.k).map(Number).sort((a, b) => a - b)) {
       if (e >= room.epoch) break;
       const next = r.et[e + 1];
@@ -3216,7 +3219,8 @@ function renderMainHead() {
     head.append(
       el('span', { class: 'sc-head-text' },
         el('span', { class: 'sc-head-title' }, icon('hash', 16), ch ? ch.name : '—'),
-        el('span', { class: 'sc-head-sub', text: room.meta.name + ' · ' + room.members.length + ' Mitglieder · ' + (isPermanentRoom(room) ? 'bleibt dauerhaft' : 'bleibt ' + ttlLabel(roomTtl(room))) })),
+        el('span', { class: 'sc-head-sub', text: room.meta.name + ' · ' + room.members.length + ' Mitglieder · ' + keepText(chanTtl(room, S.view.ch)) +
+          (hasChanTtl(room, S.view.ch) ? ' (Kanal)' : '') })),
       el('span', { class: 'sc-head-spacer' }),
       iconBtn(room.meta.meet ? 'phone' : 'speaker', S.voice && S.voice.rid === room.id
         ? (room.meta.meet ? 'Call verlassen' : 'Sprachkanal verlassen')
@@ -3630,7 +3634,7 @@ async function sendOneFile(file, target) {
   const row = uploadRow(name, blob.size, target.name);
   try {
     const bytes = new Uint8Array(await blob.arrayBuffer());
-    const ttl = target.kind === 'dm' ? convTtl(target.peer) : roomTtl(S.rooms.get(target.rid));
+    const ttl = target.kind === 'dm' ? convTtl(target.peer) : chanTtl(S.rooms.get(target.rid), target.ch);
     const up = await uploadEncrypted(bytes, ttl, row.progress, row.cancelled);
     const meta = Object.assign({ id: up.id, k: up.k, s: bytes.length, c: up.c, n: name, m: mime }, extra);
     // Ältere Apps zeigen nur den Text.
@@ -4118,6 +4122,33 @@ function roomTtl(room) {
   return Math.min(room && room.ttl ? room.ttl : defaultTtl(), maxTtl());
 }
 
+/**
+ * Aufbewahrung je Textkanal (seit 1.8.9, Server meldet cttl): room.ct =
+ * { Kanal: Sekunden } nur für Kanäle mit eigener – sonst gilt die des Raums.
+ * Ältere Apps kennen ct nicht und zeigen nur die Raum-Aufbewahrung.
+ */
+function chanTtlOk(room) { return !!(S.cfg && S.cfg.cttl) && room.owner === S.me.id; }
+function hasChanTtl(room, ch) { return !!(room && room.ct && ch && room.ct[ch]); }
+function chanTtl(room, ch) {
+  if (!hasChanTtl(room, ch)) return roomTtl(room);
+  const t = room.ct[ch];
+  if (permTtl() && t >= permTtl()) return permTtl();
+  return Math.min(t, maxTtl());
+}
+/** Textkanäle mit eigener Aufbewahrung (nur bekannte Kanäle). */
+function ownTtlChannels(room) { return room.meta.ch.filter((c) => hasChanTtl(room, c.id)); }
+/** Längste Aufbewahrung im Raum (Raum oder irgendein Kanal) – danach richten sich die Raumschlüssel. */
+function roomKeepTtl(room) {
+  let t = roomTtl(room);
+  for (const ch of Object.keys(room.ct || {})) t = Math.max(t, chanTtl(room, ch));
+  return t;
+}
+/** Bleibt irgendetwas im Raum dauerhaft (Raum oder ein Kanal „Permanent“)? */
+function keepsPermanent(room) { return !!(permTtl() && roomKeepTtl(room) >= permTtl()); }
+function keepText(s) { return permTtl() && s >= permTtl() ? 'bleibt dauerhaft' : 'bleibt ' + ttlLabel(s); }
+/** Für room.post: Kanal nur mitschicken, wenn er eine eigene Aufbewahrung hat. */
+function chanParam(room, ch) { return hasChanTtl(room, ch) ? { c: ch } : {}; }
+
 /** Abgelaufene Einträge des eigenen Briefkastens beim Server löschen (gesammelt). */
 function noteExpired(seq) {
   if (!seq) return;
@@ -4152,8 +4183,8 @@ function purgeExpired() {
     changed = true;
   }
   for (const room of S.rooms.values()) {
-    const limit = now - roomTtl(room) * 1000;
     for (const [ch, list] of room.msgs) {
+      const limit = now - chanTtl(room, ch) * 1000;
       if (!list.some((m) => m.ts < limit && m.state !== 'pending')) continue;
       room.msgs.set(ch, list.filter((m) => {
         if (m.ts >= limit || m.state === 'pending') return true;
@@ -4167,22 +4198,28 @@ function purgeExpired() {
   if (changed) scheduleRender();
 }
 
-/** Auswahl der Aufbewahrung – für Unterhaltungen und (Besitzer) Räume. */
-function ttlDialog(title, current, note, onPick, extra) {
+/**
+ * Auswahl der Aufbewahrung – für Unterhaltungen, (Besitzer) Räume und
+ * Textkanäle. opt.before: Einträge vor der Liste (Kanal: „Wie der Raum“),
+ * opt.std: false blendet „(Standard)“ aus, opt.foot: Hinweise darunter.
+ */
+function ttlDialog(title, current, note, onPick, extra, opt) {
+  opt = opt || {};
   openModal({
     title: title,
     build: (body, close) => {
       const list = el('div', { class: 'sc-quality' });
-      for (const c of ttlChoices().concat(extra ? [extra] : [])) {
+      for (const c of (opt.before || []).concat(ttlChoices(), extra ? [extra] : [])) {
         list.appendChild(el('button', {
           type: 'button', class: 'sc-quality-opt', 'aria-pressed': c.s === current ? 'true' : 'false',
           onclick: () => { close(); onPick(c.s); }
         },
-        el('span', { class: 'sc-quality-name', text: c.label + (c.s === defaultTtl() ? ' (Standard)' : '') }),
+        el('span', { class: 'sc-quality-name', text: c.label + (opt.std !== false && c.s === defaultTtl() ? ' (Standard)' : '') }),
         el('span', { class: 'sc-quality-info', text: c.info || (c.s <= 86400 ? 'verschwindet schnell' : c.s <= 604800 ? 'eine Woche' : 'so lange es geht') }),
         c.note ? el('span', { class: 'sc-quality-note', text: c.note }) : null));
       }
       body.append(el('p', { class: 'sc-p', text: note }), list,
+        ...(opt.foot || []).map((t) => el('p', { class: 'sc-note', text: t })),
         el('p', { class: 'sc-note', text: 'Danach löscht der Server die verschlüsselten Einträge, und sie verschwinden aus der Ansicht. Wer eine Nachricht vorher kopiert oder abfotografiert, behält sie natürlich.' }));
     }
   });
@@ -4195,15 +4232,29 @@ function convTtlDialog(peer) {
     (s) => setConvTtl(peer, s));
 }
 
-function roomTtlDialog(room) {
-  // „Permanent“: Abwägung kurz und ehrlich – kein Löschen nach Zeit heißt auch: keine Forward Secrecy im Raum.
-  const perm = permanentOk(room) || isPermanentRoom(room) ? {
-    s: permTtl(), label: 'Permanent', info: 'bis der Raum gelöscht wird',
+/** Auswahl „Permanent“: Abwägung kurz und ehrlich – kein Löschen nach Zeit heißt auch: keine Forward Secrecy im Raum. */
+function permChoice(room, info) {
+  if (!permanentOk(room)) return null;
+  return {
+    s: permTtl(), label: 'Permanent', info: info,
     note: 'Kein Löschen nach Zeit (über ' + ((S.cfg && S.cfg.permanent_mb) || 16) + ' MB fallen die ältesten weg, Dateien nach ' + Math.round(maxTtl() / 86400) +
       ' Tagen). Alte Raumschlüssel bleiben: Entfernte lesen nichts Neues – was sie früher lesen konnten, bleibt für sie lesbar.'
-  } : null;
+  };
+}
+
+/** Kurz: welche Textkanäle eine eigene Aufbewahrung haben (Raum-Menü, Raum-Dialog). */
+function ownTtlSummary(room) {
+  const own = ownTtlChannels(room);
+  if (!own.length) return '';
+  if (own.length > 2) return own.length + ' Kanäle mit eigener Aufbewahrung';
+  return 'Eigene: ' + own.map((c) => '#' + c.name + ' ' + ttlLabel(chanTtl(room, c.id))).join(', ');
+}
+
+function roomTtlDialog(room) {
+  const own = ownTtlChannels(room);
   ttlDialog('NACHRICHTEN AUFBEWAHREN', roomTtl(room),
-    'Wie lange bleiben die Nachrichten in „' + room.meta.name + '“? Gilt für alle Mitglieder – ältere Nachrichten verschwinden sofort.',
+    'Wie lange bleiben die Nachrichten in „' + room.meta.name + '“? Gilt für alle Mitglieder – ältere Nachrichten verschwinden sofort.' +
+      (own.length ? ' Kanäle mit eigener Aufbewahrung (' + own.map((c) => '#' + c.name).join(', ') + ') behalten ihre.' : ''),
     async (s) => {
       try {
         await api('room.ttl', { id: room.id, ttl: s });
@@ -4211,7 +4262,61 @@ function roomTtlDialog(room) {
         purgeExpired();
         toast('Nachrichten in „' + room.meta.name + '“ bleiben jetzt ' + (isPermanentRoom(room) ? 'dauerhaft' : ttlLabel(s)) + '.', 'ok');
       } catch (e) { toast(e.message, 'error'); }
-    }, perm && permanentOk(room) ? perm : null);
+    }, permChoice(room, 'bis der Raum gelöscht wird'),
+    { foot: chanTtlOk(room) && room.meta.ch.length > 1 ? ['Einzelne Kanäle stellst du im Kanal-Menü (Rechtsklick auf den Kanal) anders ein.'] : [] });
+}
+
+/**
+ * Besitzer: eigene Aufbewahrung für einen Textkanal. Dafür erfährt der
+ * Server, welche Einträge zu diesem Kanal gehören (Kennung c, nie Name oder
+ * Inhalt): Neue Nachrichten bringen sie mit, die schon vorhandenen ordnet
+ * dieses Gerät mit ihren Nummern zu, API-Zugänge des Kanals mit ihrer
+ * Kennung. „Wie der Raum“ nimmt die Zuordnung beim Server wieder zurück.
+ */
+function channelTtlDialog(room, ch) {
+  const own = hasChanTtl(room, ch.id);
+  const hooks = Object.keys(room.meta.hooks || {}).length;
+  ttlDialog('KANAL #' + ch.name.toUpperCase() + ' AUFBEWAHREN', own ? chanTtl(room, ch.id) : 0,
+    'Wie lange bleiben die Nachrichten in #' + ch.name + '? Gilt für alle Mitglieder – ältere Nachrichten verschwinden sofort, andere Kanäle bleiben unberührt.',
+    (s) => setChannelTtl(room, ch, s),
+    permChoice(room, 'nur dieser Kanal'),
+    {
+      std: false,
+      before: [{ s: 0, label: 'Wie der Raum (' + ttlLabel(roomTtl(room)) + ')', info: 'Standard', note: 'Folgt der Aufbewahrung des Raums, auch wenn sie sich ändert.' }],
+      foot: ['Der Server erfährt dafür, welche Nachrichten zu diesem Kanal gehören – nicht Name oder Inhalt.' +
+        (hooks ? ' Beiträge von API-Zugängen in diesen Kanal gelten mit.' : '') +
+        ' Apps bis 1.8.8 kennen das noch nicht: Was sie senden, behält der Server so lange wie im Raum.']
+    });
+}
+
+async function setChannelTtl(room, ch, s) {
+  if (s === (hasChanTtl(room, ch.id) ? chanTtl(room, ch.id) : 0)) return;
+  try {
+    // Bisherige Einträge dieses Kanals (Nachrichten samt Änderungen) und seine API-Zugänge zuordnen.
+    const seqs = [];
+    const hids = [];
+    if (s) {
+      for (const m of room.msgs.get(ch.id) || []) {
+        if (m.seq) seqs.push(m.seq);
+        if (m.xs) seqs.push(...m.xs);
+      }
+      const first = room.meta.ch[0] && room.meta.ch[0].id;
+      for (const [hid, h] of Object.entries(room.meta.hooks || {})) {
+        const target = room.meta.ch.some((c) => c.id === h.ch) ? h.ch : first;
+        if (target === ch.id) hids.push(hid);
+      }
+    }
+    await api('room.cttl', { id: room.id, c: ch.id, ttl: s, s: seqs, h: hids });
+    // Aufräumen: Einträge gelöschter Kanäle (z. B. von einer älteren App gelöscht)
+    for (const old of Object.keys(room.ct || {})) {
+      if (old !== ch.id && !room.meta.ch.some((c) => c.id === old)) await api('room.cttl', { id: room.id, c: old, ttl: 0 }).catch(() => {});
+    }
+    await loadRooms();
+    purgeExpired();
+    renderAll();
+    toast(s ? 'Nachrichten in #' + ch.name + ' bleiben jetzt ' + (permTtl() && s >= permTtl() ? 'dauerhaft' : ttlLabel(s)) + '.'
+      : '#' + ch.name + ' folgt wieder dem Raum (' + ttlLabel(roomTtl(S.rooms.get(room.id) || room)) + ').', 'ok');
+  } catch (e) { toast(e.message, 'error'); }
 }
 
 async function setConvTtl(peer, s) {
@@ -4416,7 +4521,7 @@ async function editMessage(m, node) {
 }
 
 async function deleteMessage(m) {
-  const keep = S.view.kind === 'dm' ? convTtl(S.view.peer) : roomTtl(S.rooms.get(S.view.rid));
+  const keep = S.view.kind === 'dm' ? convTtl(S.view.peer) : chanTtl(S.rooms.get(S.view.rid), S.view.ch);
   const ok = await confirmBox('Nachricht löschen', 'Die Nachricht wird bei allen als gelöscht angezeigt. ' +
     (m.file ? 'Die Datei verschwindet sofort vom Server, der' : 'Der') + ' verschlüsselte Eintrag spätestens nach ' + ttlLabel(keep) + '.', 'Löschen', true);
   if (!ok) return;
@@ -4904,6 +5009,13 @@ async function loadRooms() {
     room.epoch = raw.epoch;
     room.members = raw.members;
     room.ttl = Number(raw.ttl) || 0;   // Aufbewahrung (Sekunden), legt der Besitzer fest
+    // Textkanäle mit eigener Aufbewahrung: { Kanal: Sekunden } (ältere Server: keine)
+    room.ct = {};
+    if (raw.ct && typeof raw.ct === 'object' && !Array.isArray(raw.ct)) {
+      for (const [ch, t] of Object.entries(raw.ct).slice(0, 30)) {
+        if (/^[A-Za-z0-9_-]{1,22}$/.test(ch) && Number(t) >= 3600) room.ct[ch] = Number(t);
+      }
+    }
     room.tmp = !!raw.tmp;              // aus einer temporären Sitzung: verfällt ohne Aktivität
     room.exp = Number(raw.exp) || 0;   // dann weg (Unix-Zeit), wenn bis dahin nichts passiert
     room.ot = !!raw.ot;                // Einmal-Meeting (der Server lässt Gäste mit Link hinein)
@@ -5644,7 +5756,7 @@ function roomMenu(room) {
         owner ? el('div', { class: 'sc-rm-rows' },
           row('edit', 'Raum umbenennen', () => renameRoom(room)),
           row('image', room.meta.img ? 'Raumbild ändern' : 'Raumbild festlegen', () => roomPicture(room), room.meta.img ? 'GESETZT' : 'KEINS'),
-          row('clock', 'Nachrichten aufbewahren', () => roomTtlDialog(room), ttlLabel(roomTtl(room)).toUpperCase()),
+          row('clock', 'Nachrichten aufbewahren', () => roomTtlDialog(room), ttlLabel(roomTtl(room)).toUpperCase(), ownTtlSummary(room)),
           row('sliders', 'Sprachqualität im Raum', () => roomAudioDialog(room), aq ? aq.name.toUpperCase() : 'JEDER NACH WAHL'),
           aoOk ? toggle('users', 'Nur Mitglieder mit Konto', room.ao, () => roomAccountsDialog(room), 'Neue Mitglieder brauchen ein Konto.') : null,
           // API-Zugang: nur Konten, nicht für Meetings und verfallende Räume
@@ -5755,7 +5867,8 @@ async function createHook(room, name, ch) {
   const keys = await C.newHookKeys();
   const token = C.newHookToken();
   const hid = C.randomId();
-  await api('hook.create', { id: room.id, hid: hid, th: await C.hookTokenHash(token) });
+  // Kanal nur nennen, wenn er eine eigene Aufbewahrung hat (dann gilt sie auch für die Beiträge).
+  await api('hook.create', Object.assign({ id: room.id, hid: hid, th: await C.hookTokenHash(token) }, chanParam(room, ch)));
   try {
     const hooks = Object.assign({}, room.meta.hooks || {});
     hooks[hid] = { n: name, ch: ch, k: keys.priv, c: Date.now() };
@@ -5973,7 +6086,8 @@ function textChannelMenu(room, ch) {
     { icon: 'check', label: 'Als gelesen markieren', disabled: !(room.unread.get(ch.id) || 0), run: () => markChannelRead(room, ch.id) },
     owner ? { icon: 'edit', label: 'Kanal umbenennen', run: () => renameChannel(room, 'ch', ch) } : null,
     ...moveItems(room, 'ch', ch.id),
-    owner ? { icon: 'clock', label: 'Nachrichten aufbewahren: ' + ttlLabel(roomTtl(room)), run: () => roomTtlDialog(room) } : null,
+    owner ? { icon: 'clock', label: 'Nachrichten aufbewahren: ' + ttlLabel(chanTtl(room, ch.id)) + (chanTtlOk(room) && !hasChanTtl(room, ch.id) ? ' (wie Raum)' : ''),
+      run: () => (chanTtlOk(room) ? channelTtlDialog(room, ch) : roomTtlDialog(room)) } : null,
     owner ? { icon: 'trash', label: 'Kanal löschen', danger: true, disabled: room.meta.ch.length <= 1, run: () => deleteChannel(room, 'ch', ch) } : null
   ];
 }
@@ -6032,6 +6146,8 @@ async function deleteChannel(room, kind, c) {
   try {
     const list = room.meta[kind].filter((x) => x.id !== c.id);
     await updateMeta(room, metaOf(room, voice ? { vch: list } : { ch: list }));
+    // Eigene Aufbewahrung des Kanals beim Server wieder vergessen.
+    if (!voice && hasChanTtl(room, c.id)) await api('room.cttl', { id: room.id, c: c.id, ttl: 0 }).then(loadRooms).catch(() => {});
     if (!voice && S.view.kind === 'room' && S.view.rid === room.id && S.view.ch === c.id) openRoom(room.id, room.meta.ch[0].id);
   } catch (e) { toast(e.message, 'error'); }
 }
@@ -6314,7 +6430,8 @@ async function postRoom(room, obj) {
   if (!key) throw new Error('Der aktuelle Raumschlüssel fehlt noch.');
   const msg = Object.assign({ v: 1, id: C.randomId(), from: S.me.id, room: room.id, ts: Date.now() }, obj);
   const d = await C.sealRoom(msg, key, room.epoch, room.id, S.me.priv);
-  await api('room.post', { id: room.id, k: 'msg', d: d });
+  // Änderungen/Löschungen verfallen mit der Frist ihres Kanals (sonst käme der alte Text zurück).
+  await api('room.post', Object.assign({ id: room.id, k: 'msg', d: d }, chanParam(room, obj.ch)));
   return msg;
 }
 
@@ -6333,7 +6450,7 @@ async function sendRoomMessage(room, ch, body, file) {
     const msg = { v: 1, t: 'msg', id: local.id, from: S.me.id, room: room.id, ch: ch, ts: local.ts, body: body };
     if (file) msg.file = file;
     const d = await C.sealRoom(msg, key, room.epoch, room.id, S.me.priv);
-    await api('room.post', { id: room.id, k: 'msg', d: d });
+    await api('room.post', Object.assign({ id: room.id, k: 'msg', d: d }, chanParam(room, ch)));
     local.state = null;
   } catch (e) {
     local.state = 'failed';
@@ -6370,18 +6487,21 @@ async function handleFeedEntry(room, e) {
 
 function roomMessage(room, obj, from, e) {
   const ts = e.t * 1000;
-  if (ts + roomTtl(room) * 1000 < serverNow()) return;   // älter als die Aufbewahrung des Raums
-  const ref = typeof obj.ref === 'string' ? room.byId.get(obj.ref) : null;
-  if (obj.t === 'edit') { if (ref && ref.from === from.id) { ref.body = cleanText(obj.body); ref.edited = true; } scheduleRender(); return; }
-  if (obj.t === 'del') { if (ref && ref.from === from.id) ref.deleted = true; scheduleRender(); return; }
-  if (obj.t !== 'msg') return;
   // Kanal steht nur verschlüsselt in der Nachricht. Unbekannte Kanäle
   // (Raumdaten noch nicht entschlüsselt) behalten ihre Kennung und
   // erscheinen, sobald der Kanal bekannt ist.
   const ch = typeof obj.ch === 'string' && /^[A-Za-z0-9_-]{1,22}$/.test(obj.ch) ? obj.ch : room.meta.ch[0].id;
+  if (ts + chanTtl(room, ch) * 1000 < serverNow()) return;   // älter als die Aufbewahrung des Kanals
+  const ref = typeof obj.ref === 'string' ? room.byId.get(obj.ref) : null;
+  // Nummern von Änderungen merken: Bekommt der Kanal eine eigene Aufbewahrung, ordnet der Besitzer sie mit zu.
+  if ((obj.t === 'edit' || obj.t === 'del') && ref && ref.from === from.id && e.s) (ref.xs || (ref.xs = [])).push(e.s);
+  if (obj.t === 'edit') { if (ref && ref.from === from.id) { ref.body = cleanText(obj.body); ref.edited = true; } scheduleRender(); return; }
+  if (obj.t === 'del') { if (ref && ref.from === from.id) ref.deleted = true; scheduleRender(); return; }
+  if (obj.t !== 'msg') return;
   const existing = room.byId.get(obj.id);
   if (existing) {
     existing.state = null;
+    if (e.s) existing.seq = e.s;
     if (existing.ts !== ts) {
       existing.ts = ts;
       const list = room.msgs.get(ch);
@@ -6390,7 +6510,7 @@ function roomMessage(room, obj, from, e) {
     scheduleRender();
     return;
   }
-  const m = { id: String(obj.id), from: from.id, ts: ts, body: cleanText(obj.body) };
+  const m = { id: String(obj.id), from: from.id, ts: ts, body: cleanText(obj.body), seq: e.s || 0 };
   if (obj.file) {
     const f = parseFileMeta(obj.file);
     if (f) m.file = f;
@@ -6427,7 +6547,8 @@ async function roomHook(room, e) {
   const hook = room.meta.hooks && room.meta.hooks[e.h];
   if (!hook) return;
   const ts = e.t * 1000;
-  if (ts + roomTtl(room) * 1000 < serverNow()) return;
+  const ch = room.meta.ch.some((c) => c.id === hook.ch) ? hook.ch : room.meta.ch[0].id;
+  if (ts + chanTtl(room, ch) * 1000 < serverNow()) return;
   const k = await hookKey(e.h, hook.k);
   if (!k) return;
   let obj;
@@ -6435,8 +6556,7 @@ async function roomHook(room, e) {
   if (!obj || obj.t !== 'hook') return;
   const id = 'hook:' + (typeof obj.id === 'string' && /^[A-Za-z0-9_-]{8,40}$/.test(obj.id) ? obj.id : String(e.s));
   if (room.byId.has(id)) return;   // derselbe Beitrag noch einmal (vom Server wiederholt)
-  const ch = room.meta.ch.some((c) => c.id === hook.ch) ? hook.ch : room.meta.ch[0].id;
-  const m = { id: id, from: 'hook:' + e.h, hook: { id: e.h, name: hook.n }, ts: ts, body: cleanText(obj.body) };
+  const m = { id: id, from: 'hook:' + e.h, hook: { id: e.h, name: hook.n }, ts: ts, body: cleanText(obj.body), seq: e.s || 0 };
   const list = room.msgs.get(ch) || [];
   room.msgs.set(ch, list);
   insertSorted(list, m);

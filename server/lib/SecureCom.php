@@ -102,6 +102,8 @@ class SecureCom
     const MAX_HOOK      = 22000;     // Beitrag eines API-Zugangs (Base64; 16 KB Klartext, aufgefüllt)
     const MAX_HOOKS     = 5;         // API-Zugänge je Raum
     const HOOK_SEEN     = 60;        // "zuletzt benutzt" höchstens so oft schreiben
+    const MAX_CTTL      = 30;        // Textkanäle mit eigener Aufbewahrung je Raum (wie Kanäle höchstens)
+    const MAX_TAG       = 50000;     // Einträge, die room.cttl nachträglich einem Kanal zuordnet
     const MAX_SIGNAL    = 49152;
     const MAX_CARD      = 4096;
     const MAX_PUB       = 16384;
@@ -206,6 +208,7 @@ class SecureCom
             'permanent'      => self::PERMANENT,             // Räume: Aufbewahrung „Permanent“ (ttl-Wert)
             'permanent_mb'   => self::permanentBytes() / 1048576,
             'hooks'          => self::MAX_HOOKS,             // API-Zugänge je Raum
+            'cttl'           => self::MAX_CTTL,              // Aufbewahrung je Textkanal (room.cttl)
             'limits'         => [
                 'voice'   => self::MAX_VOICE,
                 'members' => self::MAX_MEMBERS,
@@ -1425,7 +1428,11 @@ class SecureCom
             $entry['x']  = time() + self::SIGNAL_TTL;
             $entry['to'] = $to;
         } else {
-            $entry['x'] = time() + self::roomTtl($room);   // legt der Besitzer fest
+            // Kanal nur, wenn er eine eigene Aufbewahrung hat (sonst schickt der
+            // Browser keinen) – so lernt der Server möglichst wenig Zuordnung.
+            $c = self::taggedChannel($room, $b['c'] ?? '');
+            $entry['x'] = time() + self::chanTtl($room, $c);   // legt der Besitzer fest
+            if ($c !== '') $entry['c'] = $c;
         }
         $entry['d'] = $data;
         return ['s' => self::feedAppend($rid, $room, $entry)];
@@ -1450,7 +1457,8 @@ class SecureCom
         $hid  = self::idOf(self::str($b, 'hid'));
         $hash = self::str($b, 'th');
         if (!preg_match('/^[0-9a-f]{64}$/', $hash)) throw new SecureComException('Ungültiges Token.', 422);
-        return self::roomMutate($rid, function (&$room) use ($me, $hid, $hash) {
+        $chan = $b['c'] ?? '';   // Ziel-Kanal – nur, wenn er eine eigene Aufbewahrung hat
+        return self::roomMutate($rid, function (&$room) use ($me, $hid, $hash, $chan) {
             self::requireOwner($room, $me['id']);
             if (!empty($room['tmp']) || !empty($room['ot'])) {
                 throw new SecureComException('API-Zugänge gibt es nicht für Meetings und temporäre Räume.', 422);
@@ -1461,6 +1469,8 @@ class SecureCom
                 throw new SecureComException('Mehr als ' . self::MAX_HOOKS . ' API-Zugänge je Raum gehen nicht.', 409);
             }
             $hooks[$hid] = ['h' => $hash, 'c' => time(), 'u' => 0];
+            $c = self::taggedChannel($room, $chan);
+            if ($c !== '') $hooks[$hid]['ch'] = $c;
             $room['hk'] = $hooks;
             $room['la'] = time();
             return ['hid' => $hid];
@@ -1528,9 +1538,10 @@ class SecureCom
                 if ($now - self::lastActive($r) >= self::ACTIVE_EVERY) $r['la'] = $now;
             });
         }
-        self::feedAppend($rid, $room, [
-            't' => $now, 'k' => 'hook', 'x' => $now + self::roomTtl($room), 'h' => $hid, 'd' => $data,
-        ]);
+        $c = self::taggedChannel($room, $hook['ch'] ?? '');
+        $entry = ['t' => $now, 'k' => 'hook', 'x' => $now + self::chanTtl($room, $c)];
+        if ($c !== '') $entry['c'] = $c;
+        self::feedAppend($rid, $room, $entry + ['h' => $hid, 'd' => $data]);
         return [];
     }
 
@@ -1562,6 +1573,43 @@ class SecureCom
     }
 
     /**
+     * Aufbewahrung eines Textkanals: seine eigene (room['ct'][Kanal], legt der
+     * Besitzer fest), sonst die des Raums. Grenzen wie beim Raum.
+     */
+    private static function chanTtl(array $room, $c)
+    {
+        $c = (string)$c;
+        if ($c === '' || !isset($room['ct'][$c])) return self::roomTtl($room);
+        $ttl = (int)$room['ct'][$c];
+        if ($ttl >= self::PERMANENT && empty($room['tmp']) && empty($room['ot'])) return self::PERMANENT;
+        return max(3600, min(self::retentionDays() * 86400, $ttl));
+    }
+
+    /** Kanal-Kennung nur übernehmen, wenn der Kanal eine eigene Aufbewahrung hat – sonst "". */
+    private static function taggedChannel(array $room, $c)
+    {
+        return is_string($c) && $c !== '' && isset($room['ct'][$c]) && preg_match('/^[A-Za-z0-9_-]{1,22}$/', $c) ? $c : '';
+    }
+
+    /** Gültige Aufbewahrung je Kanal mit eigener (für die Mitglieder). */
+    private static function channelTtls(array $room)
+    {
+        $out = [];
+        foreach (array_keys((array)($room['ct'] ?? [])) as $c) $out[(string)$c] = self::chanTtl($room, (string)$c);
+        return $out;
+    }
+
+    /** Bleibt hier etwas dauerhaft (Raum oder ein Kanal „Permanent“)? Dann gilt die große Verlaufsgrenze. */
+    private static function keepsPermanent(array $room)
+    {
+        if (self::isPermanent($room)) return true;
+        foreach (array_keys((array)($room['ct'] ?? [])) as $c) {
+            if (self::chanTtl($room, (string)$c) >= self::PERMANENT) return true;
+        }
+        return false;
+    }
+
+    /**
      * Raum: Aufbewahrung ändern (nur der Besitzer). Gilt auch für die schon
      * vorhandenen Nachrichten: Ältere verfallen sofort, die übrigen bekommen
      * die neue Frist. „Permanent“ (ttl >= PERMANENT) nur als Konto und nur für
@@ -1586,16 +1634,85 @@ class SecureCom
             $room['rev']++;
             return $room;
         });
-        self::retimeLog(self::dir('feeds') . '/' . $rid, self::roomTtl($room));
+        // Einträge von Kanälen mit eigener Aufbewahrung behalten ihre Frist.
+        self::retimeLog(self::dir('feeds') . '/' . $rid, $room);
         return self::publicRoom($room, $me['id']);
     }
 
     /**
-     * Neue Aufbewahrung auf den Verlauf anwenden (unter der Sperre von
-     * append): Nachrichten und API-Beiträge bekommen Zeitpunkt + $ttl als
-     * Ablauf, was danach schon abgelaufen ist, fällt weg.
+     * Textkanal: eigene Aufbewahrung (nur der Besitzer). id, c (Kanal-Kennung
+     * aus den Raumdaten), ttl (wie bei room.ttl; 0/leer = wieder wie der Raum).
+     * Dafür erfährt der Server, welche Einträge zu diesem Kanal gehören – nicht
+     * Name oder Inhalt: Neue Nachrichten bringen c mit, ältere ordnet der
+     * Besitzer mit s (ihre Nummern) zu, API-Zugänge mit h (Kennungen der
+     * Zugänge, die in diesen Kanal posten). Gilt wie beim Raum auch für die
+     * schon vorhandenen Einträge. Zurücksetzen löscht die Zuordnung wieder.
      */
-    private static function retimeLog($base, $ttl)
+    public static function setChannelTtl(array $me, array $b)
+    {
+        $rid = self::idOf(self::str($b, 'id'));
+        $c   = self::str($b, 'c');
+        if (!preg_match('/^[A-Za-z0-9_-]{1,22}$/', $c)) throw new SecureComException('Ungültiger Kanal.', 422);
+        $raw   = $b['ttl'] ?? null;
+        $reset = $raw === null || $raw === '' || $raw === 0 || $raw === '0';
+        $ttl   = 0;
+        if (!$reset) {
+            $ttl = is_numeric($raw) ? (int)$raw : 0;
+            if ($ttl < 3600) throw new SecureComException('Ungültige Aufbewahrung.', 422);
+        }
+        $perm = $ttl >= self::PERMANENT;
+        if ($perm && $me['k'] !== 'account') {
+            throw new SecureComException('„Permanent“ kann nur ein Konto einstellen.', 403);
+        }
+        $seqs = [];
+        $hids = [];
+        if (!$reset) {
+            foreach (isset($b['s']) && is_array($b['s']) ? array_slice($b['s'], 0, self::MAX_TAG) : [] as $s) {
+                if (is_int($s) || (is_string($s) && ctype_digit($s))) $seqs[(int)$s] = true;
+            }
+            foreach (isset($b['h']) && is_array($b['h']) ? array_slice($b['h'], 0, self::MAX_HOOKS) : [] as $h) {
+                if (is_string($h) && preg_match('/^[A-Za-z0-9_-]{22}$/', $h)) $hids[$h] = true;
+            }
+        }
+        $room = self::roomMutate($rid, function (&$room) use ($me, $c, $ttl, $perm, $reset, $hids) {
+            self::requireOwner($room, $me['id']);
+            if ($perm && (!empty($room['tmp']) || !empty($room['ot']))) {
+                throw new SecureComException('„Permanent“ gibt es nicht für Meetings und temporäre Räume.', 422);
+            }
+            $ct = (array)($room['ct'] ?? []);
+            if ($reset) {
+                unset($ct[$c]);
+            } else {
+                if (!isset($ct[$c]) && count($ct) >= self::MAX_CTTL) {
+                    throw new SecureComException('Mehr als ' . self::MAX_CTTL . ' Kanäle mit eigener Aufbewahrung gehen nicht.', 409);
+                }
+                $ct[$c] = $perm ? self::PERMANENT : $ttl;
+            }
+            // API-Zugänge dieses Kanals: Ziel merken (nur solange er eine eigene Aufbewahrung hat).
+            foreach (array_keys((array)($room['hk'] ?? [])) as $hid) {
+                if (!$reset && isset($hids[$hid])) $room['hk'][$hid]['ch'] = $c;
+                elseif ((string)($room['hk'][$hid]['ch'] ?? '') === $c) unset($room['hk'][$hid]['ch']);
+            }
+            if ($ct) $room['ct'] = $ct;
+            else unset($room['ct']);
+            $room['la'] = time();
+            $room['rev']++;
+            return $room;
+        }, true);
+        self::retimeLog(self::dir('feeds') . '/' . $rid, $room,
+            $reset ? null : ['c' => $c, 's' => $seqs, 'h' => $hids], $reset ? $c : null);
+        return self::publicRoom($room, $me['id']);
+    }
+
+    /**
+     * Aufbewahrung auf den Verlauf anwenden (unter der Sperre von append):
+     * Nachrichten und API-Beiträge bekommen Zeitpunkt + Frist ihres Kanals
+     * (eigene oder die des Raums) als Ablauf, was danach schon abgelaufen
+     * ist, fällt weg. $tag ordnet Einträge einem Kanal zu (c, s: Nummern von
+     * Nachrichten, h: Kennungen von API-Zugängen), $untag löscht die
+     * Zuordnung zu diesem Kanal wieder.
+     */
+    private static function retimeLog($base, array $room, $tag = null, $untag = null)
     {
         if (!is_file($base . '.n')) return;
         $h = fopen($base . '.n', 'c+');
@@ -1613,8 +1730,14 @@ class SecureCom
                 if (substr($line, -1) !== "\n") continue;              // halb geschrieben
                 $e = json_decode($line, true);
                 if (!is_array($e)) continue;
-                if (in_array($e['k'] ?? '', ['msg', 'hook'], true)) {
-                    $e['x'] = (int)($e['t'] ?? $now) + $ttl;
+                $k = $e['k'] ?? '';
+                if ($k === 'msg' || $k === 'hook') {
+                    if ($untag !== null && (string)($e['c'] ?? '') === $untag) unset($e['c']);
+                    if ($tag && (($k === 'msg' && isset($tag['s'][(int)($e['s'] ?? 0)]))
+                        || ($k === 'hook' && isset($tag['h'][(string)($e['h'] ?? '')])))) {
+                        $e = self::withChannel($e, $tag['c']);
+                    }
+                    $e['x'] = (int)($e['t'] ?? $now) + self::chanTtl($room, (string)($e['c'] ?? ''));
                     $line = json_encode($e, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE) . "\n";
                 }
                 if (isset($e['x']) && (int)$e['x'] < $now) continue;
@@ -1635,10 +1758,23 @@ class SecureCom
         }
     }
 
-    /** An den Verlauf eines Raums anhängen; „Permanent“: größere Grenze, Älteste fallen weg statt „voll“. */
+    /** Eintrag mit Kanal-Kennung c direkt hinter x (wie beim Anhängen). */
+    private static function withChannel(array $e, $c)
+    {
+        $out = [];
+        foreach ($e as $key => $v) {
+            if ($key === 'c') continue;
+            $out[$key] = $v;
+            if ($key === 'x') $out['c'] = $c;
+        }
+        if (!isset($out['c'])) $out['c'] = $c;
+        return $out;
+    }
+
+    /** An den Verlauf eines Raums anhängen; „Permanent“ (Raum oder ein Kanal): größere Grenze, Älteste fallen weg statt „voll“. */
     private static function feedAppend($rid, array $room, array $entry)
     {
-        $perm = self::isPermanent($room);
+        $perm = self::keepsPermanent($room);
         return self::append(self::dir('feeds') . '/' . $rid, $entry, $perm ? self::permanentBytes() : self::MAX_FEED, $perm);
     }
 
@@ -2194,6 +2330,7 @@ class SecureCom
             'me'      => (int)$room['me'],
             'rev'     => (int)$room['rev'],
             'ttl'     => self::roomTtl($room),              // Aufbewahrung der Nachrichten (Sekunden)
+            'ct'      => (object)self::channelTtls($room),  // Textkanäle mit eigener Aufbewahrung: Kanal => Sekunden
             'tmp'     => !empty($room['tmp']),              // verfällt ohne Aktivität
             'ot'      => !empty($room['ot']),               // Einmal-Meeting (Gäste mit Link)
             'ao'      => !empty($room['ao']),               // nur Mitglieder mit Konto treten bei

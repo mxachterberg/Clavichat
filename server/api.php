@@ -206,6 +206,11 @@ try {
         case 'room.ttl':
             json_out(['ok' => true, 'room' => SecureCom::setRoomTtl($me, $body)]);
 
+        case 'room.cttl':
+            // Aufbewahrung eines Textkanals (nur der Besitzer; ttl 0 = wie der Raum).
+            sc_limit('cttl:' . $me['id'], 120, 3600);
+            json_out(['ok' => true, 'room' => SecureCom::setChannelTtl($me, $body)]);
+
         case 'room.ao':
             // Nur Mitglieder mit Konto: an/aus (nur der Besitzer).
             json_out(['ok' => true, 'room' => SecureCom::setRoomAccounts($me, $body)]);
