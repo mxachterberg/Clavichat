@@ -104,6 +104,7 @@ class SecureCom
     const HOOK_SEEN     = 60;        // "zuletzt benutzt" höchstens so oft schreiben
     const MAX_CTTL      = 30;        // Textkanäle mit eigener Aufbewahrung je Raum (wie Kanäle höchstens)
     const MAX_TAG       = 50000;     // Einträge, die room.cttl nachträglich einem Kanal zuordnet
+    const MAX_DEL       = 200;       // Einträge je room.del (Nachricht samt Änderungen)
     const MAX_SIGNAL    = 49152;
     const MAX_CARD      = 4096;
     const MAX_PUB       = 16384;
@@ -209,6 +210,7 @@ class SecureCom
             'permanent_mb'   => self::permanentBytes() / 1048576,
             'hooks'          => self::MAX_HOOKS,             // API-Zugänge je Raum
             'cttl'           => self::MAX_CTTL,              // Aufbewahrung je Textkanal (room.cttl)
+            'rdel'           => self::MAX_DEL,               // Besitzer entfernt Raumnachrichten (room.del)
             'limits'         => [
                 'voice'   => self::MAX_VOICE,
                 'members' => self::MAX_MEMBERS,
@@ -1436,6 +1438,51 @@ class SecureCom
         }
         $entry['d'] = $data;
         return ['s' => self::feedAppend($rid, $room, $entry)];
+    }
+
+    /**
+     * Besitzer: Nachrichten und API-Beiträge aus dem Verlauf entfernen (id,
+     * s = Nummer oder Liste von Nummern, f = Dateien der Nachricht). Wer etwas
+     * geschrieben hat, weiß der Server nicht (steht nur verschlüsselt im
+     * Eintrag) – deshalb darf das nur der Besitzer; Mitglieder löschen eigene
+     * Nachrichten wie bisher verschlüsselt (t "del"). Ein Hinweis-Eintrag
+     * k "del" (n = Nummern) sagt verbundenen Apps, dass sie die Einträge
+     * ausblenden sollen; ältere Apps ignorieren ihn und sehen die Nachricht
+     * nach dem Neuladen nicht mehr.
+     */
+    public static function deleteEntries(array $me, array $b)
+    {
+        $rid  = self::idOf(self::str($b, 'id'));
+        $want = [];
+        foreach (array_slice(is_array($b['s'] ?? null) ? $b['s'] : [$b['s'] ?? null], 0, self::MAX_DEL) as $s) {
+            if ((is_int($s) || (is_string($s) && ctype_digit($s))) && (int)$s > 0) $want[(int)$s] = true;
+        }
+        if (!$want) throw new SecureComException('Keine Nachricht angegeben.', 422);
+        $room = self::readJson(self::roomFile($rid), true);
+        if (!$room) throw new SecureComException('Raum nicht gefunden.', 404);
+        self::requireOwner($room, $me['id']);
+        $gone = [];
+        self::rewriteLog(self::dir('feeds') . '/' . $rid, function ($e) use ($want, &$gone) {
+            $hit = in_array($e['k'] ?? '', ['msg', 'hook'], true) && isset($want[(int)($e['s'] ?? 0)]);
+            if ($hit) $gone[] = (int)$e['s'];
+            return $hit;
+        });
+        // compact() fragt jede Zeile zweimal (zählen, dann schreiben)
+        $gone = array_values(array_unique($gone));
+        sort($gone);
+        if ($gone) {
+            self::feedAppend($rid, $room, [
+                't' => time(), 'k' => 'del', 'x' => time() + self::retentionDays() * 86400, 'n' => $gone,
+            ]);
+        }
+        // Dateien der Nachricht: nur, wenn sie ein Mitglied dieses Raums hochgeladen hat.
+        $files = 0;
+        foreach (array_slice(is_array($b['f'] ?? null) ? $b['f'] : [], 0, 10) as $fid) {
+            if (!is_string($fid) || !preg_match('/^[A-Za-z0-9_-]{22}$/', $fid)) continue;
+            $m = self::readJson(self::fileMeta($fid));
+            if ($m && isset($room['mem'][(string)($m['o'] ?? '')])) { self::dropFile($fid); $files++; }
+        }
+        return ['n' => count($gone), 'files' => $files];
     }
 
     /* ======================================================================

@@ -242,6 +242,11 @@ try {
             sc_limit('post:' . $me['id'], 240, 60);
             json_out(['ok' => true] + SecureCom::post($me, $body));
 
+        case 'room.del':
+            // Besitzer entfernt Nachrichten/API-Beiträge aus dem Verlauf.
+            sc_limit('rdel:' . $me['id'], 300, 3600);
+            json_out(['ok' => true] + SecureCom::deleteEntries($me, $body));
+
         case 'hook.create':
             // API-Zugang anlegen (nur Besitzer, nur Konten, nur bleibende Räume).
             sc_limit('hookc:' . $me['id'], 20, 3600);

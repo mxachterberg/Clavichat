@@ -2978,12 +2978,13 @@ function withMenu(node, items) {
     timer = 0;
     if (Date.now() - ctxOpened < 700) return;   // schon per langem Drücken geöffnet
     const r = node.getBoundingClientRect();
-    openContextMenu(ev.clientX || r.left + 24, ev.clientY || r.bottom, items());
+    const list = items();
+    if (list.some(Boolean)) openContextMenu(ev.clientX || r.left + 24, ev.clientY || r.bottom, list);
   });
   node.addEventListener('pointerdown', (ev) => {
     if (ev.pointerType !== 'touch') return;
     start = { x: ev.clientX, y: ev.clientY };
-    timer = setTimeout(() => { timer = 0; openContextMenu(start.x, start.y, items()); }, 550);
+    timer = setTimeout(() => { timer = 0; const list = items(); if (list.some(Boolean)) openContextMenu(start.x, start.y, list); }, 550);
   });
   const cancel = () => { clearTimeout(timer); timer = 0; };
   node.addEventListener('pointerup', cancel);
@@ -3354,7 +3355,67 @@ function hookNode(m, grouped) {
   }
   body.appendChild(el('div', { class: 'sc-msg-text' }, linkify(m.body)));
   node.appendChild(body);
+  withMenu(node, () => messageMenu(m, node));
   return node;
+}
+
+/**
+ * Rechtsklick (Handy: lange drücken) auf eine Nachricht: kopieren, eigene
+ * bearbeiten/löschen. Besitzer eines Raums: jede Nachricht und jeden
+ * API-Beitrag beim Server entfernen (room.del).
+ */
+function messageMenu(m, node) {
+  const own = m.from === S.me.id;
+  const room = S.view.kind === 'room' ? S.rooms.get(S.view.rid) : null;
+  const admin = !!(room && room.owner === S.me.id && S.cfg && S.cfg.rdel);
+  const ready = !m.deleted && m.state !== 'pending';
+  return [
+    m.body && !m.deleted && !m.file ? { icon: 'copy', label: 'Text kopieren', run: () => copyText(m.body, 'Text') } : null,
+    own && ready && !m.file && !m.invite && !m.hook ? { icon: 'edit', label: 'Bearbeiten', run: () => editMessage(m, node) } : null,
+    own && ready && !m.invite && !admin ? { icon: 'trash', label: 'Löschen', danger: true, run: () => deleteMessage(m) } : null,
+    admin && !m.sys ? {
+      icon: 'trash', label: m.hook ? 'Beitrag löschen' : 'Nachricht löschen', danger: true, disabled: !m.seq,
+      note: own ? null : 'Als Besitzer – für alle', run: () => ownerDeleteMessage(room, m)
+    } : null
+  ];
+}
+
+/** Besitzer: Nachricht (samt ihren Änderungen und der Datei) beim Server entfernen – für alle. */
+async function ownerDeleteMessage(room, m) {
+  if (!m.seq) return;
+  const who = m.hook ? m.hook.name + ' (API)' : m.from === S.me.id ? '' : displayName(S.ids.get(m.from));
+  const ok = await confirmBox(m.hook ? 'Beitrag löschen' : 'Nachricht löschen',
+    (who ? 'Die Nachricht von ' + who : 'Deine Nachricht') + ' verschwindet für alle aus dem Raum und wird beim Server gelöscht' +
+      (m.file ? ', samt Datei' : '') + '. Wer sie schon gesehen hat, kann sie kopiert haben.', 'Löschen', true);
+  if (!ok) return;
+  const seqs = [m.seq].concat(m.xs || []);
+  try {
+    await api('room.del', { id: room.id, s: seqs, f: m.file ? [m.file.id] : [] });
+    dropRoomEntries(room, seqs);
+    toast(m.hook ? 'Beitrag gelöscht.' : 'Nachricht gelöscht.', 'ok');
+  } catch (e) { toast(e.message, 'error'); }
+}
+
+/** Einträge (nach Nummer) aus der Ansicht nehmen – nach room.del oder dem Hinweis k "del". */
+function dropRoomEntries(room, seqs) {
+  const gone = new Set(seqs.map(Number));
+  let changed = false;
+  for (const [ch, list] of room.msgs) {
+    if (!list.some((m) => gone.has(m.seq))) continue;
+    room.msgs.set(ch, list.filter((m) => {
+      if (!gone.has(m.seq)) return true;
+      room.byId.delete(m.id);
+      return false;
+    }));
+    changed = true;
+  }
+  room.pending = room.pending.filter((p) => !gone.has(p.s));
+  if (changed) scheduleRender();
+}
+
+function roomDelNote(room, e) {
+  if (!Array.isArray(e.n)) return;
+  dropRoomEntries(room, e.n.filter((s) => Number.isInteger(s) && s > 0).slice(0, 200));
 }
 
 function messageNode(m, grouped) {
@@ -3392,6 +3453,7 @@ function messageNode(m, grouped) {
   if (m.invite && !m.deleted) body.appendChild(inviteCard(m));
   if (m.state === 'failed') body.appendChild(el('span', { class: 'sc-msg-state', text: 'Nicht gesendet' }));
   node.appendChild(body);
+  withMenu(node, () => messageMenu(m, node));
 
   if (own && !m.deleted && !m.invite && m.state !== 'pending') {
     node.appendChild(el('div', { class: 'sc-msg-actions' },
@@ -6463,6 +6525,7 @@ async function handleFeedEntry(room, e) {
   if (e.k === 'sys') return roomSys(room, e);
   if (e.k === 'key') return roomKeyEnvelope(room, e);
   if (e.k === 'hook') return roomHook(room, e);
+  if (e.k === 'del') return roomDelNote(room, e);   // Besitzer hat Einträge entfernt
   if (e.k !== 'msg' && e.k !== 'sig') return;
   const epoch = C.roomEpoch(e.d);
   const key = await roomKey(room.id, epoch);

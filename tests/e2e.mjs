@@ -960,6 +960,52 @@ for (let i = 0; i < 31; i++) {
 ok(ctLimit === 30 && r._status === 409, 'höchstens 30 Kanäle mit eigener Aufbewahrung → 409');
 r = await call('room.cttl', { id: ctRoom, c: 'k0', ttl: 3600 }, accToken);
 ok(r.ok && r.room.ct.k0 === 3600, 'vorhandenen Eintrag ändern geht auch an der Grenze');
+
+console.log('\n== Server: Besitzer entfernt Nachrichten (room.del)');
+r = await call('config');
+ok(r.ok && r.rdel > 0, 'config nennt room.del (höchstens ' + r.rdel + ' Einträge je Aufruf)');
+const pollCt = async (token) => (await call('poll', { i: { s: 0, o: 0, g: 0 }, r: { [ctRoom]: { s: 0, o: 0, g: 0 } } }, token)).r[ctRoom].e;
+// Datei des Mitglieds, die an der Nachricht hängt
+const delFile = C.randomId();
+const delFileKey = await C.importFileKey(C.newFileKey());
+const delBytes = new Uint8Array(1000).fill(3);
+r = await call('file.put', { id: delFile, n: 0, of: 1, size: delBytes.length, d: C.b64(await C.sealChunk(delFileKey, delFile, 0, 1, delBytes)), ttl: 3600 }, acc2Token);
+ok(r.ok, 'Mitglied lädt eine Datei hoch');
+r = await call('room.post', { id: ctRoom, k: 'msg', d: await C.sealRoom({ t: 'msg', ch: 'c1', body: '📎 datei', file: { id: delFile }, from: acc2Id }, ctKey, 1, ctRoom, acc2.privateKey) }, acc2Token);
+const sMemberMsg = r.s;
+r = await call('room.post', { id: ctRoom, k: 'msg', d: await C.sealRoom({ t: 'edit', ref: 'x', ch: 'c1', body: 'geändert', from: acc2Id }, ctKey, 1, ctRoom, acc2.privateKey) }, acc2Token);
+const sMemberEdit = r.s;
+r = await call('room.post', { id: ctRoom, k: 'msg', d: await ctMsg('c1', 'vom Besitzer') }, accToken);
+const sOwnerMsg = r.s;
+r = await call('hook.post', { r: ctRoom, h: ctHid, t: ctTok, d: await C.sealHook({ v: 1, t: 'hook', id: C.randomId(), body: 'weg damit' }, ctHk.pub, ctRoom, ctHid) });
+let entries = await pollCt(acc2Token);
+const sHookPost = entries.filter(e => e.k === 'hook').map(e => e.s).pop();
+ok(sMemberMsg && sMemberEdit && sOwnerMsg && sHookPost, 'Nachricht des Mitglieds (mit Datei und Änderung), des Besitzers und ein API-Beitrag liegen im Verlauf');
+r = await call('room.del', { id: ctRoom, s: [sOwnerMsg] }, acc2Token);
+ok(!r.ok && r._status === 403, 'room.del: Mitglied (nicht Besitzer) → 403, auch für fremde Nachrichten');
+r = await call('room.del', { id: ctRoom, s: [sMemberMsg] }, acc2Token);
+ok(!r.ok && r._status === 403, 'room.del: Mitglied, eigene Nachricht → 403 (der Server kennt den Absender nicht; eigene löscht man verschlüsselt mit t „del“)');
+r = await call('room.del', { id: ctRoom, s: [] }, accToken);
+ok(!r.ok && r._status === 422, 'room.del ohne Nummer → 422');
+r = await call('room.del', { id: ctRoom, s: [sMemberMsg, sMemberEdit], f: [delFile] }, accToken);
+ok(r.ok && r.n === 2 && r.files === 1, 'Besitzer löscht fremde Nachricht samt Änderung und Datei');
+r = await call('file.get', { id: delFile, n: 0 }, acc2Token);
+ok(!r.ok && r._status === 404, 'Datei ist beim Server weg');
+r = await call('room.del', { id: ctRoom, s: sHookPost }, accToken);
+ok(r.ok && r.n === 1, 'Besitzer löscht einen API-Beitrag (einzelne Nummer)');
+entries = await pollCt(acc2Token);
+ok(![sMemberMsg, sMemberEdit, sHookPost].some(s => entries.some(e => e.s === s)) && entries.some(e => e.s === sOwnerMsg), 'gelöschte Einträge werden nicht mehr ausgeliefert, andere schon');
+const notes = entries.filter(e => e.k === 'del');
+ok(notes.length === 2 && notes[0].n.join() === [sMemberMsg, sMemberEdit].join() && notes[1].n.join() === String(sHookPost) && !('d' in notes[0]), 'Hinweis-Einträge k „del“ nennen nur die Nummern');
+r = await call('room.del', { id: ctRoom, s: [sMemberMsg] }, accToken);
+ok(r.ok && r.n === 0 && (await pollCt(acc2Token)).filter(e => e.k === 'del').length === 2, 'schon gelöscht: n = 0, kein weiterer Hinweis');
+const sysSeq = entries.find(e => e.k === 'sys');
+if (sysSeq) {
+  r = await call('room.del', { id: ctRoom, s: [sysSeq.s] }, accToken);
+  ok(r.ok && r.n === 0, 'Hinweise (Beitritt) und Schlüssel lassen sich so nicht löschen');
+}
+r = await call('room.del', { id: ctRoom, s: [sOwnerMsg], f: [bobFile] }, accToken);
+ok(r.ok && r.n === 1 && r.files === 0, 'fremde Datei (Hochlader nicht im Raum) bleibt');
 await call('room.delete', { id: ctRoom }, accToken);
 
 r = await call('delete', { auth: keys2.auth }, acc2Token);

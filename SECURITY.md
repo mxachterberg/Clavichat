@@ -179,6 +179,11 @@ erfunden. Im Überblick – wo verschlüsselt wird und was der Server davon sieh
   zufällige Kanal-Kennung, nie Name oder Inhalt) – aber nur für solche
   Kanäle: Nachrichten anderer Kanäle gehen weiter ohne Kennung. Zurück auf
   „wie der Raum“ entfernt die Zuordnung wieder aus dem Verlauf.
+- Der Besitzer eines Raums kann einzelne Nachrichten und API-Beiträge beim
+  Server löschen (`room.del`, nach Eintragsnummer). Wer etwas geschrieben
+  hat, weiß der Server nicht – deshalb nur der Besitzer; andere löschen
+  eigene Nachrichten verschlüsselt. Zurück bleibt ein Hinweis-Eintrag mit
+  den Nummern, damit verbundene Apps sie sofort ausblenden.
 - Abgelaufenes wird nicht mehr ausgeliefert und stündlich aus den Dateien
   gelöscht.
 - Räume, die eine temporäre Sitzung angelegt hat, löscht der Server nach
