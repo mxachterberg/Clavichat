@@ -402,6 +402,51 @@ ok(!r.ok && r._status === 403, 'alte Einladung ist nach dem Schlüsselwechsel un
 r = await call('rooms', {}, TA.token);
 ok(r.ok && r.rooms.find(x => x.id === roomId).iv === 0, 'nach dem Wechsel keine offenen Einladungen mehr');
 
+console.log('\n== Verlauf für neue Mitglieder (Schlüsselarchiv in den Raumdaten)');
+{
+  // Nachricht in Generation 2, dann Wechsel auf 3 – einmal ohne, einmal mit Archiv.
+  const key2 = await C.importRoomKey(newKey);
+  const old = await C.sealRoom({ t: 'msg', id: C.randomId(), ch: 'c1', body: 'Aus Generation 2', from: TA.id, room: roomId }, key2, 2, roomId, TA.privateKey);
+  r = await call('room.post', { id: roomId, k: 'msg', d: old }, TA.token);
+  ok(r.ok, 'Anna schreibt in Generation 2');
+  const raw3 = C.newRoomKey();
+  const key3 = await C.importRoomKey(raw3);
+  const env3 = await C.sealFor({ t: 'roomkey', room: roomId, epoch: 3, key: raw3 }, [TA.publicKey], TA.privateKey);
+  r = await call('room.rotate', { id: roomId, e: 3, env: env3, meta: await C.sealRoom({ t: 'meta', name: 'Test', ch: [{ id: 'c1', name: 'allgemein' }] }, key3, 3, roomId, TA.privateKey) }, TA.token);
+  ok(r.ok && r.room.epoch === 3, 'Wechsel auf Generation 3 (ohne Archiv)');
+  const joinWith = async (alias) => {
+    const inv = await call('room.invite', { id: roomId }, TA.token);
+    const T = await makeTemp(alias);
+    const j = await call('room.join', { id: roomId, code: inv.code }, T.token);
+    const p = await call('poll', { i: { s: 0, o: 0, g: 0 }, r: { [roomId]: { s: 0, o: 0, g: 0, tail: 200 } } }, T.token);
+    const rs = await call('rooms', {}, T.token);
+    return { T, joined: j.ok && inv.epoch === 3, feed: p.r[roomId].e, room: rs.rooms.find(x => x.id === roomId) };
+  };
+  const readOld = async (feed, keys) => {
+    const e = feed.find(x => x.k === 'msg' && C.roomEpoch(x.d) === 2);
+    if (!e || !keys[2]) return null;
+    try { return (await C.openRoom(e.d, await C.importRoomKey(keys[2]), roomId, [TA.publicKey])).obj.body; } catch (err) { return null; }
+  };
+  let J = await joinWith('Ohne Verlauf');
+  ok(J.joined && J.feed.some(x => x.k === 'msg' && C.roomEpoch(x.d) === 2), 'neues Mitglied bekommt den alten Eintrag (Generation 2) vom Server');
+  let mobj = (await C.openRoom(J.room.meta, key3, roomId, [TA.publicKey])).obj;
+  ok(!mobj.ka && !mobj.hist && (await readOld(J.feed, {})) === null, 'ohne Einstellung: kein Archiv, alte Nachricht unlesbar');
+  await call('end', {}, J.T.token);
+  // Besitzer schaltet „Neue Mitglieder sehen den Verlauf“ ein: Archiv mit Generation 1 und 2.
+  const ka = { 1: { k: rk, t: Date.now() - 86400000 }, 2: { k: newKey, t: Date.now() - 3600000 } };
+  const metaH = await C.sealRoom({ t: 'meta', name: 'Test', ch: [{ id: 'c1', name: 'allgemein' }], hist: 1, ka }, key3, 3, roomId, TA.privateKey);
+  r = await call('room.meta', { id: roomId, meta: metaH, e: 3 }, TA.token);
+  ok(r.ok, 'Raumdaten mit Schlüsselarchiv gespeichert');
+  r = await call('rooms', {}, TA.token);
+  const stored = r.rooms.find(x => x.id === roomId).meta;
+  ok(stored === metaH && !stored.includes(newKey) && !stored.includes(rk), 'Server hat nur Chiffretext (keine Schlüssel im Klartext)');
+  J = await joinWith('Mit Verlauf');
+  mobj = (await C.openRoom(J.room.meta, key3, roomId, [TA.publicKey])).obj;
+  ok(mobj.hist === 1 && mobj.ka && mobj.ka[2].k === newKey, 'neues Mitglied entschlüsselt das Archiv mit dem Link-Schlüssel');
+  ok((await readOld(J.feed, { 2: mobj.ka[2].k })) === 'Aus Generation 2', 'neues Mitglied liest die Nachricht aus Generation 2');
+  await call('end', {}, J.T.token);
+}
+
 console.log('\n== Server: Meetings und Gäste');
 r = await call('config');
 const onceHours = r.once_hours;

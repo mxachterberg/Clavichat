@@ -83,6 +83,20 @@ erfunden. Im Überblick – wo verschlüsselt wird und was der Server davon sieh
 - Zusätzlich wechselt der Besitzer den Schlüssel jede Woche – nicht, solange
   Einladungslinks offen sind (sie würden sonst ungültig). Siehe Forward
   Secrecy.
+- Vorschau einer Einladung: Mit gültigem Einladungscode liefert der Server
+  ohne Anmeldung die verschlüsselten Raumdaten und die Mitgliederzahl
+  (`invite.info`) – dieselben Daten, die man beim Beitritt bekäme. Name und
+  Bild entschlüsselt erst die App mit dem Schlüssel aus dem Link. Links von
+  Teilnehmern eines Einmal-Meetings (Beitritt nach Zustimmung) liefern nichts
+  davon.
+- „Neue Mitglieder sehen den Verlauf“ (Einstellung des Besitzers, aus): Neue
+  bekommen mit dem Link nur den aktuellen Schlüssel. Ist die Einstellung an,
+  legt die App des Besitzers die älteren Generationen, die sie noch hat, in
+  die Raumdaten – mit dem aktuellen Schlüssel verschlüsselt, der Server sieht
+  sie nicht. Wer den Raum verlassen hat, bekommt die neuen Raumdaten nicht
+  mehr. Archiviert werden nur Generationen, deren Nachrichten noch aufbewahrt
+  werden können (höchstens 64). Ausschalten nimmt das Archiv heraus; wer die
+  Schlüssel schon hat, behält sie.
 - Reaktionen sind Raum-Einträge wie Nachrichten (`t: 'react'`, verschlüsselt
   und signiert); der Server unterscheidet sie nicht von Nachrichten – außer
   in Kanälen, in denen der Reagierende nicht schreiben darf (siehe Ränge).
