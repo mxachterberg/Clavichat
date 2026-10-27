@@ -105,6 +105,7 @@ function el(tag, attrs) {
 
 const ICONS = {
   lock: '<rect x="5" y="10.5" width="14" height="10" rx="1"/><path d="M8 10.5V7a4 4 0 0 1 8 0v3.5"/>',
+  unlock: '<rect x="5" y="10.5" width="14" height="10" rx="1"/><path d="M8 10.5V7a4 4 0 0 1 7.7-1.5"/>',
   radio: '<path d="M9.5 9V2.5M15 9V7"/><path d="M9.5 3h3M9.5 6h2.2"/><rect x="6" y="9" width="12" height="13" rx="2"/><path d="M9.5 13h5M9.5 16h5M12 19h.01"/>',
   sliders: '<path d="M4 7h10M18 7h2M4 17h4M12 17h8"/><circle cx="16" cy="7" r="2"/><circle cx="10" cy="17" r="2"/>',
   image: '<rect x="3" y="4" width="18" height="16" rx="1"/><circle cx="9" cy="10" r="2"/><path d="M21 16l-5-5L5 20"/>',
@@ -3149,7 +3150,7 @@ function renderRoomSide(head, body, room) {
       'aria-current': S.view.ch === ch.id ? 'true' : 'false',
       onclick: () => openRoom(room.id, ch.id)
     }, icon('hash', 15), el('span', { class: 'sc-chan-name', text: ch.name }),
-    room.cw[ch.id] && rolesOk(room) ? el('span', { class: 'sc-chan-lock', title: 'Schreiben: ' + channelWho(room, room.cw[ch.id].r) }, icon(canWriteIn(room, S.me.id, ch.id) ? 'edit' : 'lock', 12)) : null,
+    room.cw[ch.id] && rolesOk(room) ? chanLock('Schreiben: ' + channelWho(room, room.cw[ch.id].r), canWriteIn(room, S.me.id, ch.id), 'du darfst schreiben', 'du darfst hier nicht schreiben') : null,
     u ? el('span', { class: 'sc-count', text: String(u) }) : null);
     withMenu(btn, () => textChannelMenu(room, ch));
     if (isOwner) { sortable(btn, room, 'ch', ch.id); dropTarget(btn, room, 'ch', ch.id); }
@@ -3168,7 +3169,7 @@ function renderRoomSide(head, body, room) {
       title: inHere ? 'Du bist in diesem Sprachkanal' : 'Sprachkanal betreten',
       onclick: () => (inHere ? setView({ kind: 'room', rid: room.id, ch: S.view.ch }) : joinVoice(room.id, vch.id))
     }, icon('speaker', 15), el('span', { class: 'sc-chan-name', text: vch.name }),
-    room.vw[vch.id] && rolesOk(room) ? el('span', { class: 'sc-chan-lock', title: 'Betreten: ' + channelWho(room, room.vw[vch.id]) }, icon(canEnterVoice(room, S.me.id, vch.id) ? 'speaker' : 'lock', 12)) : null,
+    room.vw[vch.id] && rolesOk(room) ? chanLock('Betreten: ' + channelWho(room, room.vw[vch.id]), canEnterVoice(room, S.me.id, vch.id), 'du darfst ihn betreten', 'du darfst ihn nicht betreten') : null,
     el('span', { class: 'sc-chan-meta', text: people.length ? people.length + '/' + (S.cfg.limits.voice || 8) : '' }));
     withMenu(vbtn, () => voiceChannelMenu(room, vch));
     if (isOwner) { sortable(vbtn, room, 'vch', vch.id); dropTarget(vbtn, room, 'vch', vch.id); }
@@ -5534,6 +5535,15 @@ function rolesSorted(room) { return Object.keys(room.rl).sort((a, b) => room.rl[
 function bitCount(p) { let n = 0; for (const x of PERMS) if (p & x.bit) n++; return n; }
 
 /** Wer darf hier schreiben/betreten – kurz, für Kopfzeile und Eingabefeld. */
+/**
+ * Kanal mit Beschränkung (Seitenleiste): immer ein Schloss. Darf man selbst,
+ * ist es offen und gedämpft, sonst geschlossen und kräftiger.
+ */
+function chanLock(rule, mine, yes, no) {
+  const text = rule + ' – ' + (mine ? yes : no);
+  return el('span', { class: 'sc-chan-lock' + (mine ? ' is-mine' : ''), title: text, 'aria-label': text, role: 'img' }, icon(mine ? 'unlock' : 'lock', 12));
+}
+
 function channelWho(room, list) {
   if (!list.length) return 'nur der Besitzer';
   const names = list.map((r) => roleName(room, r));
