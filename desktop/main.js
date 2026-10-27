@@ -120,6 +120,110 @@ function showWindow() {
    null = wieder das eingebaute Symbol. Programmdatei, Verknüpfungen und
    Installer behalten build/icon.ico. */
 let customIcon = null;
+
+/* Taskleiste: Windows nimmt das Symbol aus appIconPath (setAppDetails), nicht
+   aus win.setIcon – und die Programmdatei behält nach kleinen Updates ihr
+   altes Symbol. Deshalb liegt das Symbol als eigene .ico im Datenordner:
+   beim Start das eingebaute aus dieser App-Fassung, nach einer Logo-Wahl
+   das gewählte. Der Dateiname enthält eine Prüfsumme, weil Windows Symbole
+   je Pfad zwischenspeichert. */
+function icoFromImage(img) {
+  // Klassisches ICO: kleine Größen als 32-Bit-Bitmap (liest jeder Teil von
+  // Windows), 256 px als PNG wie in build/icon.ico.
+  const sizes = [16, 20, 24, 32, 40, 48, 64, 256];
+  const parts = sizes.map((px) => {
+    const small = img.resize({ width: px, height: px, quality: 'best' });
+    if (px >= 256) return small.toPNG();
+    const bgra = small.toBitmap();                    // BGRA, Zeilen von oben
+    const row = px * 4;
+    const maskRow = Math.ceil(px / 32) * 4;            // 1-Bit-Maske, auf 32 Bit aufgefüllt
+    const out = Buffer.alloc(40 + row * px + maskRow * px);
+    out.writeUInt32LE(40, 0);                          // BITMAPINFOHEADER
+    out.writeInt32LE(px, 4);
+    out.writeInt32LE(px * 2, 8);                       // Höhe doppelt: Bild + Maske
+    out.writeUInt16LE(1, 12);
+    out.writeUInt16LE(32, 14);
+    out.writeUInt32LE(row * px + maskRow * px, 20);
+    for (let y = 0; y < px; y++) {                     // Bitmaps stehen auf dem Kopf
+      bgra.copy(out, 40 + (px - 1 - y) * row, y * row, (y + 1) * row);
+    }
+    return out;                                        // Maske bleibt 0 – der Alphakanal zählt
+  });
+  const head = Buffer.alloc(6 + 16 * sizes.length);
+  head.writeUInt16LE(0, 0);
+  head.writeUInt16LE(1, 2);
+  head.writeUInt16LE(sizes.length, 4);
+  let off = head.length;
+  sizes.forEach((px, i) => {
+    const e = 6 + 16 * i;
+    head.writeUInt8(px >= 256 ? 0 : px, e);
+    head.writeUInt8(px >= 256 ? 0 : px, e + 1);
+    head.writeUInt16LE(1, e + 4);
+    head.writeUInt16LE(32, e + 6);
+    head.writeUInt32LE(parts[i].length, e + 8);
+    head.writeUInt32LE(off, e + 12);
+    off += parts[i].length;
+  });
+  return Buffer.concat([head].concat(parts));
+}
+function writeTaskbarIco(data) {
+  try {
+    const dir = app.getPath('userData');
+    const name = 'taskbar-' + require('crypto').createHash('sha256').update(data).digest('hex').slice(0, 12) + '.ico';
+    const file = path.join(dir, name);
+    if (!fs.existsSync(file)) fs.writeFileSync(file, data);
+    // Ältere Fassungen wegräumen
+    for (const f of fs.readdirSync(dir)) {
+      if (/^taskbar-[0-9a-f]{12}\.ico$/.test(f) && f !== name) fs.rmSync(path.join(dir, f), { force: true });
+    }
+    return file;
+  } catch (e) {
+    return null;     // dann eben das Symbol der Programmdatei
+  }
+}
+/* Windows zeigt in der Taskleiste das Symbol der Startmenü-Verknüpfung, die
+   zur App gehört – nicht das Fenstersymbol. Nach kleinen Updates zeigt die
+   aber noch auf das alte Symbol in der Programmdatei. Darum die eigenen
+   Verknüpfungen (Startmenü, Desktop, angeheftet) auf die .ico umstellen –
+   nur die, die genau auf diese Programmdatei zeigen. */
+function updateShortcuts(ico) {
+  if (!ico || PORTABLE) return;
+  const exe = path.resolve(EXE).toLowerCase();
+  const places = [
+    path.join(app.getPath('appData'), 'Microsoft', 'Windows', 'Start Menu', 'Programs', 'Clavichat.lnk'),
+    path.join(app.getPath('desktop'), 'Clavichat.lnk'),
+    path.join(app.getPath('appData'), 'Microsoft', 'Internet Explorer', 'Quick Launch', 'User Pinned', 'TaskBar', 'Clavichat.lnk')
+  ];
+  for (const lnk of places) {
+    try {
+      if (!fs.existsSync(lnk)) continue;
+      const cur = shell.readShortcutLink(lnk);
+      if (!cur.target || path.resolve(cur.target).toLowerCase() !== exe) continue;
+      if (cur.icon && path.resolve(cur.icon).toLowerCase() === path.resolve(ico).toLowerCase()) continue;
+      shell.writeShortcutLink(lnk, 'update', { icon: ico, iconIndex: 0 });
+    } catch (e) { /* Verknüpfung bleibt, wie sie ist */ }
+  }
+}
+
+function setTaskbarIcon() {
+  if (!win || process.platform !== 'win32' || !app.isPackaged) return;
+  let file = null;
+  try {
+    file = writeTaskbarIco(customIcon ? icoFromImage(customIcon) : fs.readFileSync(ICON));
+  } catch (e) { /* Programmdatei */ }
+  // Symbol und „erneut starten“ für die Taskleiste. Ohne feste Angaben merkt
+  // sich Windows den Temp-Ordner der portablen Fassung, und ein angehefteter
+  // Knopf zeigt nach dem Beenden nur ein leeres Blatt.
+  updateShortcuts(file);
+  win.setAppDetails({
+    appId: APP_ID,
+    appIconPath: file || EXE,
+    appIconIndex: 0,
+    relaunchCommand: '"' + EXE + '"',
+    relaunchDisplayName: 'Clavichat'
+  });
+}
+
 function trayImage() {
   if (!customIcon) return ICON;
   const img = nativeImage.createEmpty();
@@ -419,18 +523,8 @@ function createWindow() {
       devTools: !app.isPackaged
     }
   });
-  // Taskleiste: Symbol und „erneut starten“ aus der bleibenden Programmdatei.
-  // Sonst merkt sich Windows den Temp-Ordner der portablen Fassung, und ein
-  // angehefteter Knopf zeigt nach dem Beenden nur ein leeres Blatt.
-  if (process.platform === 'win32' && app.isPackaged) {
-    win.setAppDetails({
-      appId: APP_ID,
-      appIconPath: EXE,
-      appIconIndex: 0,
-      relaunchCommand: '"' + EXE + '"',
-      relaunchDisplayName: 'Clavichat'
-    });
-  }
+  // Taskleiste: Symbol aus dieser App-Fassung, Neustart über die bleibende Programmdatei
+  setTaskbarIcon();
   // Beim Selbsttest ohne Fokus anzeigen – Bildschirmfotos brauchen ein gezeichnetes Fenster.
   win.once('ready-to-show', () => { if (SMOKE) win.showInactive(); else win.show(); });
   win.on('focus', () => win.flashFrame(false));
@@ -508,6 +602,7 @@ ipcMain.handle('securecom:icon', (event, dataUrl) => {
     customIcon = img;
   }
   win.setIcon(customIcon || ICON);
+  setTaskbarIcon();
   if (tray) tray.setImage(trayImage());
   return true;
 });
