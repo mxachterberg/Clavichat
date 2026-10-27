@@ -4,6 +4,12 @@ Was sich von Version zu Version ändert. Beim Veröffentlichen wird der
 Abschnitt einer Version zum Text des GitHub-Releases
 (`.github/workflows/windows.yml`).
 
+## 1.8.8 – 27.10.2026
+
+Kleinigkeit. Für installierte Apps ein kleines Update.
+
+- **Kopfzeile:** Vor „Clavichat“ steht kein Logo mehr – es bleibt oben links.
+
 ## 1.8.7 – 27.10.2026
 
 Das Logo kommt jetzt auch in der Windows-Taskleiste an. Für installierte
