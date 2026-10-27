@@ -5102,7 +5102,21 @@ function meetingExpiryNote(room) {
   return room.tmp ? 'Ruht das Meeting ' + tempRoomDays() + ' Tage, löscht der Server es samt Chat.' : '';
 }
 
-/** Knopf „MEET“: gleich ein Meeting anlegen und den Link zeigen. */
+/** Knopf „MEET“: erst kurz nachfragen (ein Klick aus Versehen legte sonst gleich ein Meeting an). */
+function confirmMeeting() {
+  if (inMeetingMode() || meetStarting) return;
+  openModal({
+    title: 'MEETING',
+    build: (body) => body.appendChild(el('p', { class: 'sc-p', text: 'Ein neues Meeting erstellen? Du bekommst einen Link, über den andere beitreten.' })),
+    actions: [
+      { label: 'Abbrechen', onClick: (close) => close() },
+      // Fokus liegt auf dem primären Knopf: Enter bestätigt.
+      { label: 'Meeting erstellen', primary: true, onClick: (close) => { close(); startMeeting(); } }
+    ]
+  });
+}
+
+/** Meeting anlegen und den Link zeigen. */
 let meetStarting = false;
 async function startMeeting() {
   if (inMeetingMode() || meetStarting) return;
@@ -9152,7 +9166,7 @@ function bind() {
   $('sc-home').addEventListener('click', () => setView({ kind: 'home' }));
   $('sc-add-room').addEventListener('click', roomDialog);
   // Meeting starten: eigener Knopf unter „Raum erstellen“, deutlich als Meeting erkennbar.
-  const meetBtn = el('button', { type: 'button', class: 'sc-rail-btn sc-rail-meet', id: 'sc-add-meet', title: 'Meeting starten', 'aria-label': 'Meeting starten', onclick: () => startMeeting() },
+  const meetBtn = el('button', { type: 'button', class: 'sc-rail-btn sc-rail-meet', id: 'sc-add-meet', title: 'Meeting starten', 'aria-label': 'Meeting starten', onclick: () => confirmMeeting() },
     icon('group', 19), el('span', { class: 'sc-rail-meet-label', text: 'MEET' }));
   $('sc-add-room').insertAdjacentElement('afterend', meetBtn);
   $('sc-scrim').addEventListener('click', () => toggleSide(false));
