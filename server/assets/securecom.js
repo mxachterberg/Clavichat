@@ -2956,9 +2956,12 @@ function personRow(ident, onclick, opts) {
 function renderRoomSide(head, body, room) {
   const isOwner = room.owner === S.me.id;
   appendAll(head, room.meta.img ? el('img', { class: 'sc-side-pic', src: room.meta.img, alt: '' }) : null,
-    el('span', { class: 'sc-side-title', text: room.meta.name, title: room.meta.name }),
-    room.tmp ? el('span', { class: 'sc-kind', text: 'TEMP', title: tempRoomNote(room) }) : null,
-    room.ao ? el('span', { class: 'sc-kind sc-kind--ao', text: 'NUR KONTEN', title: AO_NOTE }) : null,
+    // Name in voller Breite, Merkmale klein in einer zweiten Zeile darunter
+    el('span', { class: 'sc-side-name' },
+      el('span', { class: 'sc-side-title', text: room.meta.name, title: room.meta.name }),
+      room.tmp || room.ao ? el('span', { class: 'sc-side-tags' },
+        room.ao ? el('span', { class: 'sc-side-tag sc-side-tag--ao', title: AO_NOTE }, icon('users', 11), 'NUR KONTEN') : null,
+        room.tmp ? el('span', { class: 'sc-side-tag', title: tempRoomNote(room) }, icon('clock', 11), 'TEMP') : null) : null),
     iconBtn('more', 'Raum-Menü', () => roomMenu(room)));
 
   body.appendChild(sectionHead('TEXTKANÄLE', isOwner ? iconBtn('plus', 'Kanal anlegen', () => addChannel(room), { class: 'sc-ibtn sc-ibtn--tiny' }) : null));
