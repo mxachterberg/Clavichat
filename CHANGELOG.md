@@ -4,6 +4,19 @@ Was sich von Version zu Version ändert. Beim Veröffentlichen wird der
 Abschnitt einer Version zum Text des GitHub-Releases
 (`.github/workflows/windows.yml`).
 
+## 1.9.5 – 28.10.2026
+
+Kanäle nur für automatische Beiträge. Für installierte Apps ein kleines
+Update.
+
+- **„Niemand – nur API-Zugänge“:** neue Stufe in den Kanal-Berechtigungen
+  (Rechtsklick auf den Kanal). Dort schreibt niemand mehr – auch Besitzer
+  und Admins nicht –, nur API-Zugänge posten. Reagieren geht weiter. Beim
+  Umstellen werden vorhandene Zugänge dieses Kanals gleich zugeordnet, damit
+  ihre Beiträge sichtbar bleiben.
+- **Eigene Nachrichten löschen** geht jetzt auch in Kanälen, in denen man
+  nicht (mehr) schreiben darf.
+
 ## 1.9.4 – 28.10.2026
 
 Restliche Funde der Sicherheitsprüfung. Für installierte Apps ein kleines
