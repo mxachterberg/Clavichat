@@ -3848,8 +3848,12 @@ async function prepareImage(file) {
   }
 }
 
-/** Verschlüsseln und hochladen; onProgress(0…1). Gibt { id, k, c } zurück. */
-async function uploadEncrypted(bytes, ttl, onProgress, cancelled) {
+/**
+ * Verschlüsseln und hochladen; onProgress(0…1). Gibt { id, k, c } zurück.
+ * rid: Raum, für den die Datei ist – nur dort darf „Nachrichten verwalten“
+ * sie mit room.del löschen (ältere Server ignorieren r).
+ */
+async function uploadEncrypted(bytes, ttl, onProgress, cancelled, rid) {
   const id = C.randomId();
   const raw = C.newFileKey();
   const key = await C.importFileKey(raw);
@@ -3861,6 +3865,7 @@ async function uploadEncrypted(bytes, ttl, onProgress, cancelled) {
     }
     const part = bytes.subarray(n * C.FILE_CHUNK, Math.min(bytes.length, (n + 1) * C.FILE_CHUNK));
     const body = { id: id, n: n, of: total, size: bytes.length, ttl: ttl, d: C.b64(await C.sealChunk(key, id, n, total, part)) };
+    if (rid && n === 0) body.r = rid;
     for (let tries = 1; ; tries++) {
       try {
         await api('file.put', body);
@@ -3942,7 +3947,7 @@ async function sendOneFile(file, target) {
   try {
     const bytes = new Uint8Array(await blob.arrayBuffer());
     const ttl = target.kind === 'dm' ? convTtl(target.peer) : chanTtl(S.rooms.get(target.rid), target.ch);
-    const up = await uploadEncrypted(bytes, ttl, row.progress, row.cancelled);
+    const up = await uploadEncrypted(bytes, ttl, row.progress, row.cancelled, target.kind === 'room' ? target.rid : '');
     const meta = Object.assign({ id: up.id, k: up.k, s: bytes.length, c: up.c, n: name, m: mime }, extra);
     // Ältere Apps zeigen nur den Text.
     const body = '📎 ' + name + ' (' + fmtSize(bytes.length) + ')';

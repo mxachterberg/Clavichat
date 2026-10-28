@@ -1032,8 +1032,25 @@ const pollCt = async (token) => (await call('poll', { i: { s: 0, o: 0, g: 0 }, r
 const delFile = C.randomId();
 const delFileKey = await C.importFileKey(C.newFileKey());
 const delBytes = new Uint8Array(1000).fill(3);
-r = await call('file.put', { id: delFile, n: 0, of: 1, size: delBytes.length, d: C.b64(await C.sealChunk(delFileKey, delFile, 0, 1, delBytes)), ttl: 3600 }, acc2Token);
-ok(r.ok, 'Mitglied lädt eine Datei hoch');
+r = await call('file.put', { id: delFile, n: 0, of: 1, size: delBytes.length, d: C.b64(await C.sealChunk(delFileKey, delFile, 0, 1, delBytes)), ttl: 3600, r: ctRoom }, acc2Token);
+ok(r.ok, 'Mitglied lädt eine Datei für diesen Raum hoch (r)');
+if (STORE) ok(JSON.parse(fs.readFileSync(STORE + '/securecom/files/' + delFile + '.json', 'utf8')).r === ctRoom, 'Datei-Beschreibung nennt den Raum (r)');
+// Weitere Dateien desselben Mitglieds: ohne r (ältere App, z. B. in einer Direktnachricht) und für einen anderen Raum
+const putOne = async (fid, token, extra) => call('file.put', Object.assign({ id: fid, n: 0, of: 1, size: delBytes.length,
+  d: C.b64(await C.sealChunk(delFileKey, fid, 0, 1, delBytes)), ttl: 3600 }, extra || {}), token);
+const dmFile = C.randomId();
+r = await putOne(dmFile, acc2Token);
+ok(r.ok, 'Datei ohne r (wie aus einer Direktnachricht)');
+const otherRoom = C.randomId();
+await call('room.create', { id: otherRoom, meta: await C.sealRoom({ t: 'meta', name: 'Eigener', ch: [{ id: 'c1', name: 'x' }] }, ctKey, 1, otherRoom, acc2.privateKey) }, acc2Token);
+const otherFile = C.randomId();
+r = await putOne(otherFile, acc2Token, { r: otherRoom });
+ok(r.ok, 'Datei für einen anderen Raum des Mitglieds');
+r = await putOne(C.randomId(), TB.token, { r: ctRoom });
+ok(!r.ok && r._status === 403, 'file.put mit r eines Raums, in dem man nicht Mitglied ist → 403');
+const ownLegacy = C.randomId();
+r = await putOne(ownLegacy, accToken);
+ok(r.ok, 'Besitzer: eigene Datei ohne r');
 r = await call('room.post', { id: ctRoom, k: 'msg', d: await C.sealRoom({ t: 'msg', ch: 'c1', body: '📎 datei', file: { id: delFile }, from: acc2Id }, ctKey, 1, ctRoom, acc2.privateKey) }, acc2Token);
 const sMemberMsg = r.s;
 r = await call('room.post', { id: ctRoom, k: 'msg', d: await C.sealRoom({ t: 'edit', ref: 'x', ch: 'c1', body: 'geändert', from: acc2Id }, ctKey, 1, ctRoom, acc2.privateKey) }, acc2Token);
@@ -1067,8 +1084,15 @@ if (sysSeq) {
   r = await call('room.del', { id: ctRoom, s: [sysSeq.s] }, accToken);
   ok(r.ok && r.n === 0, 'Hinweise (Beitritt) und Schlüssel lassen sich so nicht löschen');
 }
-r = await call('room.del', { id: ctRoom, s: [sOwnerMsg], f: [bobFile] }, accToken);
-ok(r.ok && r.n === 1 && r.files === 0, 'fremde Datei (Hochlader nicht im Raum) bleibt');
+r = await call('room.del', { id: ctRoom, s: [sOwnerMsg], f: [bobFile, dmFile, otherFile] }, accToken);
+ok(r.ok && r.n === 1 && r.files === 0, 'fremde Dateien bleiben: Hochlader nicht im Raum, Datei ohne r (Direktnachricht), Datei eines anderen Raums');
+r = await call('file.get', { id: dmFile, n: 0 }, acc2Token);
+const r2 = await call('file.get', { id: otherFile, n: 0 }, acc2Token);
+ok(r.ok && r2.ok, 'beide Dateien des Mitglieds sind noch abrufbar');
+r = await call('room.del', { id: ctRoom, s: [sOwnerMsg], f: [ownLegacy] }, accToken);
+ok(r.ok && r.files === 1, 'eigene ältere Datei (ohne r) löscht der Hochlader mit');
+await call('file.del', { id: dmFile }, acc2Token);
+await call('room.delete', { id: otherRoom }, acc2Token);
 await call('room.delete', { id: ctRoom }, accToken);
 
 console.log('\n== Reaktionen (verschlüsselte Einträge t „react“)');

@@ -1606,12 +1606,16 @@ class SecureCom
                 't' => time(), 'k' => 'del', 'x' => time() + self::retentionDays() * 86400, 'n' => $gone,
             ]);
         }
-        // Dateien der Nachricht: nur, wenn sie ein Mitglied dieses Raums hochgeladen hat.
+        // Dateien der Nachricht: nur, wenn sie für diesen Raum hochgeladen wurden
+        // (r, seit 1.9.4). Ältere Dateien ohne r gehören womöglich zu einer
+        // Direktnachricht oder einem anderen Raum – die löscht nur ihr Hochlader.
         $files = 0;
         foreach (array_slice(is_array($b['f'] ?? null) ? $b['f'] : [], 0, 10) as $fid) {
             if (!is_string($fid) || !preg_match('/^[A-Za-z0-9_-]{22}$/', $fid)) continue;
             $m = self::readJson(self::fileMeta($fid));
-            if ($m && isset($room['mem'][(string)($m['o'] ?? '')])) { self::dropFile($fid); $files++; }
+            if (!$m) continue;
+            $fr = (string)($m['r'] ?? '');
+            if ($fr !== '' ? $fr === $rid : ($m['o'] ?? '') === $me['id']) { self::dropFile($fid); $files++; }
         }
         return ['n' => count($gone), 'files' => $files];
     }
@@ -2478,7 +2482,8 @@ class SecureCom
        Chiffretext, Größe und Ablauf – Name, Typ und Schlüssel stehen nur in
        der Ende-zu-Ende verschlüsselten Nachricht. Ablage:
        files/<id>.json (o Besitzer, c erstellt, x Ablauf, s Größe, t Stücke,
-       b verschlüsselte Bytes, next nächstes Stück, done) und files/<id>/<n>.bin.
+       b verschlüsselte Bytes, next nächstes Stück, done, r Raum – nur bei
+       Dateien für einen Raum) und files/<id>/<n>.bin.
        ====================================================================== */
     private static function fileMeta($id) { return self::dir('files') . '/' . $id . '.json'; }
     private static function fileDir($id)  { return self::dir('files') . '/' . $id; }
@@ -2512,7 +2517,16 @@ class SecureCom
             $ttl = isset($b['ttl']) && is_numeric($b['ttl']) ? (int)$b['ttl'] : self::DEFAULT_TTL;
             $ttl = max(60, min(self::retentionDays() * 86400, $ttl));
             $now = time();
-            self::writeJson($metaFile, ['o' => $me['id'], 'c' => $now, 'x' => $now + $ttl, 's' => $size, 't' => $total, 'b' => $bytes, 'next' => 0]);
+            $new = ['o' => $me['id'], 'c' => $now, 'x' => $now + $ttl, 's' => $size, 't' => $total, 'b' => $bytes, 'next' => 0];
+            // Datei für einen Raum (r): nur dort darf „Nachrichten verwalten“ sie
+            // mit room.del löschen. Nur für Räume, in denen man Mitglied ist.
+            $fr = $b['r'] ?? null;
+            if (is_string($fr) && preg_match('/^[A-Za-z0-9_-]{22}$/', $fr)) {
+                $froom = self::readJson(self::roomFile($fr), true);
+                if (!$froom || !isset($froom['mem'][$me['id']])) throw new SecureComException('Kein Mitglied dieses Raums.', 403);
+                $new['r'] = $fr;
+            }
+            self::writeJson($metaFile, $new);
             if (!is_dir(self::fileDir($id))) @mkdir(self::fileDir($id), 0770, true);
         } elseif (!$meta || ($meta['o'] ?? '') !== $me['id']) {
             throw new SecureComException('Unbekannte Datei.', 404);
