@@ -78,6 +78,14 @@ erfunden. Im Überblick – wo verschlüsselt wird und was der Server davon sieh
 - Verlässt jemand den Raum oder wird entfernt, erzeugt der Besitzer einen neuen
   Schlüssel (nächste Generation) und verschlüsselt ihn per PGP für alle
   verbliebenen Mitglieder. Alte Einladungen werden ungültig.
+- Einladungen (Link oder direkt) erstellen nur der Besitzer und Ränge mit
+  „Administrator“. Ein Link gilt nur, solange sein Ersteller das beim
+  Einlösen noch darf – Herabstufen oder Gehen macht seine Links ungültig,
+  der Server entfernt sie beim nächsten Schreibzugriff. Ausnahme
+  Einmal-Meetings: Dort teilen Teilnehmer Links, der Gastgeber bestätigt
+  jeden Beitritt. Wer den Schlüssel aus einem Link hat, kann alles lesen,
+  was mit diesem Schlüssel verschlüsselt ist (siehe Vorschau) – Links nur
+  über sichere Wege teilen.
 - Raumname, Text- und Sprachkanäle und das Raumbild sind mit dem Raumschlüssel
   verschlüsselt. Der Server kennt von Sprachkanälen nur zufällige Kennungen.
 - Zusätzlich wechselt der Besitzer den Schlüssel jede Woche – nicht, solange
@@ -88,15 +96,37 @@ erfunden. Im Überblick – wo verschlüsselt wird und was der Server davon sieh
   (`invite.info`) – dieselben Daten, die man beim Beitritt bekäme. Name und
   Bild entschlüsselt erst die App mit dem Schlüssel aus dem Link. Links von
   Teilnehmern eines Einmal-Meetings (Beitritt nach Zustimmung) liefern nichts
-  davon.
+  davon. Folge: Wer einen gültigen Link hat, liest die ganzen Raumdaten –
+  samt Leseschlüsseln der API-Zugänge und Schlüsselarchiv –, auch ohne
+  beizutreten. Und schon das Öffnen eines Links (die Vorschau) verrät dem
+  Server die IP-Adresse, bevor man „Beitreten“ wählt.
 - „Neue Mitglieder sehen den Verlauf“ (Einstellung des Besitzers, aus): Neue
   bekommen mit dem Link nur den aktuellen Schlüssel. Ist die Einstellung an,
   legt die App des Besitzers die älteren Generationen, die sie noch hat, in
-  die Raumdaten – mit dem aktuellen Schlüssel verschlüsselt, der Server sieht
-  sie nicht. Wer den Raum verlassen hat, bekommt die neuen Raumdaten nicht
-  mehr. Archiviert werden nur Generationen, deren Nachrichten noch aufbewahrt
-  werden können (höchstens 64). Ausschalten nimmt das Archiv heraus; wer die
-  Schlüssel schon hat, behält sie.
+  die Raumdaten – als von ihm signiertes Archiv (`ks`: Raum, Generation der
+  Raumdaten, Schlüssel, Zeitpunkt), mit dem aktuellen Schlüssel
+  verschlüsselt; der Server sieht es nicht. Apps übernehmen alte Schlüssel
+  nur aus einem Archiv mit Unterschrift des Besitzers für diesen Raum und
+  diese Generation. Ob archiviert wird, steht nur im Tresor des Besitzers –
+  Ränge mit Verwaltungsrechten können das Archiv weder einschalten noch
+  ändern, nur unverändert weitergeben. Wer den aktuellen Schlüssel hat
+  (Mitglied oder Inhaber eines gültigen Links), bekommt damit alle
+  archivierten Generationen. Archiviert werden nur Generationen, deren
+  Nachrichten noch aufbewahrt werden können (höchstens 64). Ausschalten nimmt
+  das Archiv heraus und wechselt den Raumschlüssel; wer die Schlüssel schon
+  hat, behält sie. Für Apps bis 1.9.2 steht das Archiv zusätzlich
+  unsigniert in den Raumdaten; neuere lesen nur das signierte. Wer die
+  Einstellung mit 1.9.1/1.9.2 eingeschaltet hat, muss sie nach dem Update
+  einmal neu einschalten.
+- Raumdaten nimmt eine App nur von Mitgliedern an – von Nicht-Mitgliedern
+  (Ehemalige, die den Schlüssel noch haben, oder Inhaber eines Links) nur,
+  wenn es genau die schon angenommenen sind oder sie als Verwalter schon
+  Raumdaten geschrieben haben, solange sie Mitglied waren. Raumdaten tragen
+  einen signierten Zeitpunkt; ältere als die zuletzt angenommenen (ältere
+  Generation oder mehr als eine Minute früher, bei Apps bis 1.9.2 zehn
+  Minuten) lehnt die App ab – der Server kann keine alten Raumdaten
+  unterschieben. Eine App ohne gemerkten Stand (neues Gerät, neues
+  Mitglied) nimmt, was der Server als aktuell liefert.
 - Reaktionen sind Raum-Einträge wie Nachrichten (`t: 'react'`, verschlüsselt
   und signiert); der Server unterscheidet sie nicht von Nachrichten – außer
   in Kanälen, in denen der Reagierende nicht schreiben darf (siehe Ränge).
@@ -104,8 +134,10 @@ erfunden. Im Überblick – wo verschlüsselt wird und was der Server davon sieh
 ### Ränge und Rechte
 
 - Wie bei Discord: Ränge bündeln Rechte (schreiben, reagieren, Sprachkanäle,
-  einladen, Kanäle/Raum/Nachrichten/API-Zugänge/Ränge verwalten, Mitglieder
-  entfernen, Administrator). Der Server setzt sie durch und kennt dafür je
+  Kanäle/Raum/Nachrichten/API-Zugänge/Ränge verwalten, Mitglieder
+  entfernen, Administrator). Einladen dürfen nur Besitzer und
+  Administratoren (das frühere Recht „Einladen“, Bit 8, wirkt nur noch in
+  Meetings). Der Server setzt sie durch und kennt dafür je
   Rang eine zufällige Kennung, die Rechte (Bits), die Reihenfolge und wer
   welchen Rang hat. Namen und Farben der Ränge stehen nur verschlüsselt in
   den Raumdaten.
@@ -119,9 +151,14 @@ erfunden. Im Überblick – wo verschlüsselt wird und was der Server davon sieh
   Hinweis im Verlauf sieht – bis dahin kennt der Entfernte den aktuellen
   Schlüssel noch, bekommt aber keine Einträge mehr vom Server.
 - Raumdaten (Kanäle, Name, Bild, API-Zugänge, Rang-Namen) darf neu
-  verschlüsseln, wer eines der Verwaltungsrechte hat. Was genau sich darin
-  ändert, sieht der Server nicht: Ein Rang mit „Kanäle verwalten“ könnte
-  technisch auch den Raumnamen ändern.
+  verschlüsseln, wer eines der Verwaltungsrechte hat (Kanäle, Raum,
+  API-Zugänge, Ränge, Administrator). Was genau sich darin ändert, sieht der
+  Server nicht: Jeder solche Rang kann technisch alles darin ändern – Name,
+  Bild, Sprachqualität, Kanäle (auch löschen, dann sind deren Nachrichten
+  nicht mehr zu sehen), Rang-Namen und -Farben und die Leseschlüssel der
+  API-Zugänge (austauschen oder entfernen macht deren Beiträge unlesbar).
+  Nicht ändern kann er Rechte und Rangordnung (setzt der Server durch), das
+  Schlüsselarchiv (signiert der Besitzer) und den Raumschlüssel.
 - Schreibrecht je Textkanal („nur bestimmte Ränge“): Lesen können weiter
   alle Mitglieder – der Raumschlüssel gilt für den ganzen Raum, nicht je
   Kanal. Neue Apps nennen dem Server bei solchen Kanälen die Kanal-Kennung
@@ -134,6 +171,34 @@ erfunden. Im Überblick – wo verschlüsselt wird und was der Server davon sieh
   „reagieren“ und vermerkt `r` am Eintrag – er erfährt damit, dass es eine
   Reaktion ist).
 - Sprachkanäle lassen sich ebenso auf Ränge beschränken (betreten).
+- Gegen einen böswilligen Server schützen Kanal-Beschränkungen nicht: Er
+  liefert Rechte, Ränge und Mitgliederliste selbst und könnte Beiträge ohne
+  Prüfung annehmen oder als geprüft markieren. Geschützt bleibt nur, was
+  die Kryptografie sichert – wer schreibt (Signatur) und wer lesen kann
+  (Raumschlüssel).
+
+### API-Zugänge
+
+- Ein Zugang ist ein Schlüsselpaar (ECDH P-256) und ein zufälliges Token.
+  Beiträge verschlüsselt das Skript selbst: frischer ECDH-Schlüssel je
+  Beitrag, HKDF-SHA-256, AES-256-GCM, an Raum und Zugang gebunden. Der
+  private Schlüssel (zum Lesen) steht in den verschlüsselten Raumdaten, der
+  Server kennt nur den SHA-256-Wert des Tokens.
+- Absender ist „der Zugang“: Beiträge tragen keine Signatur einer Person.
+  Wer das Token hat, postet; einen weiteren Nachweis gibt es nicht. Wer den
+  öffentlichen Schlüssel kennt, kann Beiträge bauen, aber ohne Token nicht
+  einstellen (außer der Server selbst).
+- Den privaten Schlüssel haben alle Mitglieder, auch ehemalige, und alle
+  mit einem gültigen Einladungslink (über `invite.info`, ohne Beitritt).
+  Er wechselt nicht mit dem Raumschlüssel: keine Forward Secrecy, keine
+  automatische Erneuerung. Nach dem Gehen eines Mitglieds weist die App
+  darauf hin; „Zugänge erneuern“ legt neue Schlüssel und Tokens an und
+  widerruft die alten. Ohne „Verlauf für Neue“ blendet die App Beiträge von
+  vor dem eigenen Beitritt aus – nur die Ansicht, lesen könnte man sie.
+- Der Server sieht: dass es Zugänge gibt und wie viele, wann sie angelegt
+  und zuletzt benutzt wurden, je Beitrag Zeitpunkt, Größe (auf 16 KB
+  aufgefüllt) und IP-Adresse, und den Zielkanal – nur bei Kanälen mit
+  eigener Aufbewahrung.
 
 ### Forward Secrecy
 
@@ -235,7 +300,10 @@ erfunden. Im Überblick – wo verschlüsselt wird und was der Server davon sieh
   Eintragsnummer). Wer etwas geschrieben hat, weiß der Server nicht –
   deshalb nur mit diesem Recht; andere löschen eigene Nachrichten
   verschlüsselt. Zurück bleibt ein Hinweis-Eintrag mit
-  den Nummern, damit verbundene Apps sie sofort ausblenden.
+  den Nummern, damit verbundene Apps sie sofort ausblenden. Dabei lernt der
+  Server, welche Einträge zusammengehören (eine Nachricht samt Änderungen
+  und Reaktionen) – ebenso beim Zuordnen zu einem Kanal mit eigener
+  Aufbewahrung.
 - Abgelaufenes wird nicht mehr ausgeliefert und stündlich aus den Dateien
   gelöscht.
 - Räume, die eine temporäre Sitzung angelegt hat, löscht der Server nach
@@ -395,6 +463,11 @@ erfunden. Im Überblick – wo verschlüsselt wird und was der Server davon sieh
 - In Räumen mit Rängen: welche Rechte welcher Rang hat, wer welchen Rang hat
   und welche Kanäle (nur Kennung) auf welche Ränge beschränkt sind – nicht
   die Namen der Ränge oder Kanäle.
+- Ob ein Raum nur Mitglieder mit Konto zulässt (`ao`), wer welche Einladung
+  erstellt hat, wie lange sie gilt und wie oft sie benutzt wurde.
+- Bei API-Zugängen: siehe API-Zugänge.
+- Wer einen Einladungslink öffnet, zeigt dem Server seine IP-Adresse schon
+  für die Vorschau – vor dem Beitritt.
 - Welcher Briefkasten wann wie viele Einträge bekommt. Wer eine Nachricht
   abschickt, sieht er im Moment der Anfrage, speichert es aber nicht.
 - Dass Status-Fächer beschrieben und gelesen werden – im Moment der Anfrage
@@ -443,6 +516,15 @@ erfunden. Im Überblick – wo verschlüsselt wird und was der Server davon sieh
   liegen die Schlüssel im Speicher. Der Zähler für Fehlversuche liegt auf dem
   Gerät – gegen jemanden, der die Dateien kopiert, schützt die Stärke der PIN
   (und in der Windows-App DPAPI), nicht der Zähler.
+- **Flutschutz:** Grenzen gegen Missbrauch durch Mitglieder schützen die
+  Verfügbarkeit, nicht vollständig: Anruf-Signale höchstens 1,5 MB je
+  Absender und 6 MB je Raum in zwei Minuten (nur mit Recht „Sprache“ und im
+  Sprachkanal), Reaktionen ohne Schreibrecht höchstens 4 KB, in
+  „Permanent“-Verläufen je Mitglied oder Zugang 2 MB je Stunde (ältere
+  Nachrichten fallen dort sonst weg), API-Zugänge 20 Beiträge je Minute und
+  300 je Stunde, dazu Grenzen je Adresse (Beitritte, Vorschau, temporäre
+  Sitzungen). Ein Mitglied mit Schreibrecht kann einen Raum mit kürzerer
+  Aufbewahrung trotzdem bis zur Obergrenze (16 MB) füllen.
 - **Fingerabdrücke:** Die Sicherheit hängt daran, dass wichtige Kontakte über
   einen zweiten Weg geprüft werden. Ohne Prüfung schützt nur Trust on first use.
 - **Gerät:** Gegen Schadsoftware oder Browser-Erweiterungen mit Zugriff auf die

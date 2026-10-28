@@ -50,8 +50,8 @@ Signaturen.
 - **Wer ist da:** Online-Liste mit Alias und Fingerabdruck – nur für
   temporäre Sitzungen. Konten zeigen ihren Status nur Freunden.
 - **Schreiben:** Direktnachrichten und Räume mit Textkanälen und Raumbild.
-  Einladung per Link oder direkt; wer den Raum verlässt oder entfernt wird,
-  löst einen neuen Raumschlüssel aus. Wie lange Nachrichten bleiben, legt
+  Einladung per Link oder direkt (nur Besitzer und Administratoren); wer den
+  Raum verlässt oder entfernt wird, löst einen neuen Raumschlüssel aus. Wie lange Nachrichten bleiben, legt
   jede Unterhaltung fest (1 Stunde bis 30 Tage, Standard 7 Tage) – danach
   löscht sie der Server.
 - **Reagieren** mit zwölf eigenen Symbolen (Rechtsklick oder Knopf an der
@@ -182,10 +182,16 @@ Werkzeug verschlüsselt jeden Beitrag selbst (frischer ECDH-Schlüssel →
 HKDF → AES-256-GCM, an Raum und Zugang gebunden); der passende private
 Schlüssel steht nur in den verschlüsselten Raumdaten der Mitglieder. Der
 Server kennt vom Token nur den SHA-256-Wert, nimmt es ausschließlich für
-`hook.post` an (Größe höchstens 16 KB, je Zugang 20 Beiträge pro Minute) und
+`hook.post` an (Größe höchstens 16 KB, je Zugang 20 Beiträge pro Minute und 300 pro Stunde) und
 liefert darauf nichts zurück – keinen Verlauf, keine Mitglieder, keinen
 Raumschlüssel. Die Beiträge erscheinen mit dem Namen des Zugangs und dem
 Zeichen „API“; ältere Apps (bis 1.8.8) blenden sie aus.
+
+Den privaten Schlüssel kennen alle Mitglieder – auch ehemalige – und wer einen
+gültigen Einladungslink hat. Er wechselt nicht mit dem Raumschlüssel. Nach dem
+Gehen eines Mitglieds deshalb im selben Dialog **„Zugänge erneuern“**: neue
+Schlüssel und Tokens, die alten posten nicht mehr (neu in den Skripten
+eintragen). Details in [SECURITY.md](SECURITY.md#api-zugänge).
 
 ## Eigenen Server einrichten
 
