@@ -370,8 +370,16 @@ function cleanText(value, max) {
   return String(value == null ? '' : value).replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, '').slice(0, max || 8000);
 }
 
+/**
+ * Namen (Anzeige-, Raum-, Kanal-, Rang-, Zugangsnamen): ohne Steuerzeichen,
+ * ohne Bidi-Steuerzeichen (U+200E/F, U+202A–202E, U+2066–2069 – sie drehen
+ * die Leserichtung und lassen einen Namen wie einen anderen aussehen) und
+ * ohne unsichtbare Zeichen (U+200B–200D, U+2060, U+FEFF – zwei gleich
+ * aussehende Namen).
+ */
+const NAME_INVISIBLE = /[\u200B-\u200F\u202A-\u202E\u2060\u2066-\u2069\uFEFF]/g;
 function cleanName(value) {
-  return cleanText(value, 40).replace(/\s+/g, ' ').trim();
+  return cleanText(value, 200).replace(NAME_INVISIBLE, '').slice(0, 40).replace(/\s+/g, ' ').trim();
 }
 
 /** Name für temporäre Sitzungen ohne eigenen Alias, etwa „Nebelluchs“. */
