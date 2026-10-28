@@ -1293,6 +1293,40 @@ r = await call('poll', { r: { [rlRoom]: { s: 0, o: 0, g: 0 } } }, acc2Token);
 let rlFeed = r.r[rlRoom].e;
 ok(rlFeed.find((e) => e.s === newsSeq).c === 'news' && !('c' in rlFeed.find((e) => e.s === sneakSeq)) && rlFeed.find((e) => e.s === rxNewsSeq).r === 1 && !('r' in rlFeed.find((e) => e.s === newsSeq)),
   'Verlauf: geprüfte Beiträge tragen c, Reaktionen r – woran die Apps erkennen, was der Server geprüft hat');
+// Zeitpunkt t der Einträge ist Serverzeit (die Apps vergleichen ihn mit ts in der Nachricht, ±10 min)
+ok(Math.abs(rlFeed.find((e) => e.s === newsSeq).t * 1000 - Date.now()) < 120000, 'Einträge tragen die Serverzeit t (Grundlage der Wiederholungs-Prüfung in den Apps)');
+// API-Zugänge in Kanälen mit Schreibrecht nur für bestimmte Ränge
+const HKR = 'hookRang01';
+await call('role.set', { id: rlRoom, r: HKR, p: P.HOOKS }, accToken);
+await call('role.assign', { id: rlRoom, r: HKR, member: acc2Id, on: 1 }, accToken);
+r = await call('room.cperm', { id: rlRoom, c: 'intern', w: [] }, accToken);
+ok(r.ok && r.room.cw.intern, '#intern: nur der Besitzer schreibt');
+const hkIntern = C.randomId(), hkNews = C.randomId(), hkBare = C.randomId(), hkOwner = C.randomId();
+const hkTok = C.newHookToken();
+r = await call('hook.create', { id: rlRoom, hid: hkIntern, th: await C.hookTokenHash(hkTok), c: 'intern' }, acc2Token);
+ok(!r.ok && r._status === 403, 'hook.create für #intern durch „API-Zugänge“ ohne Schreibrecht dort → 403');
+r = await call('hook.create', { id: rlRoom, hid: hkNews, th: await C.hookTokenHash(hkTok), c: 'news' }, acc2Token);
+ok(r.ok, 'hook.create für #ankuendigungen (Moderator darf dort schreiben)');
+r = await call('hook.create', { id: rlRoom, hid: hkBare, th: await C.hookTokenHash(hkTok) }, acc2Token);
+ok(r.ok, 'hook.create ohne Kanal: angenommen, aber ohne Zuordnung (die Apps zeigen seine Beiträge in beschränkten Kanälen nicht)');
+r = await call('hook.create', { id: rlRoom, hid: hkOwner, th: await C.hookTokenHash(hkTok), c: 'intern' }, accToken);
+ok(r.ok, 'Besitzer legt einen Zugang für #intern an');
+if (STORE) {
+  const hk = roomJson(rlRoom).hk;
+  ok(hk[hkNews].ch === 'news' && hk[hkOwner].ch === 'intern' && !('ch' in hk[hkBare]) && !hk[hkIntern], 'Server: Zuordnungen news/intern, keine für den Zugang ohne Kanal');
+}
+r = await call('hook.post', { r: rlRoom, h: hkBare, t: hkTok, d: C.b64(C.randomBytes(200)) });
+r = await call('poll', { r: { [rlRoom]: { s: newsSeq, o: 0, g: 0 } } }, acc2Token);
+ok(r.r[rlRoom].e.some((e) => e.k === 'hook' && e.h === hkBare && !('c' in e)), 'Beitrag des Zugangs ohne Zuordnung trägt kein c');
+// Zuordnen über room.cttl (h) in einem beschränkten Kanal nur mit Schreibrecht dort
+r = await call('room.cttl', { id: rlRoom, c: 'intern', ttl: 86400, h: [hkBare] }, acc2Token);
+ok(r.ok, 'Moderator (Kanäle verwalten) gibt #intern eine Aufbewahrung und nennt den Zugang ohne Kanal');
+if (STORE) ok(!('ch' in roomJson(rlRoom).hk[hkBare]), '… der Zugang wird #intern trotzdem nicht zugeordnet (kein Schreibrecht dort)');
+r = await call('room.cttl', { id: rlRoom, c: 'intern', ttl: 0 }, accToken);
+if (STORE) ok(roomJson(rlRoom).hk[hkOwner].ch === 'intern', 'Aufbewahrung zurückgesetzt: Zuordnung im beschränkten Kanal bleibt');
+for (const h of [hkNews, hkBare, hkOwner]) await call('hook.del', { id: rlRoom, hid: h }, accToken);
+await call('room.cperm', { id: rlRoom, c: 'intern', w: null }, accToken);
+await call('role.del', { id: rlRoom, r: HKR }, accToken);
 r = await call('role.set', { id: rlRoom, r: '', p: P.VOICE }, accToken);
 ok(r.ok && r.room.dp === 4, '„@alle“: nur noch Sprache');
 r = await call('room.post', { id: rlRoom, k: 'msg', c: 'news', rx: 1, d: await rlMsg(TR, TR.id, 'news', '', 'react') }, TR.token);

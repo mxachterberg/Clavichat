@@ -1809,7 +1809,7 @@ class SecureCom
         $hid  = self::idOf(self::str($b, 'hid'));
         $hash = self::str($b, 'th');
         if (!preg_match('/^[0-9a-f]{64}$/', $hash)) throw new SecureComException('Ungültiges Token.', 422);
-        $chan = $b['c'] ?? '';   // Ziel-Kanal – nur, wenn er eine eigene Aufbewahrung hat
+        $chan = $b['c'] ?? '';   // Ziel-Kanal – nur, wenn er eine eigene Aufbewahrung oder eigene Schreibrechte hat
         return self::roomMutate($rid, function (&$room) use ($me, $hid, $hash, $chan) {
             self::requirePerm($room, $me['id'], self::P_HOOKS, 'Das darf nur der Besitzer oder ein Rang mit dem Recht „API-Zugänge“.');
             if (!empty($room['tmp']) || !empty($room['ot'])) {
@@ -1820,8 +1820,15 @@ class SecureCom
             if (count($hooks) >= self::MAX_HOOKS) {
                 throw new SecureComException('Mehr als ' . self::MAX_HOOKS . ' API-Zugänge je Raum gehen nicht.', 409);
             }
-            $hooks[$hid] = ['h' => $hash, 'c' => time(), 'u' => 0];
             $c = self::taggedChannel($room, $chan);
+            // Kanal mit eigenen Schreibrechten: Der Zugang schreibt dort im Namen
+            // dessen, der ihn anlegt – also nur, wer dort selbst schreiben darf.
+            // Die Zuordnung (ch, an jedem Beitrag als c) belegt das für die Apps;
+            // Beiträge ohne sie zeigen sie in beschränkten Kanälen nicht.
+            if ($c !== '' && isset($room['cw'][$c]) && !self::canWrite($room, $me['id'], $c)) {
+                throw new SecureComException('In diesen Kanal darfst du nicht schreiben – also auch keinen API-Zugang dafür anlegen.', 403);
+            }
+            $hooks[$hid] = ['h' => $hash, 'c' => time(), 'u' => 0];
             if ($c !== '') $hooks[$hid]['ch'] = $c;
             $room['hk'] = $hooks;
             $room['la'] = time();
@@ -2040,7 +2047,7 @@ class SecureCom
             }
         }
         $before = null;
-        $room = self::roomMutate($rid, function (&$room) use ($me, $c, $ttl, $perm, $reset, $hids, &$before) {
+        $room = self::roomMutate($rid, function (&$room) use ($me, $c, $ttl, $perm, $reset, &$seqs, &$hids, &$before) {
             self::requirePerm($room, $me['id'], self::P_CHANNELS, 'Das darf nur der Besitzer oder ein Rang mit dem Recht „Kanäle verwalten“.');
             $before = $room;
             if ($perm && (!empty($room['tmp']) || !empty($room['ot']))) {
@@ -2055,10 +2062,17 @@ class SecureCom
                 }
                 $ct[$c] = $perm ? self::PERMANENT : $ttl;
             }
-            // API-Zugänge dieses Kanals: Ziel merken (nur solange er eine eigene Aufbewahrung hat).
+            // Kanal mit eigenen Schreibrechten: Die Zuordnung c belegt für die
+            // Apps, dass der Server das Schreibrecht geprüft hat. Bestehende
+            // Einträge und Zugänge ordnet deshalb nur zu, wer dort selbst
+            // schreiben darf; eine vorhandene Zuordnung bleibt beim Zurücksetzen.
+            $restricted = isset($room['cw'][$c]);
+            if ($restricted && !self::canWrite($room, $me['id'], $c)) { $seqs = []; $hids = []; }
+            // API-Zugänge dieses Kanals: Ziel merken (solange er eine eigene Aufbewahrung hat).
             foreach (array_keys((array)($room['hk'] ?? [])) as $hid) {
+                $was = (string)($room['hk'][$hid]['ch'] ?? '') === $c;
                 if (!$reset && isset($hids[$hid])) $room['hk'][$hid]['ch'] = $c;
-                elseif ((string)($room['hk'][$hid]['ch'] ?? '') === $c) unset($room['hk'][$hid]['ch']);
+                elseif ($was && !$restricted) unset($room['hk'][$hid]['ch']);
             }
             if ($ct) $room['ct'] = $ct;
             else unset($room['ct']);

@@ -5447,14 +5447,10 @@ async function decryptMeta(room) {
     const img = safeRoomImage(res.obj.img);
     const aq = AUDIO_QUALITY.some((q) => q.id === res.obj.aq) ? res.obj.aq : '';
     const aqChanged = !!room.meta && (room.meta.aq || '') !== aq;
-    // API-Zugänge: Name, Ziel-Kanal und privater Schlüssel (liest die Beiträge)
-    const hooks = {};
-    if (res.obj.hooks && typeof res.obj.hooks === 'object' && !Array.isArray(res.obj.hooks)) {
-      for (const [hid, h] of Object.entries(res.obj.hooks).slice(0, 5)) {
-        if (!/^[A-Za-z0-9_-]{22}$/.test(hid) || !h || typeof h.k !== 'string' || !/^[A-Za-z0-9_-]{100,400}$/.test(h.k)) continue;
-        hooks[hid] = { n: cleanName(h.n) || 'API', ch: typeof h.ch === 'string' && /^[A-Za-z0-9_-]{1,22}$/.test(h.ch) ? h.ch : '', k: h.k, c: Number(h.c) || 0 };
-      }
-    }
+    // API-Zugänge: Name, Ziel-Kanal und privater Schlüssel (liest die Beiträge) –
+    // nur vom Besitzer oder Rängen mit „API-Zugänge“ (unterschrieben, siehe hookEntriesOf).
+    const hookRes = await hookEntriesOf(room, res.obj.hooks, signer);
+    const hooks = hookRes.hooks;
     // Ränge: nur Name und Farbe (verschlüsselt); Rechte und Reihenfolge kommen vom Server
     const roles = {};
     if (res.obj.roles && typeof res.obj.roles === 'object' && !Array.isArray(res.obj.roles)) {
@@ -5473,6 +5469,14 @@ async function decryptMeta(room) {
       once: res.obj.meet === 1 && res.obj.once === 1 ? 1 : 0, hooks: hooks, roles: roles, hist: hist, ka: ka, ks: arch ? res.obj.ks : '', ksE: arch ? res.epoch : 0,
       histLegacy: !arch && res.obj.hist === 1 ? 1 : 0 };
     room.metaOk = true;
+    // Zugänge aus älteren Apps (ohne Unterschrift): Der Besitzer unterschreibt sie einmal nach.
+    if (hookRes.legacy && !hookRes.dropped && room.owner === S.me.id && !room.hookSignTried) {
+      room.hookSignTried = true;
+      setTimeout(() => {
+        const cur = S.rooms.get(room.id);
+        if (cur && cur.metaOk && cur.owner === S.me.id) updateMeta(cur, metaOf(cur)).catch(() => {});
+      }, 4000);
+    }
     await takeKeyArchive(room, ka);
     // Widerrufene Zugänge: ihre Beiträge verschwinden aus der Ansicht.
     for (const [chId, list] of room.msgs) {
@@ -5635,6 +5639,115 @@ function channelWho(room, list) {
   if (!list.length) return 'nur der Besitzer';
   const names = list.map((r) => roleName(room, r));
   return 'nur ' + (names.length > 3 ? names.slice(0, 3).join(', ') + ' …' : names.join(', '));
+}
+
+/* ---------- API-Zugänge in den Raumdaten: unterschrieben -------------------
+   Raumdaten schreiben seit den Rängen auch Mitglieder mit „Kanäle/Raum/Ränge
+   verwalten“. Name, Ziel-Kanal und Leseschlüssel eines Zugangs soll aber nur
+   festlegen, wer „API-Zugänge“ hat. Deshalb trägt jeder Eintrag (seit 1.9.4)
+   die Unterschrift dessen, der ihn angelegt hat: by (Kennung) und sg =
+   signCard({ t: 'hook', rid, hid, n, ch, k, c [, lg] }). Angenommen wird ein
+   Eintrag nur, wenn die Unterschrift passt und by laut aktuellem Stand
+   Besitzer ist oder „API-Zugänge“ hat. Einträge ohne Unterschrift (Apps bis
+   1.9.3): nur, wenn der Unterzeichner der Raumdaten selbst Besitzer ist oder
+   „API-Zugänge“ hat – sonst bleibt, was diese App schon angenommen hatte.
+   Solche Einträge unterschreibt die App des Besitzers einmal nach (lg: 1 –
+   sie zählen dann nicht als „von einem Schreibberechtigten angelegt“). */
+const HOOK_SIG_MAX = 8192;
+
+/** Darf id API-Zugänge in den Raumdaten anlegen (aktueller Stand)? */
+function hookManager(room, id) { return !!id && (room.owner === id || !!(permsOf(room, id) & RIGHT.HOOKS)); }
+
+/** Felder eines Zugangs prüfen: { n, ch, k, c } oder null. */
+function plainHook(h) {
+  if (!h || typeof h !== 'object' || typeof h.k !== 'string' || !/^[A-Za-z0-9_-]{100,400}$/.test(h.k)) return null;
+  return { n: cleanName(h.n) || 'API', ch: typeof h.ch === 'string' && /^[A-Za-z0-9_-]{1,22}$/.test(h.ch) ? h.ch : '', k: h.k, c: Number(h.c) || 0 };
+}
+
+/** Unterschriebener Eintrag: { …, by, sg, lg } – oder 'bad' (Unterschrift falsch) bzw. 'denied' (by darf das nicht). */
+async function signedHook(room, hid, h) {
+  if (typeof h.sg !== 'string' || h.sg.length > HOOK_SIG_MAX || typeof h.by !== 'string' || !/^[A-Za-z0-9_-]{22}$/.test(h.by)) return 'bad';
+  const [who] = await ensureIds([h.by]);
+  if (!who || !who.key) return 'bad';
+  const o = await C.verifyCard(who.key, h.sg);
+  if (!o || o.t !== 'hook' || o.rid !== room.id || o.hid !== hid) return 'bad';
+  const e = plainHook(o);
+  if (!e) return 'bad';
+  if (!hookManager(room, h.by)) return 'denied';
+  return Object.assign(e, { by: h.by, sg: h.sg, lg: o.lg === 1 ? 1 : 0 });
+}
+
+/**
+ * API-Zugänge aus neuen Raumdaten übernehmen (signer: Unterzeichner der
+ * Raumdaten). Gibt { hooks, legacy (ohne Unterschrift übernommen), dropped } zurück.
+ */
+async function hookEntriesOf(room, raw, signer) {
+  const hooks = {};
+  let legacy = 0, dropped = 0;
+  const prev = room.metaOk && room.meta && room.meta.hooks ? room.meta.hooks : {};
+  const signerOk = hookManager(room, signer.id);
+  const list = raw && typeof raw === 'object' && !Array.isArray(raw) ? Object.entries(raw).slice(0, 5) : [];
+  for (const [hid, h] of list) {
+    if (!/^[A-Za-z0-9_-]{22}$/.test(hid) || !h || typeof h !== 'object') continue;
+    let e = null;
+    if (h.sg !== undefined || h.by !== undefined) {
+      e = await signedHook(room, hid, h);
+      if (e === 'denied') { dropped++; continue; }
+      if (e === 'bad') e = null;
+    } else if (signerOk) {
+      e = plainHook(h);
+      if (e) legacy++;
+    }
+    // Geändert oder angelegt von jemandem ohne „API-Zugänge“: beim schon Angenommenen bleiben.
+    if (!e && !signerOk && prev[hid]) e = prev[hid];
+    if (e) hooks[hid] = e; else dropped++;
+  }
+  // Wer kein „API-Zugänge“ hat, entfernt auch keine Zugänge.
+  if (!signerOk) {
+    for (const [hid, e] of Object.entries(prev)) if (!hooks[hid] && Object.keys(hooks).length < 5) hooks[hid] = e;
+  }
+  return { hooks: hooks, legacy: legacy, dropped: dropped };
+}
+
+/** Beim Verschlüsseln: Zugänge ohne Unterschrift unterschreiben (nur Besitzer und „API-Zugänge“). */
+async function signHooks(room, hooks) {
+  const out = {};
+  const mine = hookManager(room, S.me.id);
+  for (const [hid, h] of Object.entries(hooks || {})) {
+    const e = { n: h.n, ch: h.ch, k: h.k, c: h.c };
+    if (typeof h.sg === 'string' && typeof h.by === 'string') Object.assign(e, { by: h.by, sg: h.sg });
+    else if (mine) {
+      const card = { t: 'hook', rid: room.id, hid: hid, n: e.n, ch: e.ch, k: e.k, c: e.c };
+      if (h.mine !== 1) card.lg = 1;   // aus einer älteren App übernommen, nicht hier angelegt
+      Object.assign(e, { by: S.me.id, sg: await C.signCard(S.me.priv, card) });
+    }
+    out[hid] = e;
+  }
+  return out;
+}
+
+/**
+ * Beitrag eines API-Zugangs in einem Kanal mit Schreibrecht nur für
+ * bestimmte Ränge anzeigen? Ja, wenn der Server ihn diesem Kanal zugeordnet
+ * hat (c – beim Anlegen des Zugangs hat er das Schreibrecht geprüft), wenn
+ * er vor der Beschränkung kam, oder wenn der Zugang (unterschrieben) von
+ * jemandem angelegt wurde, der dort laut aktuellen Rängen schreiben darf.
+ */
+function hookPostAllowed(room, hook, ch, e) {
+  if (!rolesOk(room)) return true;
+  const w = room.cw[ch];
+  if (!w) return true;
+  if (e.c === ch) return true;
+  if (w.t && e.t < w.t) return true;
+  return !!(hook.sg && hook.by && !hook.lg && canWriteIn(room, hook.by, ch));
+}
+
+/** Zeitpunkt in der (signierten) Nachricht passt zur Serverzeit des Eintrags – sonst ist es eine Wiederholung. */
+const TS_SKEW = 600000;   // ±10 min (Apps bis 1.9.3 nehmen die Uhr des Geräts)
+function tsFits(ts, et) {
+  if (ts === undefined) return true;   // sehr alte Einträge ohne ts
+  const t = Number(ts);
+  return Number.isFinite(t) && Math.abs(t - Number(et) * 1000) <= TS_SKEW;
 }
 
 /**
@@ -6835,8 +6948,11 @@ function hooksDialog(room, fresh) {
       // Neuer Zugang
       if (hookCount(room) < HOOK_LIMIT) {
         const name = el('input', { type: 'text', maxlength: '30', placeholder: 'z. B. Claude' });
-        let ch = (room.meta.ch.find((c) => /news/i.test(c.name)) || room.meta.ch[0]).id;
-        const pick = choice(room.meta.ch.map((c) => ({ id: c.id, name: '#' + c.name })), ch, (id) => { ch = id; });
+        // Nur Kanäle, in denen man selbst schreiben darf (prüft auch der Server).
+        const chans = room.meta.ch.filter((c) => !rolesOk(room) || canWriteIn(room, S.me.id, c.id));
+        const chList = chans.length ? chans : room.meta.ch;
+        let ch = (chList.find((c) => /news/i.test(c.name)) || chList[0]).id;
+        const pick = choice(chList.map((c) => ({ id: c.id, name: '#' + c.name })), ch, (id) => { ch = id; });
         const go = el('button', { type: 'button', class: 'btn btn--primary btn--block' }, icon('plus', 14), 'Zugang anlegen');
         go.addEventListener('click', async () => {
           const n = cleanName(name.value).slice(0, 30);
@@ -6912,7 +7028,7 @@ async function createHook(room, name, ch) {
   await api('hook.create', Object.assign({ id: room.id, hid: hid, th: await C.hookTokenHash(token) }, chanParam(room, ch)));
   try {
     const hooks = Object.assign({}, room.meta.hooks || {});
-    hooks[hid] = { n: name, ch: ch, k: keys.priv, c: Date.now() };
+    hooks[hid] = { n: name, ch: ch, k: keys.priv, c: Date.now(), mine: 1 };   // sealMeta unterschreibt
     await updateMeta(room, metaOf(room, { hooks: hooks }));
   } catch (e) {
     await api('hook.del', { id: room.id, hid: hid }).catch(() => {});   // ohne Leseschlüssel nutzlos: zurücknehmen
@@ -6948,7 +7064,7 @@ async function renewHooks(room) {
       const nid = C.randomId();
       await api('hook.create', Object.assign({ id: room.id, hid: nid, th: await C.hookTokenHash(token) }, chanParam(room, h.ch)));
       made.push(nid);
-      hooks[nid] = { n: h.n, ch: h.ch, k: keys.priv, c: Date.now() };
+      hooks[nid] = { n: h.n, ch: h.ch, k: keys.priv, c: Date.now(), mine: 1 };
       fresh.push({ access: C.hookAccess({ u: hookApiUrl(), r: room.id, h: nid, t: token, k: keys.pub }), name: h.n, ch: h.ch, renewed: true });
     }
     await updateMeta(room, metaOf(room, { hooks: hooks }));
@@ -7065,6 +7181,7 @@ async function sealMeta(room, meta, key, epoch) {
   const ts = Math.max(serverNow(), (Number(vr.mt) || 0) + 1);
   const m = Object.assign({ v: 1, t: 'meta', mv: 2, room: room.id, from: S.me.id, ts: ts }, meta);
   const owner = room.owner === S.me.id;
+  if (m.hooks) m.hooks = await signHooks(room, m.hooks);   // Zugänge: unterschrieben (siehe hookEntriesOf)
   const dropArchive = () => { delete m.hist; delete m.ka; delete m.ks; };
   if (owner) {
     delete m.ks;
@@ -7725,7 +7842,7 @@ async function rotateRoom(rid, manual, quiet) {
 async function postRoom(room, obj, extra) {
   const key = await roomKey(room.id, room.epoch);
   if (!key) throw new Error('Der aktuelle Raumschlüssel fehlt noch.');
-  const msg = Object.assign({ v: 1, id: C.randomId(), from: S.me.id, room: room.id, ts: Date.now() }, obj);
+  const msg = Object.assign({ v: 1, id: C.randomId(), from: S.me.id, room: room.id, ts: serverNow() }, obj);   // Serverzeit: tsFits
   const d = await C.sealRoom(msg, key, room.epoch, room.id, S.me.priv);
   // Änderungen/Löschungen verfallen mit der Frist ihres Kanals (sonst käme der alte Text zurück).
   await api('room.post', Object.assign({ id: room.id, k: 'msg', d: d }, chanParam(room, obj.ch), extra || {}));
@@ -7733,7 +7850,7 @@ async function postRoom(room, obj, extra) {
 }
 
 async function sendRoomMessage(room, ch, body, file) {
-  const local = { id: C.randomId(), from: S.me.id, ts: Date.now(), body: body, state: 'pending' };
+  const local = { id: C.randomId(), from: S.me.id, ts: serverNow(), body: body, state: 'pending', ch: ch };
   if (file) local.file = parseFileMeta(file);
   const list = room.msgs.get(ch) || [];
   room.msgs.set(ch, list);
@@ -7790,9 +7907,13 @@ function roomMessage(room, obj, from, e) {
   // erscheinen, sobald der Kanal bekannt ist.
   const ch = typeof obj.ch === 'string' && /^[A-Za-z0-9_-]{1,22}$/.test(obj.ch) ? obj.ch : room.meta.ch[0].id;
   if (ts + chanTtl(room, ch) * 1000 < serverNow()) return;   // älter als die Aufbewahrung des Kanals
-  // Kanal mit Schreibrecht nur für bestimmte Ränge: nur Berechtigtes zeigen (siehe roomPostAllowed)
-  if (!roomPostAllowed(room, from.id, ch, e, obj)) return;
+  // Wiederholt eingestellter alter Eintrag (signiert, aber nicht jetzt geschrieben): verwerfen.
+  if (!tsFits(obj.ts, e.t)) return;
   const ref = typeof obj.ref === 'string' ? room.byId.get(obj.ref) : null;
+  // Kanal mit Schreibrecht nur für bestimmte Ränge: nur Berechtigtes zeigen (siehe roomPostAllowed).
+  // Ändern, Löschen, Reagieren: Es zählt der Kanal der Zielnachricht, nicht der angegebene.
+  const target = (obj.t === 'edit' || obj.t === 'del' || obj.t === 'react') && ref && ref.ch ? ref.ch : ch;
+  if (!roomPostAllowed(room, from.id, target, e, obj)) return;
   // Nummern von Änderungen merken: Bekommt der Kanal eine eigene Aufbewahrung, ordnet der Besitzer sie mit zu.
   // Reaktionen anderer zählen mit (Löschen der Nachricht nimmt sie mit).
   if ((((obj.t === 'edit' || obj.t === 'del') && ref && ref.from === from.id) || (obj.t === 'react' && ref)) && e.s) (ref.xs || (ref.xs = [])).push(e.s);
@@ -7822,7 +7943,7 @@ function roomMessage(room, obj, from, e) {
     scheduleRender();
     return;
   }
-  const m = { id: String(obj.id), from: from.id, ts: ts, body: cleanText(obj.body), seq: e.s || 0 };
+  const m = { id: String(obj.id), from: from.id, ts: ts, body: cleanText(obj.body), seq: e.s || 0, ch: ch };
   if (obj.file) {
     const f = parseFileMeta(obj.file);
     if (f) m.file = f;
@@ -7873,9 +7994,11 @@ async function roomHook(room, e) {
   let obj;
   try { obj = await C.openHook(e.d, k, room.id, e.h); } catch (err) { return; }
   if (!obj || obj.t !== 'hook') return;
+  if (!tsFits(obj.ts, e.t)) return;                 // alter Beitrag noch einmal eingestellt
+  if (!hookPostAllowed(room, hook, ch, e)) return;  // Kanal mit Schreibrecht nur für bestimmte Ränge
   const id = 'hook:' + (typeof obj.id === 'string' && /^[A-Za-z0-9_-]{8,40}$/.test(obj.id) ? obj.id : String(e.s));
   if (room.byId.has(id)) return;   // derselbe Beitrag noch einmal (vom Server wiederholt)
-  const m = { id: id, from: 'hook:' + e.h, hook: { id: e.h, name: hook.n }, ts: ts, body: cleanText(obj.body), seq: e.s || 0 };
+  const m = { id: id, from: 'hook:' + e.h, hook: { id: e.h, name: hook.n }, ts: ts, body: cleanText(obj.body), seq: e.s || 0, ch: ch };
   const list = room.msgs.get(ch) || [];
   room.msgs.set(ch, list);
   insertSorted(list, m);
