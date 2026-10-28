@@ -4,6 +4,36 @@ Was sich von Version zu Version ändert. Beim Veröffentlichen wird der
 Abschnitt einer Version zum Text des GitHub-Releases
 (`.github/workflows/windows.yml`).
 
+## 1.9.3 – 28.10.2026
+
+Sicherheits-Update nach einer Prüfung der neuen Funktionen. Für installierte
+Apps ein kleines Update – bitte zügig aktualisieren.
+
+- **Einladungen nur durch Besitzer und Admins:** Links und
+  Direkt-Einladungen erstellen nur noch der Besitzer und Ränge mit
+  Administrator. Offene Links anderer Mitglieder gelten nicht mehr. In
+  Einmal-Meetings teilen Teilnehmer weiter Links, der Gastgeber bestätigt.
+- **Ränge:** Wer Ränge verwaltet, kann sich keine Rechte mehr verschaffen,
+  die er selbst nicht hat (z. B. Administrator).
+- **„Neue Mitglieder sehen den Verlauf“ nur vom Besitzer:** Das
+  Schlüsselarchiv trägt jetzt die Unterschrift des Besitzers; Ränge können
+  es nicht mehr einschalten oder fälschen. Ausschalten wechselt den
+  Raumschlüssel. Wer es unter 1.9.1/1.9.2 eingeschaltet hatte, schaltet es
+  einmal neu ein.
+- **Raumdaten:** werden nur noch von Mitgliedern angenommen; ältere,
+  zurückgespielte Stände lehnt die App ab.
+- **Schutz vor Fluten:** Signale nur im Sprachkanal, Grenzen je Mitglied für
+  „Permanent“-Verläufe, kleine Reaktionen ohne Schreibrecht.
+- **Moderation:** Kanal-Aufbewahrung kann fremde Nachrichten nicht mehr
+  vorzeitig löschen; doppelte Nachrichten-Kennungen hebeln das Löschen nicht
+  mehr aus.
+- **API-Zugänge:** Falsche Tokens sperren einen echten Zugang nicht mehr;
+  neuer Knopf „Zugänge erneuern“ und Hinweis, wenn jemand den Raum verlässt.
+- **Releases:** Der Signierschlüssel für Updates läuft in GitHub Actions in
+  einem eigenen, abgeschotteten Schritt.
+- **SECURITY.md** beschreibt API-Zugänge, Archiv, Verwaltungsrechte und
+  was der Server sieht ausführlicher.
+
 ## 1.9.2 – 27.10.2026
 
 Einladungslinks länger gültig. Für installierte Apps ein kleines Update.
