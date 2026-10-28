@@ -6912,8 +6912,8 @@ function hooksDialog(room, fresh) {
             el('button', { type: 'button', class: 'btn btn--primary', onclick: () => copyText(f.access, 'Zugang') }, icon('copy', 14), 'Kopieren')),
           i ? null : el('p', { class: 'sc-note', text: 'Wird nur jetzt angezeigt – danach nie wieder (nur widerrufen und neu anlegen). Wer ihn hat, kann in #' + chName(f.ch) + ' posten: Aufbewahren wie ein Passwort, nicht in Code oder Protokolle schreiben.' +
             (f.renewed ? ' Der bisherige Zugang postet nicht mehr – trage den neuen in deinen Skripten ein.' : '') }),
-          i ? null : el('p', { class: 'sc-note', text: 'So nutzt du ihn: Zugang in die Umgebungsvariable CLAVICHAT_HOOK legen und mit dem Werkzeug aus dem Clavichat-Repository posten (Node 18 oder neuer, keine Installation):' }),
-          i ? null : hookCodeLine('echo "Hallo" | CLAVICHAT_HOOK="<zugang>" node tools/clavichat-post.mjs')));
+          i ? null : el('p', { class: 'sc-note', text: 'So nutzt du ihn: Zugang in eine Datei legen, die nur du lesen kannst, und mit dem Werkzeug aus dem Clavichat-Repository posten (Node 18 oder neuer, keine Installation):' }),
+          i ? null : hookCodeLine('echo "Hallo" | node tools/clavichat-post.mjs --access-file <datei>')));
         if (!i) setTimeout(() => input.select(), 60);
       });
       // Seit dem Anlegen hat jemand den Raum verlassen: Er kennt die Leseschlüssel weiterhin.
@@ -7010,8 +7010,8 @@ function hookGuide(open) {
       step(3, 'Posten',
         text('Mit dem Werkzeug tools/clavichat-post.mjs aus dem Clavichat-Repository – Node 18 oder neuer genügt, keine Installation:'),
         hookCodeLine('node tools/clavichat-post.mjs "<zugang>" "Wartung um 22 Uhr"'),
-        text('Ohne Zugang in Befehlszeile und Shell-Verlauf – über die Umgebungsvariable, Text von stdin:'),
-        hookCodeLine('echo "Backup fertig" | CLAVICHAT_HOOK="<zugang>" node tools/clavichat-post.mjs'),
+        text('Ohne Zugang in Befehlszeile und Shell-Verlauf – aus einer Datei, Text von stdin:'),
+        hookCodeLine('echo "Backup fertig" | node tools/clavichat-post.mjs --access-file <datei>'),
         el('a', { class: 'sc-update-link', href: REPO_URL + HOOK_DOCS_ANCHOR, target: '_blank', rel: 'noopener noreferrer', text: 'Anleitung auf GitHub ↗' })),
       step(4, 'Grenzen',
         text('Höchstens ' + HOOK_LIMIT + ' Zugänge je Raum, je Zugang 20 Beiträge pro Minute und 300 pro Stunde, etwa 16 KB Text je Beitrag. Widerrufen geht jederzeit hier.'))));

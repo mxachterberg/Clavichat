@@ -168,13 +168,26 @@ genau einmal angezeigt und lässt sich dort jederzeit widerrufen.
 
 ```sh
 # Node 18 oder neuer, ohne Abhängigkeiten
-node tools/clavichat-post.mjs "clavichat-hook:1:…" "Wartung heute um 22 Uhr"
-echo "Backup fertig" | CLAVICHAT_HOOK="clavichat-hook:1:…" node tools/clavichat-post.mjs
+node tools/clavichat-post.mjs --access-file ~/.clavichat-hook "Wartung heute um 22 Uhr"
+echo "Backup fertig" | node tools/clavichat-post.mjs --access-file ~/.clavichat-hook
+# auch möglich: Zugang als Argument oder in CLAVICHAT_HOOK
+node tools/clavichat-post.mjs "clavichat-hook:1:…" "Test"
 ```
 
-Über `CLAVICHAT_HOOK` steht der Zugang weder im Verlauf der Shell noch in der
-Prozessliste. Ins Repository, in Logs oder Tickets gehört er nicht – wer ihn
-hat, kann in den Kanal posten.
+Am sichersten liegt der Zugang in einer Datei, die nur du lesen kannst
+(`--access-file`): Dann steht er weder im Verlauf der Shell noch in der
+Prozessliste. Als Argument landet er in beiden. Die Umgebungsvariable
+`CLAVICHAT_HOOK` hält ihn aus der Prozessliste heraus – wer sie aber in
+derselben Zeile setzt (`CLAVICHAT_HOOK="…" node …`), hat ihn im Verlauf der
+Shell. Dann lieber aus der Datei lesen, etwa
+`$env:CLAVICHAT_HOOK = Get-Content ~\.clavichat-hook` (PowerShell) bzw.
+`export CLAVICHAT_HOOK="$(cat ~/.clavichat-hook)"`. Ins Repository, in Logs
+oder Tickets gehört er nicht – wer ihn hat, kann in den Kanal posten. Das
+Werkzeug schickt das Token nur über `https://` (`http://` nur an localhost)
+und gibt Fehlertexte des Servers ohne Steuerzeichen aus. Die Uhr des Rechners
+muss ungefähr stimmen (±10 Minuten): Die Apps verwerfen Beiträge, deren
+Zeitpunkt nicht zur Serverzeit passt (Schutz vor wiederholt eingestellten
+alten Beiträgen).
 
 Warum der Zugang nichts lesen kann: Er enthält nur Server-Adresse, Raum,
 Kennung, ein zufälliges Token und einen **öffentlichen** Schlüssel. Das

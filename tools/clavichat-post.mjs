@@ -1,8 +1,9 @@
 #!/usr/bin/env node
 // Clavichat — Beitrag über einen API-Zugang posten (nur posten, nie lesen).
 //
+//   node tools/clavichat-post.mjs --access-file <datei> "Text"
+//   echo "Text" | node tools/clavichat-post.mjs --access-file <datei>
 //   node tools/clavichat-post.mjs "<zugang>" "Text"
-//   echo "Text" | node tools/clavichat-post.mjs "<zugang>"
 //   CLAVICHAT_HOOK="<zugang>" node tools/clavichat-post.mjs "Text"
 //
 // Den Zugang legt der Besitzer eines Raums an (Raum-Menü → EINSTELLUNGEN →
@@ -13,9 +14,13 @@
 // das Token. Lesen kann der Zugang nichts: Der private Schlüssel steht nur
 // in den verschlüsselten Raumdaten der Mitglieder.
 //
-// Node 18 oder neuer, ohne Abhängigkeiten. Der Zugang wird nie ausgegeben –
-// über die Umgebungsvariable CLAVICHAT_HOOK taucht er auch nicht in der
-// Prozessliste oder im Verlauf der Shell auf.
+// Node 18 oder neuer, ohne Abhängigkeiten. Der Zugang wird nie ausgegeben.
+// Am besten liegt er in einer Datei (--access-file, nur für dich lesbar): Dann
+// steht er weder in der Prozessliste noch im Verlauf der Shell. Über die
+// Umgebungsvariable CLAVICHAT_HOOK fehlt er in der Prozessliste – wer sie
+// aber in derselben Zeile setzt (CLAVICHAT_HOOK="…" node …), hat ihn im
+// Verlauf der Shell. Die Uhr des Rechners muss ungefähr stimmen (±10 min),
+// sonst halten die Apps den Beitrag für eine Wiederholung und blenden ihn aus.
 
 import { webcrypto } from 'node:crypto';
 
@@ -25,10 +30,16 @@ const MAX = 16384;   // aufgefüllter Klartext (wie HOOK_MAX)
 const BUCKETS = [256, 512, 1024, 2048, 4096, 8192, 16384];
 const ECDH = { name: 'ECDH', namedCurve: 'P-256' };
 const te = new TextEncoder();
+const LOCAL = ['127.0.0.1', 'localhost', '[::1]'];
 
 function fail(msg, code) {
   process.stderr.write('clavichat-post: ' + msg + '\n');
   process.exit(code || 1);
+}
+
+/** Text vom Server: ohne Steuerzeichen (Terminal-Escapes, Bidi, unsichtbare Zeichen), gekürzt. */
+function safeText(s) {
+  return String(s).replace(/[\u0000-\u001F\u007F-\u009F\u200B-\u200F\u202A-\u202E\u2060-\u2069\uFEFF]/g, '').slice(0, 300);
 }
 
 const b64 = (bytes) => Buffer.from(bytes).toString('base64');
@@ -44,6 +55,13 @@ function parseAccess(text) {
   if (!o || typeof o.u !== 'string' || !/^https?:\/\//.test(o.u) || !id.test(o.r) || !id.test(o.h)
       || !/^[A-Za-z0-9_-]{43}$/.test(o.t) || !/^[A-Za-z0-9_-]{87}$/.test(o.k)) {
     fail('Der Zugang ist unvollständig oder beschädigt – bitte vollständig kopieren.');
+  }
+  // Token nur verschlüsselt verschicken: http:// nur an diesen Rechner (Testserver).
+  let url;
+  try { url = new URL(o.u); } catch (e) { fail('Die Server-Adresse im Zugang ist ungültig.'); }
+  if (url.username || url.password) fail('Die Server-Adresse im Zugang ist ungültig.');
+  if (url.protocol !== 'https:' && !(url.protocol === 'http:' && LOCAL.includes(url.hostname))) {
+    fail('Der Zugang nennt eine unverschlüsselte Adresse (http://) – erlaubt ist das nur für localhost.');
   }
   return o;
 }
@@ -94,13 +112,27 @@ async function readStdin() {
 async function main() {
   const args = process.argv.slice(2);
   if (args[0] === '-h' || args[0] === '--help') {
-    process.stdout.write('Aufruf: node clavichat-post.mjs "<zugang>" "Text"   (Text auch über stdin; Zugang auch über CLAVICHAT_HOOK)\n');
+    process.stdout.write('Aufruf: node clavichat-post.mjs --access-file <datei> "Text"\n' +
+      '        node clavichat-post.mjs "<zugang>" "Text"\n' +
+      '(Text auch über stdin; Zugang auch über die Umgebungsvariable CLAVICHAT_HOOK)\n');
     return;
   }
   let access;
-  if (args[0] && args[0].trim().startsWith(PREFIX)) access = args.shift();
+  const fileAt = args.findIndex((a) => a === '--access-file' || a.startsWith('--access-file='));
+  if (fileAt >= 0) {
+    const opt = args[fileAt];
+    const file = opt.includes('=') ? opt.slice(opt.indexOf('=') + 1) : args[fileAt + 1];
+    args.splice(fileAt, opt.includes('=') ? 1 : 2);
+    if (!file) fail('--access-file braucht einen Dateinamen.', 2);
+    try {
+      const { readFileSync } = await import('node:fs');
+      access = readFileSync(file, 'utf8').trim();
+    } catch (e) {
+      fail('Die Datei mit dem Zugang ließ sich nicht lesen (' + (e.code || 'Fehler') + ').', 2);
+    }
+  } else if (args[0] && args[0].trim().startsWith(PREFIX)) access = args.shift();
   else if (process.env.CLAVICHAT_HOOK) access = process.env.CLAVICHAT_HOOK;
-  else fail('Zugang fehlt. Aufruf: node clavichat-post.mjs "<zugang>" "Text" (oder CLAVICHAT_HOOK setzen).', 2);
+  else fail('Zugang fehlt. Aufruf: node clavichat-post.mjs --access-file <datei> "Text" (oder "<zugang>" bzw. CLAVICHAT_HOOK).', 2);
   const hook = parseAccess(access);
 
   let text = args.length && args[0] !== '-' ? args.join(' ') : await readStdin();
@@ -128,11 +160,11 @@ async function main() {
     process.stdout.write('Gepostet (verschlüsselt, ' + text.length + ' Zeichen).\n');
     return;
   }
-  const why = json && json.error ? json.error : 'HTTP ' + res.status;
+  const why = json && typeof json.error === 'string' ? safeText(json.error) : 'HTTP ' + res.status;
   if (res.status === 403) fail('Abgelehnt: ' + why + ' Der Zugang wurde vielleicht widerrufen oder der Raum gelöscht.', 3);
   if (res.status === 429) fail('Zu viele Beiträge – kurz warten (je Zugang höchstens 20 pro Minute).', 4);
   if (res.status === 404 && json && /Unbekannte Aktion/.test(why)) fail('Der Server kennt API-Zugänge noch nicht (ältere Fassung).', 5);
   fail('Fehler: ' + why);
 }
 
-main().catch((e) => fail('Unerwarteter Fehler: ' + (e && e.message ? e.message : e)));
+main().catch((e) => fail('Unerwarteter Fehler: ' + safeText(e && e.message ? e.message : e)));
