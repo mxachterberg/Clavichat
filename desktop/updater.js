@@ -450,39 +450,55 @@ function swapAsar(file) {
   return swapFile(file, asarFile(), process.pid, process.execPath, asarFile() + '.old');
 }
 
+/**
+ * Das Hilfsskript ist fester Text – Pfade, Argumente und Prozessnummer
+ * stehen nicht darin, sondern in tausch.json daneben (liest das Skript mit
+ * ConvertFrom-Json). Früher standen sie in '…'-Zeichenketten im Skript; ein
+ * Dateiname mit typografischem Apostroph (’ – für PowerShell ebenfalls ein
+ * Anführungszeichen) konnte so Befehle einschleusen. Den Pfad des Skripts
+ * bekommt der Zwischenschritt über die Umgebungsvariable CLAVICHAT_SWAP.
+ */
+const SWAP_SCRIPT = [
+  "$ErrorActionPreference = 'SilentlyContinue'",
+  "$p = Get-Content -Raw -Encoding UTF8 -LiteralPath (Join-Path $PSScriptRoot 'tausch.json') | ConvertFrom-Json",
+  'function Write-Log([string]$text) { Add-Content -Encoding UTF8 -LiteralPath $p.log -Value ((Get-Date -Format s) + \' \' + $text) }',
+  "Write-Log ('Hilfsskript läuft, wartet auf Prozess ' + $p.pid)",
+  'Wait-Process -Id ([int]$p.pid) -Timeout 120',
+  '$ok = $false',
+  'for ($i = 0; $i -lt 60; $i++) {',
+  '  try {',
+  '    if ($p.backup) {',
+  '      Move-Item -LiteralPath $p.dest -Destination $p.backup -Force -ErrorAction Stop',
+  '      try { Move-Item -LiteralPath $p.file -Destination $p.dest -Force -ErrorAction Stop }',
+  '      catch { Move-Item -LiteralPath $p.backup -Destination $p.dest -Force; throw }',
+  '    } else {',
+  '      Move-Item -LiteralPath $p.file -Destination $p.dest -Force -ErrorAction Stop',
+  '    }',
+  '    $ok = $true; break',
+  '  } catch { $err = $_.Exception.Message; Start-Sleep -Milliseconds 500 }',
+  '}',
+  "if ($ok) { Write-Log 'Datei ersetzt' } else { Write-Log ('Ersetzen fehlgeschlagen: ' + $err) }",
+  'if ($p.args) { Start-Process -FilePath $p.exe -ArgumentList $p.args } else { Start-Process -FilePath $p.exe }',
+  "Write-Log 'neue Fassung gestartet'"
+].join('\r\n');
+
 /** Datei tauschen, sobald Prozess waitPid beendet ist, dann exe neu starten. */
 function swapFile(file, dest, waitPid, exe, backup) {
-  const q = (s) => "'" + String(s).replace(/'/g, "''") + "'";
+  // Argumente der neuen Fassung als eine Befehlszeile (Start-Process -ArgumentList nimmt sie wörtlich).
   const args = process.argv.slice(1).filter((a) => a !== '--smoke')
     .map((a) => (/[\s"]/.test(a) ? '"' + a.replace(/"/g, '\\"') + '"' : a)).join(' ');
-  const log = (text) => 'Add-Content -Encoding UTF8 -LiteralPath ' + q(logFile()) + ' -Value ((Get-Date -Format s) + ' + q(' ' + text) + ')';
-  const put = 'Move-Item -LiteralPath ' + q(file) + ' -Destination ' + q(dest) + ' -Force -ErrorAction Stop';
-  const move = backup
-    ? 'Move-Item -LiteralPath ' + q(dest) + ' -Destination ' + q(backup) + ' -Force -ErrorAction Stop; ' +
-      'try { ' + put + ' } catch { Move-Item -LiteralPath ' + q(backup) + ' -Destination ' + q(dest) + ' -Force; throw }'
-    : put;
-  const script = [
-    "$ErrorActionPreference = 'SilentlyContinue'",
-    log('Hilfsskript läuft, wartet auf Prozess ' + waitPid),
-    'Wait-Process -Id ' + Number(waitPid) + ' -Timeout 120',
-    '$ok = $false',
-    'for ($i = 0; $i -lt 60; $i++) {',
-    '  try { ' + move + '; $ok = $true; break }',
-    '  catch { $err = $_.Exception.Message; Start-Sleep -Milliseconds 500 }',
-    '}',
-    'if ($ok) { ' + log('Datei ersetzt') + ' } else { Add-Content -Encoding UTF8 -LiteralPath ' + q(logFile()) + " -Value ((Get-Date -Format s) + ' Ersetzen fehlgeschlagen: ' + $err) }",
-    'Start-Process -FilePath ' + q(exe) + (args ? ' -ArgumentList ' + q(args) : ''),
-    log('neue Fassung gestartet')
-  ].join('\r\n');
+  const params = { file: file, dest: dest, pid: Number(waitPid), exe: exe, backup: backup || '', args: args, log: logFile() };
   const ps1 = path.join(installerDir(), 'tausch.ps1');
   fs.mkdirSync(installerDir(), { recursive: true });
-  fs.writeFileSync(ps1, '﻿' + script, 'utf8');   // mit BOM, sonst liest PowerShell 5 Umlaute falsch
+  fs.writeFileSync(path.join(installerDir(), 'tausch.json'), JSON.stringify(params), 'utf8');
+  fs.writeFileSync(ps1, '﻿' + SWAP_SCRIPT, 'utf8');   // mit BOM, sonst liest PowerShell 5 Umlaute falsch
   writeLog('Update auf ' + manifest.version + (backup ? ' (klein, nur Programmpaket)' : '') + ': Hilfsskript startet');
-  const launch = 'Start-Process -FilePath powershell.exe -WindowStyle Hidden -ArgumentList ' +
-    q('-NoProfile -NonInteractive -ExecutionPolicy Bypass -File "' + ps1 + '"');
+  // Fester Befehl; der Pfad kommt aus der Umgebung (kein Text aus Pfaden im Befehl).
+  const launch = "Start-Process -FilePath powershell.exe -WindowStyle Hidden -ArgumentList @('-NoProfile', '-NonInteractive', " +
+    "'-ExecutionPolicy', 'Bypass', '-File', ('\"' + $env:CLAVICHAT_SWAP + '\"'))";
   return new Promise((resolve) => {
     const child = spawn('powershell.exe', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-WindowStyle', 'Hidden', '-Command', launch],
-      { stdio: 'ignore', windowsHide: true });
+      { stdio: 'ignore', windowsHide: true, env: Object.assign({}, process.env, { CLAVICHAT_SWAP: ps1 }) });
     child.on('error', (e) => { writeLog('Hilfsskript ließ sich nicht starten: ' + e.message); resolve(false); });
     child.on('exit', (code) => { if (code) writeLog('Zwischenschritt endete mit Code ' + code); resolve(code === 0); });
   });
