@@ -752,6 +752,7 @@ function mergeVault(a, b) {
         for (const [e, ts] of Object.entries(r.et)) t.et[e] = t.et[e] ? Math.min(t.et[e], Number(ts) || 0) : Number(ts) || 0;
       }
       if (r && r.gone) t.gone = Math.max(t.gone || 0, Number(r.gone) || 0);
+      if (r) mergeRoomMetaState(t, r);
     }
     // Eigener Schlüssel mit gewechselten Unterschlüsseln: der jüngste Stand gilt.
     if (src.ik && typeof src.ik === 'object' && typeof src.ik.k === 'string' &&
@@ -775,6 +776,30 @@ function mergeVault(a, b) {
     if (r.et) for (const e of Object.keys(r.et)) if (Number(e) <= r.gone) delete r.et[e];
   }
   return out;
+}
+
+/**
+ * Je Raum im Tresor (seit 1.9.3, siehe decryptMeta und roomHistoryDialog):
+ *   hs {on, t}  „Neue Mitglieder sehen den Verlauf“ – nur die eigene Einstellung
+ *               des Besitzers, nie aus den Raumdaten abgeleitet (jüngstes t gilt)
+ *   mx, mt, mh  zuletzt angenommene Raumdaten: Generation, signierter Zeitpunkt,
+ *               Hash – ältere lehnt die App ab (Rollback-Schutz)
+ *   mg          Mitglieder, deren Raumdaten schon angenommen wurden (frühere
+ *               Verwalter): ihre Raumdaten gelten auch, nachdem sie gegangen sind
+ */
+function mergeRoomMetaState(t, r) {
+  if (r.hs && typeof r.hs === 'object' && (!t.hs || (Number(r.hs.t) || 0) >= (Number(t.hs.t) || 0))) {
+    t.hs = { on: r.hs.on ? 1 : 0, t: Number(r.hs.t) || 0 };
+  }
+  const rx = Number(r.mx) || 0, rt = Number(r.mt) || 0;
+  if (rx > (Number(t.mx) || 0) || (rx === (Number(t.mx) || 0) && rt > (Number(t.mt) || 0))) {
+    t.mx = rx;
+    t.mt = rt;
+    if (typeof r.mh === 'string') t.mh = r.mh;
+  }
+  if (Array.isArray(r.mg)) {
+    t.mg = [...new Set((Array.isArray(t.mg) ? t.mg : []).concat(r.mg.filter((id) => typeof id === 'string')))].slice(-MG_MAX);
+  }
 }
 
 let vaultTimer = 0;
@@ -2417,7 +2442,7 @@ async function maintainRoomKeys() {
   }
   if (changed) await saveVault(true);
   // Verlauf für neue Mitglieder: gelöschte Generationen auch aus dem Archiv nehmen.
-  for (const room of S.rooms.values()) if (room.meta.hist && !S.rotating.has(room.id)) await refreshKeyArchive(room);
+  for (const room of S.rooms.values()) if (histOk(room) && (histOn(room) || room.meta.hist) && !S.rotating.has(room.id)) await refreshKeyArchive(room);
 }
 
 async function loginAccount(username, password, remember) {
@@ -5303,11 +5328,13 @@ function voiceMembers(room, ch) {
 /** Raumdaten zum Verschlüsseln: alles Bisherige, dazu die Änderungen. */
 function metaOf(room, changes) {
   const m = Object.assign({ name: room.meta.name, ch: room.meta.ch, vch: room.meta.vch, img: room.meta.img || '', aq: room.meta.aq || '', meet: room.meta.meet ? 1 : 0, once: room.meta.once ? 1 : 0,
-    hooks: room.meta.hooks || {}, roles: room.meta.roles || {}, hist: room.meta.hist ? 1 : 0, ka: room.meta.ka || {} }, changes || {});
+    hooks: room.meta.hooks || {}, roles: room.meta.roles || {}, hist: room.meta.hist ? 1 : 0, ka: room.meta.ka || {}, ks: room.meta.ks || '' }, changes || {});
   if (!m.img) delete m.img;
-  // Verlauf für neue Mitglieder: ältere Raumschlüssel (nur mit Einstellung)
+  // Verlauf für neue Mitglieder: ältere Raumschlüssel, vom Besitzer signiert
+  // (ks). hist/ka daneben nur für ältere Apps; sealMeta setzt alles drei.
   if (!m.hist || !m.ka || !Object.keys(m.ka).length) delete m.ka;
   if (!m.hist) delete m.hist;
+  if (!m.hist || !m.ks) delete m.ks;
   if (!m.roles || !Object.keys(m.roles).length) delete m.roles;   // Ränge: { Kennung: { n: Name, c: Farbe } } – Rechte kennt der Server
   if (!m.hooks || !Object.keys(m.hooks).length) delete m.hooks;   // API-Zugänge: { hid: { n, ch, k, c } }
   if (!m.aq) delete m.aq;   // Sprachqualität des Raums (leer: jeder nach eigener Einstellung)
@@ -5365,14 +5392,32 @@ async function decryptMeta(room) {
   try {
     let res = await C.openRoom(room.metaRaw, key, room.id, keyring());
     // Seit es Ränge gibt, schreiben auch Mitglieder mit Verwaltungsrechten die
-    // Raumdaten – geht so jemand, bleibt seine Unterschrift gültig, bis der
-    // Besitzer den Schlüssel wechselt (und die Raumdaten neu unterschreibt).
+    // Raumdaten – geht so jemand, gelten seine schon angenommenen Raumdaten
+    // weiter (mh, mg unten), bis der Besitzer den Schlüssel wechselt.
     if (!res.signer && res.obj && typeof res.obj.from === 'string') {
       const [ident] = await ensureIds([res.obj.from]);
       if (ident) res = await C.openRoom(room.metaRaw, key, room.id, [ident.key]);
     }
     const signer = [...S.ids.values()].find((i) => i.fp === res.signer);
-    if (!signer || !(room.members.some((m) => m.id === signer.id) || res.obj.from === signer.id) || res.obj.t !== 'meta') return;
+    if (!signer || res.obj.t !== 'meta') return;
+    // Annehmen nur von Mitgliedern – Nicht-Mitglieder (Ehemalige, Inhaber
+    // eines Links) haben womöglich den Schlüssel, unterschreiben aber keine
+    // Raumdaten. Ausnahmen: genau die Raumdaten, die diese App schon
+    // angenommen hat (mh), und frühere Verwalter (mg, Raumdaten vor ihrem
+    // Gehen). Dazu kein Rückschritt: ältere Generation oder älterer
+    // signierter Zeitpunkt als zuletzt angenommen → ablehnen.
+    const vr = S.vault.rooms[room.id] || (S.vault.rooms[room.id] = { k: {}, rot: 0 });
+    const hash = await metaHash(room.metaRaw);
+    const member = room.members.some((m) => m.id === signer.id);
+    if (vr.mh !== hash) {
+      if (!member && !(Array.isArray(vr.mg) && vr.mg.includes(signer.id))) return;
+      const ts = Number(res.obj.ts) || 0, mx = Number(vr.mx) || 0, mt = Number(vr.mt) || 0;
+      if (res.epoch < mx || (res.epoch === mx && ts + (Number(res.obj.mv) >= 2 ? META_SKEW_NEW : META_SKEW) < mt)) return;
+      if (res.epoch > mx) { vr.mx = res.epoch; vr.mt = ts; } else vr.mt = Math.max(mt, ts);
+      vr.mh = hash;
+      if (member && !(vr.mg || []).includes(signer.id)) vr.mg = (vr.mg || []).concat(signer.id).slice(-MG_MAX);
+      saveVault();
+    }
     const ch = Array.isArray(res.obj.ch) ? res.obj.ch
       .filter((c) => c && /^[A-Za-z0-9_-]{1,22}$/.test(c.id)).slice(0, 30)
       .map((c) => ({ id: c.id, name: cleanName(c.name).replace(/\s+/g, '-').slice(0, 30) || 'kanal' })) : [];
@@ -5400,11 +5445,15 @@ async function decryptMeta(room) {
         roles[rid] = { n: cleanName(v.n).slice(0, 30) || 'Rang', c: ROLE_COLORS.some((x) => x.id === v.c) ? v.c : ROLE_COLORS[0].id };
       }
     }
-    // Verlauf für neue Mitglieder: ältere Generationen des Raumschlüssels (nur ältere als die der Raumdaten)
-    const hist = res.obj.hist === 1 ? 1 : 0;
-    const ka = hist ? parseKeyArchive(res.obj.ka, res.epoch) : {};
+    // Verlauf für neue Mitglieder: ältere Generationen des Raumschlüssels –
+    // nur aus dem vom Besitzer signierten Archiv (ks) dieser Generation.
+    // hist/ka ohne gültiges ks (Apps bis 1.9.2, Ränge, Fälschungen) zählen nicht.
+    const arch = await keyArchiveOf(room, res.obj.ks, res.epoch);
+    const hist = arch ? 1 : 0;
+    const ka = arch ? arch.ka : {};
     room.meta = { name: cleanName(res.obj.name) || 'Raum', ch: ch.length ? ch : [{ id: 'main', name: 'allgemein' }], vch: vch, img: img, aq: aq, meet: res.obj.meet === 1 ? 1 : 0,
-      once: res.obj.meet === 1 && res.obj.once === 1 ? 1 : 0, hooks: hooks, roles: roles, hist: hist, ka: ka };
+      once: res.obj.meet === 1 && res.obj.once === 1 ? 1 : 0, hooks: hooks, roles: roles, hist: hist, ka: ka, ks: arch ? res.obj.ks : '', ksE: arch ? res.epoch : 0,
+      histLegacy: !arch && res.obj.hist === 1 ? 1 : 0 };
     room.metaOk = true;
     await takeKeyArchive(room, ka);
     // Widerrufene Zugänge: ihre Beiträge verschwinden aus der Ansicht.
@@ -5998,7 +6047,7 @@ async function createRoomOnly(name, opts) {
   const raw = C.newRoomKey();
   const key = await C.importRoomKey(raw);
   const ch = [{ id: C.randomId().slice(0, 10), name: meet ? 'chat' : 'allgemein' }];
-  const obj = { v: 1, t: 'meta', room: rid, name: name, ch: ch, vch: [FIRST_VOICE], from: S.me.id, ts: Date.now() };
+  const obj = { v: 1, t: 'meta', mv: 2, room: rid, name: name, ch: ch, vch: [FIRST_VOICE], from: S.me.id, ts: serverNow() };
   if (meet) obj.meet = 1;
   if (once) obj.once = 1;
   const meta = await C.sealRoom(obj, key, 1, rid, S.me.priv);
@@ -6675,7 +6724,8 @@ function roomMenu(room) {
           // Ränge: Rechte bündeln und vergeben (an Discord angelehnt)
           mRoles ? row('tag', 'Ränge', () => rolesDialog(room), nRoles ? String(nRoles) : 'KEINE', 'Wer was darf: Kanäle, Nachrichten, Mitglieder …') : null,
           aoOk ? toggle('users', 'Nur Mitglieder mit Konto', room.ao, () => roomAccountsDialog(room), 'Neue Mitglieder brauchen ein Konto.') : null,
-          histOk(room) ? toggle('message', 'Neue Mitglieder sehen den Verlauf', !!room.meta.hist, () => roomHistoryDialog(room), 'Ältere Nachrichten, soweit noch aufbewahrt.') : null,
+          histOk(room) ? toggle('message', 'Neue Mitglieder sehen den Verlauf', histOn(room), () => roomHistoryDialog(room),
+            !histOn(room) && room.meta.histLegacy ? 'Mit einer älteren App eingeschaltet – bitte neu einschalten.' : 'Ältere Nachrichten, soweit noch aufbewahrt.') : null,
           // API-Zugang: nur Konten, nicht für Meetings und verfallende Räume
           hooksOk(room) ? row('code', 'API-Zugang', () => hooksDialog(room), hookCount(room) ? hookCount(room) + ' / ' + HOOK_LIMIT : 'KEINER', 'Skripte posten in einen Kanal – nur posten.') : null) : null,
         owner ? sectionHead('SICHERHEIT') : null,
@@ -6925,38 +6975,90 @@ async function updateMeta(room, meta) {
   await loadRooms();
 }
 
-/** Raumdaten verschlüsseln; passt das Schlüsselarchiv nicht mehr hinein, fallen die ältesten Generationen weg. */
+/**
+ * Raumdaten verschlüsseln. ts: signierter Zeitpunkt, immer später als die
+ * zuletzt angenommenen (Rollback-Schutz, mv: 2). Schlüsselarchiv: Der
+ * Besitzer legt es nur an, wenn er „Verlauf für Neue“ selbst eingeschaltet
+ * hat (Tresor hs), und unterschreibt es (ks); andere geben ein gültiges
+ * Archiv dieser Generation unverändert weiter. Passt es nicht hinein, fallen
+ * die ältesten Generationen weg.
+ */
 async function sealMeta(room, meta, key, epoch) {
-  const m = Object.assign({ v: 1, t: 'meta', room: room.id, from: S.me.id, ts: Date.now() }, meta);
-  for (;;) {
-    const data = await C.sealRoom(m, key, epoch, room.id, S.me.priv);
-    const ks = m.ka ? Object.keys(m.ka).map(Number).sort((a, b) => a - b) : [];
-    if (data.length <= META_MAX || !ks.length) return data;
-    const keep = ks.slice(Math.ceil(ks.length / 2));
-    m.ka = Object.fromEntries(keep.map((e) => [e, m.ka[e]]));
-    if (!keep.length) delete m.ka;
+  const vr = S.vault.rooms[room.id] || {};
+  const ts = Math.max(serverNow(), (Number(vr.mt) || 0) + 1);
+  const m = Object.assign({ v: 1, t: 'meta', mv: 2, room: room.id, from: S.me.id, ts: ts }, meta);
+  const owner = room.owner === S.me.id;
+  const dropArchive = () => { delete m.hist; delete m.ka; delete m.ks; };
+  if (owner) {
+    delete m.ks;
+    if (histOn(room)) { m.hist = 1; m.ka = keyArchive(room, epoch); } else dropArchive();
+  } else if (!(m.hist && typeof m.ks === 'string' && m.ks && room.meta.ksE === epoch)) {
+    dropArchive();
   }
+  for (;;) {
+    if (owner && m.hist) {
+      m.ks = await C.signCard(S.me.priv, { t: 'karch', rid: room.id, e: epoch, hist: 1, ka: m.ka || {}, ts: ts });
+    }
+    const data = await C.sealRoom(m, key, epoch, room.id, S.me.priv);
+    const gens = m.ka ? Object.keys(m.ka).map(Number).sort((a, b) => a - b) : [];
+    if (data.length <= META_MAX || !m.hist) return data;
+    // Fremdes (signiertes) Archiv lässt sich nicht kürzen: dann ganz weg – der Besitzer legt es neu an.
+    if (!owner || !gens.length) { dropArchive(); continue; }
+    const keep = gens.slice(Math.ceil(gens.length / 2));
+    m.ka = Object.fromEntries(keep.map((e) => [e, m.ka[e]]));
+  }
+}
+
+/** Kurzer Hash der verschlüsselten Raumdaten (Tresor mh: „schon angenommen“). */
+async function metaHash(raw) {
+  return C.toHex(new Uint8Array(await crypto.subtle.digest('SHA-256', C.te.encode(String(raw || ''))))).slice(0, 32);
+}
+
+/**
+ * Signiertes Schlüsselarchiv (ks) prüfen: Unterschrift des Besitzers, dieser
+ * Raum, dieselbe Generation wie die Raumdaten. Gibt { ka } oder null zurück.
+ */
+async function keyArchiveOf(room, ks, metaEpoch) {
+  if (typeof ks !== 'string' || !ks || ks.length > META_MAX) return null;
+  let owner = S.ids.get(room.owner);
+  if (!owner) [owner] = await ensureIds([room.owner]);
+  if (!owner || !owner.key) return null;
+  const arch = await C.verifyCard(owner.key, ks);
+  if (!arch || arch.t !== 'karch' || arch.rid !== room.id || arch.e !== metaEpoch || arch.hist !== 1) return null;
+  return { ka: parseKeyArchive(arch.ka, metaEpoch) };
 }
 
 /* ---------- Verlauf für neue Mitglieder ---------------------------------------
    Neue Mitglieder bekommen mit dem Link nur den aktuellen Raumschlüssel –
    Nachrichten aus älteren Generationen (vor einem Schlüsselwechsel) können
    sie nicht lesen. Schaltet der Besitzer „Neue Mitglieder sehen den
-   Verlauf“ ein, legt seine App die älteren Generationen, die sie selbst noch
-   hat, in die Raumdaten (hist: 1, ka: { Generation: { k, t } }). Die sind mit
-   dem aktuellen Schlüssel verschlüsselt: Lesen kann das Archiv nur, wer im
-   Raum ist (auch Neue per Link); der Server sieht nur Chiffretext. Wer
-   entfernt wurde, bekommt die neuen Raumdaten nicht mehr – die alten
-   Schlüssel kannte er ohnehin. Es enthält nur Generationen, deren
-   Nachrichten noch aufbewahrt werden können (maintainRoomKeys löscht ältere
-   und nimmt sie hier mit heraus), höchstens KA_MAX. Ältere Apps übergehen
-   das Feld – ein Besitzer mit alter App entfernt es beim nächsten
-   Neu-Verschlüsseln der Raumdaten. Ausschalten nimmt das Archiv heraus; wer
-   es schon hat, behält die Schlüssel. */
+   Verlauf“ ein (gemerkt nur in seinem Tresor: hs), legt seine App die
+   älteren Generationen, die sie selbst noch hat, in die Raumdaten – als von
+   ihm signiertes Archiv ks = { t: 'karch', rid, e, hist: 1, ka: { Generation:
+   { k, t } }, ts }. Andere Apps übernehmen Schlüssel nur aus einem ks mit
+   seiner Unterschrift, für diesen Raum und dieselbe Generation wie die
+   Raumdaten; Ränge mit Verwaltungsrechten können es weder einschalten noch
+   ändern, nur unverändert weitergeben. hist/ka stehen daneben weiter im
+   Klartext der Raumdaten – nur für Apps bis 1.9.2. Das Archiv ist mit dem
+   aktuellen Schlüssel verschlüsselt: Lesen kann es, wer im Raum ist oder
+   einen gültigen Link hat; der Server sieht nur Chiffretext. Es enthält nur
+   Generationen, deren Nachrichten noch aufbewahrt werden können
+   (maintainRoomKeys löscht ältere und nimmt sie hier mit heraus), höchstens
+   KA_MAX. Ausschalten nimmt das Archiv heraus und wechselt den
+   Raumschlüssel (sonst könnte ein Rang das alte ks dieser Generation erneut
+   einstellen); wer es schon hat, behält die Schlüssel. */
 const KA_MAX = 64;
+const MG_MAX = 20;          // gemerkte frühere Verwalter je Raum (Tresor mg)
+const META_SKEW = 600000;      // Raumdaten älterer Apps (ohne mv: 2, Zeit vom Gerät): so viel älter darf ihr ts sein
+const META_SKEW_NEW = 60000;   // neuere (Serverzeit): Spielraum für Uhren und zwei Verwalter gleichzeitig
 const META_MAX = 65536;   // Obergrenze des Servers für Raumdaten (verschlüsselt, Base64)
 
 function histOk(room) { return !!room && room.owner === S.me.id && !room.meta.meet && !room.ot; }
+/** Hat der Besitzer (ich) „Verlauf für Neue“ selbst eingeschaltet? Nur der Tresor zählt. */
+function histOn(room) {
+  const r = histOk(room) && S.vault.rooms[room.id];
+  return !!(r && r.hs && r.hs.on);
+}
 
 /** Archiv aus dem eigenen Tresor: alle Generationen vor `epoch`, die ich noch habe (die jüngsten KA_MAX). */
 function keyArchive(room, epoch) {
@@ -6974,7 +7076,8 @@ function parseKeyArchive(raw, metaEpoch) {
   for (const [e, v] of Object.entries(raw).slice(0, KA_MAX)) {
     const n = Number(e);
     if (!/^\d{1,6}$/.test(e) || n < 1 || n >= metaEpoch || !v || typeof v.k !== 'string' || !/^[A-Za-z0-9_-]{43}$/.test(v.k)) continue;
-    out[n] = { k: v.k, t: Number.isFinite(Number(v.t)) && Number(v.t) > 0 ? Number(v.t) : 0 };
+    // Zeitpunkt höchstens „jetzt“ (er steuert, wann alte Generationen gelöscht werden)
+    out[n] = { k: v.k, t: Number.isFinite(Number(v.t)) && Number(v.t) > 0 ? Math.min(Number(v.t), serverNow()) : 0 };
   }
   return out;
 }
@@ -6996,29 +7099,62 @@ async function takeKeyArchive(room, ka) {
   scheduleRender();
 }
 
-/** Raum-Menü: „Neue Mitglieder sehen den Verlauf“ (nur der Besitzer – er verwaltet die Schlüssel). */
+/**
+ * Raum-Menü: „Neue Mitglieder sehen den Verlauf“ (nur der Besitzer – er
+ * verwaltet die Schlüssel). Einschalten: Tresor hs an, signiertes Archiv in
+ * die Raumdaten. Ausschalten: Tresor hs aus, neuer Raumschlüssel ohne Archiv.
+ */
 async function roomHistoryDialog(room) {
-  const on = !room.meta.hist;
+  const on = !histOn(room);
+  const legacy = on && room.meta.histLegacy;   // unter 1.9.1/1.9.2 eingeschaltet – gilt erst nach erneutem Einschalten
   const ok = await confirmBox('VERLAUF FÜR NEUE MITGLIEDER', on
-    ? 'Neue Mitglieder können ältere Nachrichten lesen (soweit sie noch aufbewahrt werden). Gilt für alle Kanäle des Raums. Dafür legt deine App die älteren Raumschlüssel verschlüsselt in die Raumdaten – höchstens ' + KA_MAX + ' Generationen.'
-    : 'Neue Mitglieder sehen dann nur noch Nachrichten ab dem letzten Schlüsselwechsel. Wer die älteren Schlüssel schon bekommen hat, behält sie.', on ? 'Einschalten' : 'Ausschalten');
+    ? (legacy ? 'Mit einer älteren App eingeschaltet – seit diesem Update zählt nur noch ein von dir unterschriebenes Archiv. Bitte einmal neu einschalten. ' : '') +
+      'Neue Mitglieder können ältere Nachrichten lesen (soweit sie noch aufbewahrt werden). Gilt für alle Kanäle des Raums. Dafür legt deine App die älteren Raumschlüssel verschlüsselt und von dir unterschrieben in die Raumdaten – höchstens ' + KA_MAX + ' Generationen. Wer einen gültigen Einladungslink hat, kann sie damit lesen.'
+    : 'Neue Mitglieder sehen dann nur noch Nachrichten ab jetzt. Dafür wechselt der Raumschlüssel – offene Einladungslinks werden ungültig. Wer die älteren Schlüssel schon bekommen hat, behält sie.', on ? 'Einschalten' : 'Ausschalten');
   if (!ok) return;
+  const vr = S.vault.rooms[room.id] || (S.vault.rooms[room.id] = { k: {}, rot: 0 });
+  const before = vr.hs;
+  vr.hs = { on: on ? 1 : 0, t: serverNow() };
   try {
-    await updateMeta(room, metaOf(room, on ? { hist: 1, ka: keyArchive(room, room.epoch) } : { hist: 0, ka: {} }));
-    toast(on ? 'Neue Mitglieder sehen jetzt den Verlauf.' : 'Neue Mitglieder sehen den Verlauf nicht mehr.', 'ok');
+    await saveVault(true);
+    if (on) {
+      await updateMeta(room, metaOf(room));
+      toast('Neue Mitglieder sehen jetzt den Verlauf.', 'ok');
+    } else {
+      // Neuer Schlüssel: Das alte, signierte Archiv gehört zur alten Generation und gilt nicht mehr.
+      await rotateRoom(room.id, false);
+      const cur = S.rooms.get(room.id);
+      if (cur && cur.meta.hist) throw new Error('Der Schlüsselwechsel hat nicht geklappt – die App versucht es später erneut.');
+      toast('Neue Mitglieder sehen den Verlauf nicht mehr (neuer Raumschlüssel).', 'ok');
+    }
   } catch (e) {
+    if (on) { vr.hs = before || { on: 0, t: serverNow() }; saveVault().catch(() => {}); }
     toast(e.message, 'error');
   }
 }
 
-/** Besitzer: Archiv auf den Stand des Tresors bringen (nach dem Löschen alter Generationen). */
+/**
+ * Besitzer: Archiv auf den Stand des Tresors bringen – nach dem Löschen
+ * alter Generationen, wenn eine ältere App oder ein Rang es beim
+ * Neu-Verschlüsseln verloren hat, oder wenn es ausgeschaltet ist, aber
+ * noch ein gültiges Archiv in den Raumdaten steht (dann neuer Schlüssel).
+ */
 async function refreshKeyArchive(room) {
-  if (!histOk(room) || !room.meta.hist || !room.metaOk || room.metaEpoch !== room.epoch) return;
+  if (!histOk(room) || !room.metaOk || room.metaEpoch !== room.epoch || S.rotating.has(room.id)) return;
+  if (!histOn(room)) {
+    if (room.meta.hist) await rotateRoom(room.id, false, false);
+    return;
+  }
   const want = keyArchive(room, room.epoch);
   const have = room.meta.ka || {};
-  const same = Object.keys(want).length === Object.keys(have).length && Object.keys(want).every((e) => have[e] && have[e].k === want[e].k);
+  const same = room.meta.hist && Object.keys(want).length === Object.keys(have).length && Object.keys(want).every((e) => have[e] && have[e].k === want[e].k);
   if (same) return;
-  try { await updateMeta(room, metaOf(room, { ka: want })); } catch (e) { /* beim nächsten Mal */ }
+  // Automatisch neu anlegen nur mit frischem Tresor (ein anderes Gerät könnte es gerade ausgeschaltet haben).
+  if (!room.meta.hist && S.mode === 'account') {
+    await refreshOwnKey(true).catch(() => {});
+    if (!histOn(room)) return;
+  }
+  try { await updateMeta(room, metaOf(room)); } catch (e) { /* beim nächsten Mal */ }
 }
 
 function addChannel(room) {
@@ -7491,7 +7627,7 @@ async function rotateRoom(rid, manual, quiet) {
     const key = await C.importRoomKey(raw);
     const env = await C.sealFor({ v: 1, t: 'roomkey', room: rid, epoch: epoch, key: raw, from: S.me.id, ts: Date.now() }, members.map((m) => m.key), S.me.priv);
     // Verlauf für neue Mitglieder: die bisherige Generation kommt ins Archiv.
-    const meta = await sealMeta(room, metaOf(room, room.meta.hist ? { ka: keyArchive(room, epoch) } : null), key, epoch);
+    const meta = await sealMeta(room, metaOf(room), key, epoch);   // Archiv nur mit eigener Einstellung (histOn)
     // Erst beim Server wechseln, dann speichern: Wechselt ein zweites Gerät
     // gleichzeitig, scheitert eins (409) – und hat dann keinen falschen
     // Schlüssel im Tresor. Geht das Speichern schief, steht der Schlüssel
