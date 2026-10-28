@@ -1111,6 +1111,7 @@ console.log('\n== Ränge und Rechte');
 r = await call('config');
 ok(r.ok && r.roles > 0, 'config nennt Ränge (höchstens ' + r.roles + ' je Raum)');
 const P = { SEND: 1, REACT: 2, VOICE: 4, INVITE: 8, CHANNELS: 16, ROOM: 32, MESSAGES: 64, KICK: 128, HOOKS: 256, ROLES: 512, ADMIN: 1024 };
+const P_ALL_BITS = 2047;
 const rlRoom = C.randomId();
 const rlKey = await C.importRoomKey(C.newRoomKey());
 const rlMeta = (who, name) => C.sealRoom({ t: 'meta', name, ch: [{ id: 'c1', name: 'allgemein' }, { id: 'news', name: 'ankuendigungen' }] }, rlKey, 1, rlRoom, who.privateKey);
@@ -1329,6 +1330,110 @@ r = await call('room.leave', { id: rlRoom }, acc2Token);
 r = await call('rooms', {}, accToken);
 ok(Object.keys(r.rooms.find((x) => x.id === rlRoom).mr).length === 0, 'wer geht, verliert seine Ränge');
 await call('room.delete', { id: rlRoom }, accToken);
+
+console.log('\n== Server: Rechteausweitung und Fluten (Regression)');
+// Die Szenarien der Prüfung vom 27.10.2026 (Commit 67a23f8). Mit Zugriff auf die Ablage
+// des Testservers: Zähler der Ratenbegrenzung leeren (der Test legt sonst zu viel an).
+if (STORE) for (const f of fs.readdirSync(STORE + '/ratelimit')) fs.rmSync(STORE + '/ratelimit/' + f, { force: true });
+const rgRoom = C.randomId();
+const rgKey = await C.importRoomKey(C.newRoomKey());
+const rgMsg = async (who, whoId, body) => C.sealRoom({ v: 1, t: 'msg', id: C.randomId(), from: whoId, room: rgRoom, ch: 'c1', ts: Date.now(), body }, rgKey, 1, rgRoom, who.privateKey);
+r = await call('room.create', { id: rgRoom, meta: await C.sealRoom({ t: 'meta', name: 'Regression', ch: [{ id: 'c1', name: 'allgemein' }] }, rgKey, 1, rgRoom, acc.privateKey) }, accToken);
+const rgInv = (await call('room.invite', { id: rgRoom, max: 10 }, accToken)).code;
+await call('room.join', { id: rgRoom, code: rgInv }, acc2Token);
+r = await call('room.join', { id: rgRoom, code: rgInv }, TB.token);
+ok(r.ok && r.room.members.length === 3, 'Raum mit Besitzer, Konto 2 und Bob');
+// 1) „Ränge verwalten“ verschafft sich über einen tieferen Rang mit Administrator nichts
+const RG_MAN = 'rgManage01', RG_ADM = 'rgAdmin001';
+await call('role.set', { id: rgRoom, r: RG_MAN, p: P.ROLES }, accToken);
+r = await call('role.set', { id: rgRoom, r: RG_ADM, p: P.ADMIN }, accToken);
+ok(r.ok && r.room.rl[RG_ADM].o < r.room.rl[RG_MAN].o, 'Administrator-Rang steht unter dem Rang „Ränge verwalten“');
+await call('role.assign', { id: rgRoom, r: RG_MAN, member: acc2Id, on: 1 }, accToken);
+r = await call('role.assign', { id: rgRoom, r: RG_ADM, member: acc2Id, on: 1 }, acc2Token);
+ok(!r.ok && r._status === 403, 'Administrator-Rang an sich selbst vergeben → 403');
+r = await call('role.assign', { id: rgRoom, r: RG_ADM, member: TB.id, on: 1 }, acc2Token);
+ok(!r.ok && r._status === 403, '… und an andere → 403');
+r = await call('role.set', { id: rgRoom, r: '', p: P_ALL_BITS }, acc2Token);
+ok(!r.ok && r._status === 403, '„@alle“ alle Rechte geben → 403');
+await call('role.assign', { id: rgRoom, r: RG_ADM, member: TB.id, on: 1 }, accToken);
+r = await call('role.assign', { id: rgRoom, r: RG_ADM, member: TB.id, on: 0 }, acc2Token);
+ok(!r.ok && r._status === 403, 'Administrator-Rang entziehen (Recht fehlt selbst) → 403');
+r = await call('role.del', { id: rgRoom, r: RG_ADM }, acc2Token);
+ok(!r.ok && r._status === 403, 'Administrator-Rang löschen → 403');
+r = await call('rooms', {}, acc2Token);
+ok(r.rooms.find((x) => x.id === rgRoom).perm !== P_ALL_BITS, 'Rechte des Verwalters unverändert (nicht alle)');
+await call('role.assign', { id: rgRoom, r: RG_ADM, member: TB.id, on: 0 }, accToken);
+// 2) Signale: nur mit „Sprache“ und im Sprachkanal; Mengengrenze; verdrängen keine Nachrichten
+r = await call('room.ttl', { id: rgRoom, ttl: PERM }, accToken);
+const rgFirst = await call('room.post', { id: rgRoom, k: 'msg', d: await rgMsg(acc, accId, 'erste Nachricht') }, accToken);
+await call('role.set', { id: rgRoom, r: '', p: 0 }, accToken);
+r = await call('room.post', { id: rgRoom, k: 'sig', to: accId, d: C.b64(C.randomBytes(300)) }, TB.token);
+ok(!r.ok && r._status === 403, 'Signal ohne Recht „Sprache“ → 403');
+r = await call('room.post', { id: rgRoom, k: 'msg', d: await rgMsg(TB, TB.id, 'darf ich?') }, TB.token);
+ok(!r.ok && r._status === 403, 'Nachricht ohne Recht „Schreiben“ → 403');
+await call('role.set', { id: rgRoom, r: '', p: P.REACT | P.VOICE }, accToken);
+r = await call('room.post', { id: rgRoom, k: 'msg', rx: 1, d: C.b64(C.randomBytes(5000)) }, TB.token);
+ok(!r.ok && r._status === 413, 'Reaktion ohne Schreibrecht über 4 KB → 413 (kein Umweg zum Schreiben)');
+r = await call('room.post', { id: rgRoom, k: 'msg', rx: 1, d: C.b64(C.randomBytes(900)) }, TB.token);
+ok(r.ok, 'normale Reaktion ohne Schreibrecht geht');
+r = await call('room.post', { id: rgRoom, k: 'sig', to: accId, d: C.b64(C.randomBytes(300)) }, TB.token);
+ok(!r.ok && r._status === 409, 'Signal, ohne dass jemand im Sprachkanal ist → 409');
+await call('room.voice', { id: rgRoom, on: true }, TB.token);
+let sigOk = 0, sigLast = null;
+for (let i = 0; i < 40; i++) {
+  sigLast = await call('room.post', { id: rgRoom, k: 'sig', to: accId, d: C.b64(C.randomBytes(36000)) }, TB.token);
+  if (!sigLast.ok) break;
+  sigOk++;
+}
+ok(sigOk >= 20 && sigOk < 40 && sigLast._status === 429, 'Signale je Absender begrenzt (' + sigOk + ' à 48 KB, dann 429)');
+await call('room.voice', { id: rgRoom, on: false }, TB.token);
+r = await call('poll', { r: { [rgRoom]: { s: 0, o: 0, g: 0 } } }, accToken);
+ok(r.r[rgRoom].e.some((e) => e.s === rgFirst.s && e.k === 'msg'), 'erste Nachricht im „Permanent“-Verlauf bleibt');
+// „Permanent“: je Mitglied höchstens securecom_permanent_member_mb je Stunde
+await call('role.set', { id: rgRoom, r: '', p: 15 }, accToken);
+let volOk = 0, volLast = null;
+for (let i = 0; i < 40; i++) {
+  volLast = await call('room.post', { id: rgRoom, k: 'msg', d: C.b64(new Uint8Array(72000).map((_, i) => (i * 7919) & 255)) }, TB.token);
+  if (!volLast.ok) break;
+  volOk++;
+}
+ok(volOk >= 10 && volOk < 40 && volLast._status === 429, '„Permanent“: Menge je Mitglied und Stunde begrenzt (' + volOk + ' à 96 KB, dann 429)');
+r = await call('room.post', { id: rgRoom, k: 'msg', d: await rgMsg(acc2, acc2Id, 'ich noch') }, acc2Token);
+ok(r.ok, 'andere Mitglieder schreiben weiter');
+r = await call('poll', { r: { [rgRoom]: { s: 0, o: 0, g: 0 } } }, accToken);
+ok(r.r[rgRoom].e.some((e) => e.s === rgFirst.s), 'erste Nachricht bleibt auch danach');
+// 3) room.cttl mit Nummern: nur „Kanäle verwalten“ → fremde Einträge bekommen keine kürzere Frist
+await call('room.ttl', { id: rgRoom, ttl: 30 * 86400 }, accToken);
+const RG_CH = 'rgChan001';
+await call('role.assign', { id: rgRoom, r: RG_MAN, member: acc2Id, on: 0 }, accToken);
+await call('role.set', { id: rgRoom, r: RG_CH, p: P.CHANNELS }, accToken);
+await call('role.assign', { id: rgRoom, r: RG_CH, member: acc2Id, on: 1 }, accToken);
+const victim = await call('room.post', { id: rgRoom, k: 'msg', d: await rgMsg(acc, accId, 'Opfer') }, accToken);
+r = await call('room.del', { id: rgRoom, s: [victim.s] }, acc2Token);
+ok(!r.ok && r._status === 403, 'nur „Kanäle verwalten“: room.del → 403');
+r = await call('room.cttl', { id: rgRoom, c: 'kurz', ttl: 3600, s: [victim.s] }, acc2Token);
+ok(r.ok && r.room.ct.kurz === 3600, '… legt aber einen Kanal mit 1 Stunde an (mit der fremden Nachricht als s)');
+if (STORE) {
+  const v = feedOf(rgRoom).get(victim.s);
+  ok(v && v.x === v.t + 30 * 86400 && !('c' in v), 'fremde Nachricht behält ihre Frist (30 Tage), keine Zuordnung');
+}
+await call('room.cttl', { id: rgRoom, c: 'kurz', ttl: 3600, s: [victim.s] }, accToken);
+if (STORE) {
+  const v = feedOf(rgRoom).get(victim.s);
+  ok(v && v.x === v.t + 3600 && v.c === 'kurz', 'Besitzer (Nachrichten verwalten) darf zuordnen – dann kürzere Frist');
+}
+// 4) hook.post: falsche Tokens Dritter sperren den echten Zugang nicht
+const rgHid = C.randomId(), rgTok = C.newHookToken();
+r = await call('hook.create', { id: rgRoom, hid: rgHid, th: await C.hookTokenHash(rgTok) }, accToken);
+ok(r.ok, 'API-Zugang angelegt');
+let wrong = null;
+for (let i = 0; i < 25; i++) wrong = await call('hook.post', { r: rgRoom, h: rgHid, t: C.newHookToken(), d: C.b64(C.randomBytes(200)) });
+ok(!wrong.ok && wrong._status === 403, '25 Versuche mit falschem Token → 403 (nicht 429 für den Zugang)');
+r = await call('hook.post', { r: rgRoom, h: rgHid, t: rgTok, d: C.b64(C.randomBytes(200)) });
+ok(r.ok, 'der echte Zugang postet danach weiter (Grenze je Zugang erst nach bestandener Prüfung)');
+r = await call('hook.post', { r: rgRoom, h: '../../x', t: 'z', d: 'a' });
+ok(!r.ok && r._status >= 400 && r._status < 500, 'kaputter hook.post → 4xx, kein Serverfehler');
+await call('room.delete', { id: rgRoom }, accToken);
 
 r = await call('delete', { auth: keys2.auth }, acc2Token);
 ok(r.ok, 'zweites Konto gelöscht');
