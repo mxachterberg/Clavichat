@@ -3188,7 +3188,9 @@ function renderRoomSide(head, body, room) {
       'aria-current': S.view.ch === ch.id ? 'true' : 'false',
       onclick: () => openRoom(room.id, ch.id)
     }, icon('hash', 15), el('span', { class: 'sc-chan-name', text: ch.name }),
-    room.cw[ch.id] && rolesOk(room) ? chanLock('Schreiben: ' + channelWho(room, room.cw[ch.id].r), canWriteIn(room, S.me.id, ch.id), 'du darfst schreiben', 'du darfst hier nicht schreiben') : null,
+    room.cw[ch.id] && rolesOk(room) ? (room.cw[ch.id].n
+      ? chanLock('Niemand schreibt hier', false, '', 'nur automatische Beiträge (API-Zugänge), reagieren geht')
+      : chanLock('Schreiben: ' + channelWho(room, room.cw[ch.id].r), canWriteIn(room, S.me.id, ch.id), 'du darfst schreiben', 'du darfst hier nicht schreiben')) : null,
     u ? el('span', { class: 'sc-count', text: String(u) }) : null);
     withMenu(btn, () => textChannelMenu(room, ch));
     if (isOwner) { sortable(btn, room, 'ch', ch.id); dropTarget(btn, room, 'ch', ch.id); }
@@ -3332,7 +3334,7 @@ function renderMainHead() {
         el('span', { class: 'sc-head-title' }, icon('hash', 16), ch ? ch.name : '—'),
         el('span', { class: 'sc-head-sub', text: room.meta.name + ' · ' + room.members.length + ' Mitglieder · ' + keepText(chanTtl(room, S.view.ch)) +
           (hasChanTtl(room, S.view.ch) ? ' (Kanal)' : '') +
-          (rolesOk(room) && room.cw[S.view.ch] ? ' · ' + channelWho(room, room.cw[S.view.ch].r) + ' schreiben' : '') })),
+          (rolesOk(room) && room.cw[S.view.ch] ? ' · ' + (room.cw[S.view.ch].n ? 'nur API-Zugänge posten' : channelWho(room, room.cw[S.view.ch].r) + ' schreiben') : '') })),
       el('span', { class: 'sc-head-spacer' }),
       iconBtn(room.meta.meet ? 'phone' : 'speaker', S.voice && S.voice.rid === room.id
         ? (room.meta.meet ? 'Call verlassen' : 'Sprachkanal verlassen')
@@ -3486,7 +3488,7 @@ function messageMenu(m, node) {
     react ? { bar: reactBar(m) } : null,
     react ? { sep: true } : null,
     m.body && !m.deleted && !m.file ? { icon: 'copy', label: 'Text kopieren', run: () => copyText(m.body, 'Text') } : null,
-    own && ready && !m.file && !m.invite && !m.hook ? { icon: 'edit', label: 'Bearbeiten', run: () => editMessage(m, node) } : null,
+    own && ready && !m.file && !m.invite && !m.hook && viewWritable() ? { icon: 'edit', label: 'Bearbeiten', run: () => editMessage(m, node) } : null,
     own && ready && !m.invite && !admin ? { icon: 'trash', label: 'Löschen', danger: true, run: () => deleteMessage(m) } : null,
     admin && !m.sys ? {
       icon: 'trash', label: m.hook ? 'Beitrag löschen' : 'Nachricht löschen', danger: true, disabled: !m.seq,
@@ -3577,7 +3579,7 @@ function messageNode(m, grouped) {
   const mine = own && !m.deleted && !m.invite && m.state !== 'pending';
   if (mine) {
     node.appendChild(el('div', { class: 'sc-msg-actions' },
-      !m.file ? iconBtn('edit', 'Bearbeiten', () => editMessage(m, node)) : null,
+      !m.file && viewWritable() ? iconBtn('edit', 'Bearbeiten', () => editMessage(m, node)) : null,
       mine ? iconBtn('trash', 'Löschen', () => deleteMessage(m)) : null));
   }
   return node;
@@ -4172,7 +4174,8 @@ function renderCompose() {
     if (!blocked && rolesOk(room) && !canWriteIn(room, S.me.id, S.view.ch)) {
       blocked = true;
       const w = room.cw[S.view.ch];
-      placeholder = !(permsOf(room, S.me.id) & RIGHT.SEND) ? 'Du darfst in diesem Raum nicht schreiben'
+      placeholder = w && w.n ? API_ONLY_TEXT
+        : !(permsOf(room, S.me.id) & RIGHT.SEND) ? 'Du darfst in diesem Raum nicht schreiben'
         : 'Hier dürfen ' + (w.r.length ? 'nur ' + w.r.map((r) => roleName(room, r)).join(', ') : 'nur der Besitzer') + ' schreiben';
     }
   }
@@ -4883,7 +4886,12 @@ async function deleteMessage(m) {
   if (!ok) return;
   try {
     if (S.view.kind === 'dm') await sendDmEvent(S.view.peer, { t: 'del', ref: m.id });
-    else await postRoom(S.rooms.get(S.view.rid), { t: 'del', ref: m.id, ch: S.view.ch });
+    else {
+      // Kein Schreibrecht (mehr) hier, z. B. „nur API-Zugänge“: als Löschhinweis (rm) – der
+      // Server nimmt ihn klein von jedem Mitglied an, die Apps daraus nur „del“ eigener Nachrichten.
+      const room = S.rooms.get(S.view.rid);
+      await postRoom(room, { t: 'del', ref: m.id, ch: S.view.ch }, viewWritable() || !apiOnlyOk() ? null : { rm: 1 });
+    }
     m.deleted = true;
     if (m.file) api('file.del', { id: m.file.id }).catch(() => {});
   } catch (e) { toast(e.message, 'error'); }
@@ -5561,7 +5569,8 @@ function applyRoleState(room, raw) {
   room.cw = {};
   if (raw.cw && typeof raw.cw === 'object' && !Array.isArray(raw.cw)) {
     for (const [c, v] of Object.entries(raw.cw)) {
-      if (/^[A-Za-z0-9_-]{1,22}$/.test(c) && v && Array.isArray(v.r)) room.cw[c] = { r: v.r.filter((r) => room.rl[r]), t: Number(v.t) || 0 };
+      // n = seit wann „Niemand – nur API-Zugänge“ (sonst 0)
+      if (/^[A-Za-z0-9_-]{1,22}$/.test(c) && v && Array.isArray(v.r)) room.cw[c] = { r: v.r.filter((r) => room.rl[r]), t: Number(v.t) || 0, n: Number(v.n) || 0 };
     }
   }
   room.vw = {};
@@ -5593,14 +5602,32 @@ function topOf(room, id) {
   if (room.owner === id) return Infinity;
   return memberRoles(room, id).reduce((t, r) => Math.max(t, room.rl[r].o), 0);
 }
-/** Darf $id in Textkanal ch schreiben (aktueller Stand)? */
-function canWriteIn(room, id, ch) {
+/**
+ * Darf $id in Textkanal ch schreiben (aktueller Stand)? Kanal „Niemand – nur
+ * API-Zugänge“: niemand, auch nicht der Besitzer – außer mit before (die
+ * Regel von vor der Umstellung, für ältere Beiträge: nur Besitzer/Admins).
+ */
+function canWriteIn(room, id, ch, before) {
+  const w = room.cw[ch];
+  if (w && w.n && !before) return false;
   const p = permsOf(room, id);
   if (room.owner === id || p & RIGHT.ADMIN) return true;
   if (!(p & RIGHT.SEND)) return false;
-  const w = room.cw[ch];
   return !w || memberRoles(room, id).some((r) => w.r.includes(r));
 }
+/** Darf ich im offenen Kanal schreiben – und damit auch eigene Nachrichten bearbeiten? */
+function viewWritable() {
+  if (S.view.kind !== 'room') return true;
+  const room = S.rooms.get(S.view.rid);
+  return !room || !rolesOk(room) || canWriteIn(room, S.me.id, S.view.ch);
+}
+/** Textkanal „Niemand – nur API-Zugänge“? */
+function apiOnly(room, ch) { return !!(rolesOk(room) && room.cw[ch] && room.cw[ch].n); }
+/** Kann der Server „nur API-Zugänge“ (und Löschhinweise rm)? */
+function apiOnlyOk() { return !!(S.cfg && S.cfg.apionly); }
+const API_ONLY_TEXT = 'Nur automatische Beiträge (API-Zugänge)';
+/** Wer schreibt im Textkanal ch – für Hinweise („nur Moderatoren“, „nur API-Zugänge“). */
+function chanWriters(room, ch) { const w = room.cw[ch]; return !w ? 'alle' : w.n ? 'nur API-Zugänge' : channelWho(room, w.r); }
 function canEnterVoice(room, id, ch) {
   const p = permsOf(room, id);
   if (room.owner === id || p & RIGHT.ADMIN) return true;
@@ -5731,7 +5758,8 @@ async function signHooks(room, hooks) {
  * bestimmte Ränge anzeigen? Ja, wenn der Server ihn diesem Kanal zugeordnet
  * hat (c – beim Anlegen des Zugangs hat er das Schreibrecht geprüft), wenn
  * er vor der Beschränkung kam, oder wenn der Zugang (unterschrieben) von
- * jemandem angelegt wurde, der dort laut aktuellen Rängen schreiben darf.
+ * jemandem angelegt wurde, der dort laut aktuellen Rängen schreiben darf –
+ * im Kanal „nur API-Zugänge“: der „API-Zugänge“ hat (dafür ist er da).
  */
 function hookPostAllowed(room, hook, ch, e) {
   if (!rolesOk(room)) return true;
@@ -5739,7 +5767,8 @@ function hookPostAllowed(room, hook, ch, e) {
   if (!w) return true;
   if (e.c === ch) return true;
   if (w.t && e.t < w.t) return true;
-  return !!(hook.sg && hook.by && !hook.lg && canWriteIn(room, hook.by, ch));
+  if (!(hook.sg && hook.by && !hook.lg)) return false;
+  return w.n ? hookManager(room, hook.by) : canWriteIn(room, hook.by, ch);
 }
 
 /** Zeitpunkt in der (signierten) Nachricht passt zur Serverzeit des Eintrags – sonst ist es eine Wiederholung. */
@@ -5757,16 +5786,22 @@ function tsFits(ts, et) {
  * wird deshalb: was der Server geprüft hat (c = Kanal, keine Reaktion r),
  * was vor der Beschränkung kam, und was ein laut aktuellen Rängen
  * Berechtigter (signiert) geschrieben hat. Reaktionen: wer reagieren darf.
+ * Kanal „Niemand – nur API-Zugänge“ (n): von Personen nur, was vor der
+ * Umstellung kam – danach nichts, auch wenn ein älterer Server es annimmt.
+ * Löschhinweise (q, room.post rm – ohne Schreibrecht): nur „del“; ob die
+ * Nachricht dem Absender gehört, prüft roomMessage.
  */
 function roomPostAllowed(room, who, ch, e, obj) {
   if (!rolesOk(room)) return true;
+  if (e.q === 1) return obj.t === 'del';
   if (obj.t === 'react') return e.r === 1 || !!(permsOf(room, who) & RIGHT.REACT);
   if (e.r === 1) return false;   // als Reaktion geprüft, kein Text
   const w = room.cw[ch];
   if (!w) return true;
+  if (w.n && e.t >= w.n) return false;
   if (e.c === ch) return true;
   if (w.t && e.t < w.t) return true;
-  return canWriteIn(room, who, ch);
+  return canWriteIn(room, who, ch, true);
 }
 
 /* ---------- Raum-Menü → Ränge ------------------------------------------------ */
@@ -5988,7 +6023,10 @@ function channelPermDialog(room, kind, c) {
   room = S.rooms.get(room.id) || room;
   const voice = kind === 'vch';
   const cur = voice ? room.vw[c.id] : (room.cw[c.id] && room.cw[c.id].r);
-  let mode = !cur ? 'all' : cur.length ? 'roles' : 'owner';
+  let mode = !cur ? 'all' : !voice && room.cw[c.id].n ? 'api' : cur.length ? 'roles' : 'owner';
+  // Zugänge, die laut Raumdaten in diesen Kanal posten (für „nur API-Zugänge“ gleich zuordnen)
+  const hookCh = (h) => (room.meta.ch.some((x) => x.id === h.ch) ? h.ch : room.meta.ch[0].id);   // wie roomHook
+  const myHooks = voice ? [] : Object.keys(room.meta.hooks || {}).filter((hid) => hookCh(room.meta.hooks[hid]) === c.id);
   let picked = new Set(cur || []);
   const ids = rolesSorted(room);
   openModal({
@@ -5997,17 +6035,26 @@ function channelPermDialog(room, kind, c) {
       appendAll(body, el('p', { class: 'sc-p', text: voice ? 'Wer darf „' + c.name + '“ betreten?' : 'Wer darf in #' + c.name + ' schreiben?' }));
       const opts = el('div', { class: 'sc-quality' });
       const roles = el('div', { class: 'sc-list sc-role-pick' });
+      const apiNote = el('p', { class: 'sc-note sc-api-note' });
       const draw = () => {
         opts.textContent = '';
         for (const o of [
           { id: 'all', name: 'Alle Mitglieder', info: 'Standard', note: voice ? 'Jeder, der Sprachkanäle betreten darf.' : 'Jeder, der schreiben darf.' },
           { id: 'roles', name: 'Nur bestimmte Ränge', info: ids.length ? '' : 'NOCH KEINE', note: ids.length ? 'Auswahl unten. Besitzer und Administratoren immer.' : 'Lege zuerst Ränge an (Raum-Menü → Ränge).' },
-          { id: 'owner', name: 'Nur Besitzer', info: '', note: 'Und Ränge mit „Administrator“.' }
-        ]) {
+          { id: 'owner', name: 'Nur Besitzer', info: '', note: 'Und Ränge mit „Administrator“.' },
+          !voice && (apiOnlyOk() || mode === 'api') ? { id: 'api', name: 'Niemand – nur API-Zugänge', info: 'AUTOMATISCH',
+            note: 'Auch Besitzer und Admins schreiben hier nicht. Es posten nur API-Zugänge (Raum-Menü → API-Zugänge); reagieren geht.' } : null
+        ].filter(Boolean)) {
           opts.appendChild(el('button', { type: 'button', class: 'sc-quality-opt', 'aria-pressed': mode === o.id ? 'true' : 'false', disabled: o.id === 'roles' && !ids.length,
             onclick: () => { mode = o.id; draw(); } },
           el('span', { class: 'sc-quality-name', text: o.name }), el('span', { class: 'sc-quality-info', text: o.info }), el('span', { class: 'sc-quality-note', text: o.note })));
         }
+        apiNote.hidden = mode !== 'api';
+        apiNote.textContent = !myHooks.length ? 'Noch kein API-Zugang postet in #' + c.name + ' – anlegen über Raum-Menü → API-Zugänge.'
+          : can(room, RIGHT.HOOKS) ? (myHooks.length === 1 ? 'Der API-Zugang' : 'Die ' + myHooks.length + ' API-Zugänge') + ' dieses Kanals ' +
+            (myHooks.length === 1 ? 'wird' : 'werden') + ' beim Speichern zugeordnet – ihre Beiträge bleiben in allen Apps sichtbar.'
+          : 'Zugänge dieses Kanals ordnet nur zu, wer „API-Zugänge“ hat. Zeigt eine App ihre Beiträge danach nicht, den Zugang erneuern (Raum-Menü → API-Zugänge).';
+        apiNote.textContent += ' Apps bis 1.9.4 zeigen hier „Nur Besitzer“ – was sie senden, lehnt der Server ab.';
         roles.textContent = '';
         roles.hidden = mode !== 'roles';
         for (const rid of ids) {
@@ -6020,17 +6067,19 @@ function channelPermDialog(room, kind, c) {
       draw();
       const go = el('button', { type: 'button', class: 'btn btn--primary btn--block' }, icon('check', 14), 'Speichern');
       go.addEventListener('click', async () => {
-        const w = mode === 'all' ? null : mode === 'owner' ? [] : [...picked].filter((r) => room.rl[r]);
+        const w = mode === 'all' ? null : mode === 'owner' || mode === 'api' ? [] : [...picked].filter((r) => room.rl[r]);
         if (mode === 'roles' && !w.length) { toast('Wähle mindestens einen Rang – oder „Nur Besitzer“.', 'error'); return; }
         go.disabled = true;
         try {
-          await roleCall(room, 'room.cperm', { c: c.id, v: voice ? 1 : 0, w: w });
+          const extra = mode === 'api' ? { n: 1, h: can(room, RIGHT.HOOKS) ? myHooks : [] } : {};
+          await roleCall(room, 'room.cperm', Object.assign({ c: c.id, v: voice ? 1 : 0, w: w }, extra));
           close();
-          toast(w === null ? (voice ? 'Alle dürfen „' + c.name + '“ betreten.' : 'Alle dürfen in #' + c.name + ' schreiben.')
+          toast(mode === 'api' ? 'In #' + c.name + ' posten jetzt nur API-Zugänge.'
+            : w === null ? (voice ? 'Alle dürfen „' + c.name + '“ betreten.' : 'Alle dürfen in #' + c.name + ' schreiben.')
             : (voice ? '„' + c.name + '“ betreten jetzt ' : 'In #' + c.name + ' schreiben jetzt ') + channelWho(S.rooms.get(room.id) || room, w) + '.', 'ok');
         } catch (e) { go.disabled = false; toast(e.message, 'error'); }
       });
-      appendAll(body, opts, roles,
+      appendAll(body, opts, roles, apiNote,
         el('p', { class: 'sc-note', text: voice ? 'Zuhören heißt hier betreten – wer drin ist, hört und spricht.'
           : 'Lesen können alle Mitglieder des Raums: Die Ende-zu-Ende-Verschlüsselung gilt für den ganzen Raum, nicht je Kanal. Reagieren bleibt allen erlaubt, die reagieren dürfen.' }),
         voice ? null : el('p', { class: 'sc-note', text: 'Der Server prüft das Schreibrecht, wenn die App den Kanal nennt – er erfährt dafür, welche Beiträge zu diesem Kanal gehören (nicht Name oder Inhalt). Apps bis 1.8.8 kennen das nicht: Was sie ohne Recht hier schreiben, blenden neuere Apps aus.' }),
@@ -6948,8 +6997,9 @@ function hooksDialog(room, fresh) {
       // Neuer Zugang
       if (hookCount(room) < HOOK_LIMIT) {
         const name = el('input', { type: 'text', maxlength: '30', placeholder: 'z. B. Claude' });
-        // Nur Kanäle, in denen man selbst schreiben darf (prüft auch der Server).
-        const chans = room.meta.ch.filter((c) => !rolesOk(room) || canWriteIn(room, S.me.id, c.id));
+        // Nur Kanäle, in denen man selbst schreiben darf (prüft auch der Server) – und
+        // die mit „nur API-Zugänge“ (dafür genügt das Recht „API-Zugänge“, das man hier hat).
+        const chans = room.meta.ch.filter((c) => !rolesOk(room) || apiOnly(room, c.id) || canWriteIn(room, S.me.id, c.id));
         const chList = chans.length ? chans : room.meta.ch;
         let ch = (chList.find((c) => /news/i.test(c.name)) || chList[0]).id;
         const pick = choice(chList.map((c) => ({ id: c.id, name: '#' + c.name })), ch, (id) => { ch = id; });
@@ -7482,12 +7532,11 @@ function dropTarget(btn, room, kind, id) {
 
 function textChannelMenu(room, ch) {
   const owner = can(room, RIGHT.CHANNELS);   // Besitzer oder Recht „Kanäle verwalten“
-  const w = room.cw[ch.id];
   return [
     { icon: 'check', label: 'Als gelesen markieren', disabled: !(room.unread.get(ch.id) || 0), run: () => markChannelRead(room, ch.id) },
     owner ? { icon: 'edit', label: 'Kanal umbenennen', run: () => renameChannel(room, 'ch', ch) } : null,
     ...moveItems(room, 'ch', ch.id),
-    owner && rolesOk(room) ? { icon: 'lock', label: 'Berechtigungen', note: 'Schreiben: ' + (w ? channelWho(room, w.r) : 'alle'), run: () => channelPermDialog(room, 'ch', ch) } : null,
+    owner && rolesOk(room) ? { icon: 'lock', label: 'Berechtigungen', note: 'Schreiben: ' + chanWriters(room, ch.id), run: () => channelPermDialog(room, 'ch', ch) } : null,
     owner ? { icon: 'clock', label: 'Nachrichten aufbewahren: ' + ttlLabel(chanTtl(room, ch.id)) + (chanTtlOk(room) && !hasChanTtl(room, ch.id) ? ' (wie Raum)' : ''),
       run: () => (chanTtlOk(room) ? channelTtlDialog(room, ch) : roomTtlDialog(room)) } : null,
     owner ? { icon: 'trash', label: 'Kanal löschen', danger: true, disabled: room.meta.ch.length <= 1, run: () => deleteChannel(room, 'ch', ch) } : null

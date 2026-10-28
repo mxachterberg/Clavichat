@@ -170,6 +170,15 @@ erfunden. Im Überblick – wo verschlüsselt wird und was der Server davon sieh
   Mitgliedern ohne Schreibrecht gehen mit `rx` (der Server prüft dann
   „reagieren“ und vermerkt `r` am Eintrag – er erfährt damit, dass es eine
   Reaktion ist).
+- Stufe „Niemand – nur API-Zugänge“ (`cw[Kanal].n` = seit wann): Der Server
+  lehnt dort jeden Beitrag mit `c` ab, auch von Besitzer und Admins; es
+  bleiben Reaktionen (`rx`, höchstens 4 KB) und Löschhinweise (`rm`: jedes
+  Mitglied, höchstens 4 KB, im Verlauf `r` + `q` – er erfährt damit, dass
+  es ein Löschhinweis ist). Die Apps zeigen von Personen nur, was vor `n`
+  kam, und nehmen aus `q`-Einträgen nur das Löschen eigener Nachrichten an.
+  Beiträge von Zugängen zeigen sie, wenn der Server sie dem Kanal
+  zugeordnet hat oder der Zugang (signiert) von jemandem mit „API-Zugänge“
+  stammt. Apps bis 1.9.4 sehen die Stufe als „nur Besitzer“.
 - Sprachkanäle lassen sich ebenso auf Ränge beschränken (betreten).
 - Gegen einen böswilligen Server schützen Kanal-Beschränkungen nicht: Er
   liefert Rechte, Ränge und Mitgliederliste selbst und könnte Beiträge ohne
@@ -198,7 +207,7 @@ erfunden. Im Überblick – wo verschlüsselt wird und was der Server davon sieh
 - Der Server sieht: dass es Zugänge gibt und wie viele, wann sie angelegt
   und zuletzt benutzt wurden, je Beitrag Zeitpunkt, Größe (auf 16 KB
   aufgefüllt) und IP-Adresse, und den Zielkanal – nur bei Kanälen mit
-  eigener Aufbewahrung.
+  eigener Aufbewahrung oder eigenen Schreibrechten.
 
 ### Forward Secrecy
 

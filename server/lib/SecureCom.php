@@ -252,6 +252,7 @@ class SecureCom
             'cttl'           => self::MAX_CTTL,              // Aufbewahrung je Textkanal (room.cttl)
             'rdel'           => self::MAX_DEL,               // Besitzer entfernt Raumnachrichten (room.del)
             'roles'          => self::MAX_ROLES,             // Ränge und Rechte (role.*, room.cperm)
+            'apionly'        => 1,                           // Textkanal „Niemand – nur API-Zugänge“ (room.cperm n, room.post rm)
             'limits'         => [
                 'voice'   => self::MAX_VOICE,
                 'members' => self::MAX_MEMBERS,
@@ -1528,7 +1529,13 @@ class SecureCom
         // und – in Kanälen mit Schreibrecht nur für bestimmte Ränge (c) – einen
         // davon. Ohne c weiß der Server nicht, wohin ein Beitrag geht; solche
         // Beiträge zeigen die Apps in beschränkten Kanälen nur von Berechtigten.
+        // Kanal „nur API-Zugänge“ (cw[c].n): Dort schreibt niemand, auch nicht
+        // Besitzer oder Administratoren – nur Reaktionen und Löschhinweise.
+        // rm = Löschhinweis ohne Schreibrecht (eigene ältere Nachricht löschen):
+        // jedes Mitglied, nur so groß wie eine Reaktion, im Verlauf r + q – die
+        // Apps nehmen daraus nur „del“ an (und das nur für eigene Nachrichten).
         $rx = $kind === 'msg' && !empty($b['rx']);
+        $rm = $kind === 'msg' && !$rx && !empty($b['rm']);
         $c  = $kind === 'msg' ? self::taggedChannel($room, $b['c'] ?? '') : '';
         if ($rx) {
             self::requirePerm($room, $me['id'], self::P_REACT, 'Du darfst in diesem Raum nicht reagieren.');
@@ -1536,8 +1543,12 @@ class SecureCom
             if (strlen($data) > self::MAX_REACT && !self::canWrite($room, $me['id'], $c)) {
                 throw new SecureComException('Reaktion zu groß.', 413);
             }
+        } elseif ($rm) {
+            if (strlen($data) > self::MAX_REACT) throw new SecureComException('Löschhinweis zu groß.', 413);
         } elseif ($kind === 'msg' && !self::canWrite($room, $me['id'], $c)) {
-            throw new SecureComException('Hier darfst du nicht schreiben.', 403);
+            throw new SecureComException(self::apiOnly($room, $c)
+                ? 'In diesem Kanal posten nur API-Zugänge – auch Besitzer und Admins schreiben hier nicht.'
+                : 'Hier darfst du nicht schreiben.', 403);
         }
         // Letzte Aktivität (fürs Aufräumen temporärer Räume) – höchstens stündlich schreiben.
         if ($kind === 'msg' && time() - self::lastActive($room) >= self::ACTIVE_EVERY) {
@@ -1565,7 +1576,8 @@ class SecureCom
             // wenig Zuordnung.
             $entry['x'] = time() + self::chanTtl($room, $c);   // legt der Besitzer fest
             if ($c !== '') $entry['c'] = $c;
-            if ($rx) $entry['r'] = 1;                         // nur als Reaktion geprüft
+            if ($rx || $rm) $entry['r'] = 1;                  // nur als Reaktion geprüft (ältere Apps: kein Text)
+            if ($rm) $entry['q'] = 1;                         // nur als Löschhinweis
         }
         $entry['d'] = $data;
         return ['s' => self::feedAppend($rid, $room, $entry, $me['id'])];
@@ -1760,6 +1772,14 @@ class SecureCom
      * schreiben (Textkanal) bzw. ihn betreten (v: 1, Sprachkanal) dürfen;
      * [] = nur Besitzer und Administratoren, null = wieder alle. Lesen
      * können immer alle Mitglieder – der Raumschlüssel gilt raumweit.
+     *
+     * n: 1 (nur Textkanäle) = „Niemand – nur API-Zugänge“: Dort schreibt
+     * niemand, auch nicht Besitzer und Administratoren; es posten nur
+     * API-Zugänge, reagieren bleibt erlaubt. Gespeichert als cw[c] =
+     * {r: [], t, n: seit} – Apps bis 1.9.4 kennen n nicht und sehen „nur
+     * Besitzer“. h = Zugänge, die diesem Kanal zugeordnet werden (wie bei
+     * room.cttl; nur mit dem Recht „API-Zugänge“), damit ihre Beiträge in
+     * allen Apps sichtbar bleiben.
      */
     public static function setChannelPerms(array $me, array $b)
     {
@@ -1767,8 +1787,14 @@ class SecureCom
         $voice = !empty($b['v']);
         $c     = $voice ? self::channelOf(self::str($b, 'c')) : self::str($b, 'c');
         if (!$voice && !preg_match('/^[A-Za-z0-9_-]{1,22}$/', $c)) throw new SecureComException('Ungültiger Kanal.', 422);
-        $w = $b['w'] ?? null;
-        return self::roomMutate($rid, function (&$room) use ($me, $c, $w, $voice) {
+        $w    = $b['w'] ?? null;
+        $api  = !$voice && $w !== null && !empty($b['n']);
+        if ($api) $w = [];
+        $hids = [];
+        foreach ($api && isset($b['h']) && is_array($b['h']) ? array_slice($b['h'], 0, self::MAX_HOOKS) : [] as $h) {
+            if (is_string($h) && preg_match('/^[A-Za-z0-9_-]{22}$/', $h)) $hids[$h] = true;
+        }
+        return self::roomMutate($rid, function (&$room) use ($me, $c, $w, $voice, $api, $hids) {
             self::requirePerm($room, $me['id'], self::P_CHANNELS, 'Das darf nur der Besitzer oder ein Rang mit dem Recht „Kanäle verwalten“.');
             if (!empty($room['ot'])) throw new SecureComException('Kanal-Rechte gibt es nicht für Meetings mit Gästen.', 422);
             $key = $voice ? 'vw' : 'cw';
@@ -1782,8 +1808,20 @@ class SecureCom
                 }
                 // seit wann beschränkt: ältere Beiträge zeigen die Apps weiter
                 $map[$c] = $voice ? $list : ['r' => $list, 't' => (int)($map[$c]['t'] ?? time())];
+                // seit wann nur API: Beiträge von Personen danach zeigen die Apps nie
+                if ($api) $map[$c]['n'] = (int)($room['cw'][$c]['n'] ?? 0) ?: time();
             }
             if ($map) $room[$key] = $map; else unset($room[$key]);
+            if (!$voice && !empty($room['hk'])) {
+                // Zugänge zuordnen: nur mit „API-Zugänge“ (wer sie hier auch anlegen dürfte)
+                if ($api && (self::permsOf($room, $me['id']) & self::P_HOOKS)) {
+                    foreach (array_keys($room['hk']) as $hid) if (isset($hids[$hid])) $room['hk'][$hid]['ch'] = $c;
+                }
+                // Wieder für alle und ohne eigene Aufbewahrung: Zuordnung vergessen (der Server soll möglichst wenig wissen)
+                if ($w === null && !isset($room['ct'][$c])) {
+                    foreach ($room['hk'] as $hid => $h) if ((string)($h['ch'] ?? '') === $c) unset($room['hk'][$hid]['ch']);
+                }
+            }
             $room['la'] = time();
             $room['rev']++;
             return self::publicRoom($room, $me['id']);
@@ -1825,7 +1863,8 @@ class SecureCom
             // dessen, der ihn anlegt – also nur, wer dort selbst schreiben darf.
             // Die Zuordnung (ch, an jedem Beitrag als c) belegt das für die Apps;
             // Beiträge ohne sie zeigen sie in beschränkten Kanälen nicht.
-            if ($c !== '' && isset($room['cw'][$c]) && !self::canWrite($room, $me['id'], $c)) {
+            // Kanal „nur API-Zugänge“: Dafür ist er da – „API-Zugänge“ (oben geprüft) genügt.
+            if ($c !== '' && isset($room['cw'][$c]) && !self::canVouch($room, $me['id'], $c, true)) {
                 throw new SecureComException('In diesen Kanal darfst du nicht schreiben – also auch keinen API-Zugang dafür anlegen.', 403);
             }
             $hooks[$hid] = ['h' => $hash, 'c' => time(), 'u' => 0];
@@ -2067,7 +2106,8 @@ class SecureCom
             // Einträge und Zugänge ordnet deshalb nur zu, wer dort selbst
             // schreiben darf; eine vorhandene Zuordnung bleibt beim Zurücksetzen.
             $restricted = isset($room['cw'][$c]);
-            if ($restricted && !self::canWrite($room, $me['id'], $c)) { $seqs = []; $hids = []; }
+            if ($restricted && !self::canVouch($room, $me['id'], $c)) $seqs = [];
+            if ($restricted && !self::canVouch($room, $me['id'], $c, true)) $hids = [];
             // API-Zugänge dieses Kanals: Ziel merken (solange er eine eigene Aufbewahrung hat).
             foreach (array_keys((array)($room['hk'] ?? [])) as $hid) {
                 $was = (string)($room['hk'][$hid]['ch'] ?? '') === $c;
@@ -2851,6 +2891,7 @@ class SecureCom
        room['rl'][Rang] = {p: Rechte, o: Reihenfolge 1…n, höher = mächtiger}
        room['mr'][Mitglied] = [Ränge]      room['dp'] = Rechte von „@alle“
        room['cw'][Textkanal] = {r: [Ränge], t: seit}   wer schreiben darf
+                               {r: [], t, n: seit}       niemand – nur API-Zugänge
        room['vw'][Sprachkanal] = [Ränge]                wer betreten darf
        Kennungen sind zufällig; Namen und Farben der Ränge stehen nur
        verschlüsselt in den Raumdaten. */
@@ -2906,10 +2947,31 @@ class SecureCom
     /** Darf $id schreiben – im Kanal $c ("" = unbekannt bzw. ohne eigene Rechte)? */
     private static function canWrite(array $room, $id, $c)
     {
+        if (self::apiOnly($room, $c)) return false;   // dort niemand, nur API-Zugänge
         $p = self::permsOf($room, $id);
         if ($room['o'] === $id || ($p & self::P_ADMIN)) return true;
         if (!($p & self::P_SEND)) return false;
         return $c === '' || !isset($room['cw'][$c]) || self::hasRoleIn($room, $id, $room['cw'][$c]['r'] ?? []);
+    }
+
+    /** Textkanal „Niemand – nur API-Zugänge“? */
+    private static function apiOnly(array $room, $c)
+    {
+        return $c !== '' && !empty($room['cw'][$c]['n']);
+    }
+
+    /**
+     * Darf $id Einträge ($hook: API-Zugänge) dem beschränkten Kanal $c
+     * zuordnen? Die Zuordnung c belegt für die Apps, dass der Server das
+     * Recht geprüft hat – also: wer dort schreiben darf. Kanal „nur
+     * API-Zugänge“: Zugänge, wer „API-Zugänge“ hat; Nachrichten (von vor der
+     * Umstellung) nur Besitzer und Administratoren.
+     */
+    private static function canVouch(array $room, $id, $c, $hook = false)
+    {
+        if (!self::apiOnly($room, $c)) return self::canWrite($room, $id, $c);
+        $p = self::permsOf($room, $id);
+        return $room['o'] === $id || ($p & self::P_ADMIN) || ($hook && ($p & self::P_HOOKS));
     }
 
     /** Darf $id den Sprachkanal $ch betreten? */
@@ -2962,6 +3024,7 @@ class SecureCom
         $cw = [];
         foreach ((array)($room['cw'] ?? []) as $c => $v) {
             $cw[(string)$c] = ['r' => array_values(array_filter((array)($v['r'] ?? []), function ($r) use ($room) { return isset($room['rl'][$r]); })), 't' => (int)($v['t'] ?? 0)];
+            if (!empty($v['n'])) $cw[(string)$c]['n'] = (int)$v['n'];   // niemand – nur API-Zugänge, seit
         }
         $vw = [];
         foreach ((array)($room['vw'] ?? []) as $c => $v) {

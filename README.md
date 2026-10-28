@@ -60,7 +60,8 @@ Signaturen.
 - **Ränge und Rechte** wie bei Discord: Ränge mit Farbe und Rechten
   (Kanäle, Raum, Nachrichten, Mitglieder, API-Zugänge, Ränge verwalten,
   Administrator), Rangordnung, Vorlagen; je Kanal festlegen, wer schreiben
-  bzw. einen Sprachkanal betreten darf (Rechtsklick auf den Kanal). Die
+  bzw. einen Sprachkanal betreten darf (Rechtsklick auf den Kanal) – bis
+  hin zu „Niemand – nur API-Zugänge“ für reine Feed-Kanäle. Die
   Raumschlüssel bleiben beim Besitzer.
 - **Dateien und Bilder** bis 25 MB, Ende-zu-Ende verschlüsselt mit eigenem
   Schlüssel je Datei; Bilder ohne Metadaten (etwa den Aufnahmeort), mit
@@ -165,6 +166,13 @@ etwa Server-Neuigkeiten in `#servernews`. Den Zugang legt der Besitzer des
 Raums an (Raum-Menü → EINSTELLUNGEN → API-Zugang: Name und Kanal; nur Konten,
 nicht in Meetings oder temporären Räumen, höchstens fünf je Raum). Er wird
 genau einmal angezeigt und lässt sich dort jederzeit widerrufen.
+
+Soll in einem Kanal **nur** der Zugang posten (reiner Feed), stellt man ihn
+per Rechtsklick → Berechtigungen auf **„Niemand – nur API-Zugänge“**: Dann
+schreibt dort niemand mehr, auch nicht Besitzer und Admins; reagieren geht
+weiter, eigene ältere Nachrichten lassen sich löschen (nicht bearbeiten).
+Zugänge für so einen Kanal legt an, wer das Recht „API-Zugänge“ hat;
+vorhandene Zugänge des Kanals ordnet die App beim Umstellen gleich zu.
 
 ```sh
 # Node 18 oder neuer, ohne Abhängigkeiten

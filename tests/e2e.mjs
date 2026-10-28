@@ -1362,6 +1362,88 @@ r = await call('room.rotate', { id: rlRoom, e: 2, env: 'eA', meta: 'eA' }, acc2T
 ok(!r.ok && r._status === 403, 'Administrator: Raumschlüssel bleibt trotzdem beim Besitzer → 403');
 r = await call('room.cperm', { id: rlRoom, c: 'news', w: null }, accToken);
 ok(r.ok && !r.room.cw.news, 'Kanal-Rechte zurücksetzen: wieder alle');
+// Kanal „Niemand – nur API-Zugänge“ (cw.n): niemand schreibt, auch Besitzer/Admins nicht – nur Zugänge posten
+r = await call('config');
+ok(r.ok && r.apionly === 1, 'config: apionly (Server kennt „nur API-Zugänge“)');
+await call('role.set', { id: rlRoom, r: '', p: 15 }, accToken);   // „@alle“ wieder mit reagieren
+const aoTok = C.newHookToken(), aoOld = C.randomId(), aoOwner = C.randomId(), aoAdm = C.randomId(), aoRank = C.randomId(), aoNo = C.randomId();
+const aoHook = async (hid) => call('hook.post', { r: rlRoom, h: hid, t: aoTok, d: C.b64(C.randomBytes(200)) });
+r = await call('hook.create', { id: rlRoom, hid: aoOld, th: await C.hookTokenHash(aoTok) }, accToken);
+ok(r.ok, 'Zugang ohne Kanal-Zuordnung (wie von vor der Umstellung)');
+r = await call('poll', { r: { [rlRoom]: { s: 0, o: 0, g: 0 } } }, accToken);
+const aoStart = Math.max(0, ...r.r[rlRoom].e.map((e) => e.s || 0));   // was danach kommt, gehört zu diesem Test
+r = await call('room.cperm', { id: rlRoom, c: 'news', w: [], n: 1, h: [aoOld] }, TR.token);
+ok(!r.ok && r._status === 403, '„nur API-Zugänge“ ohne „Kanäle verwalten“ → 403');
+r = await call('room.cperm', { id: rlRoom, c: 'news', w: [MOD], n: 1, h: [aoOld] }, accToken);
+const aoSince = r.room && r.room.cw.news && r.room.cw.news.n;
+ok(r.ok && aoSince > 0 && r.room.cw.news.r.length === 0 && r.room.cw.news.t > 0, '#ankuendigungen: niemand – nur API-Zugänge (cw = {r: [], t, n: seit}, Ränge fallen weg)');
+if (STORE) ok(roomJson(rlRoom).hk[aoOld].ch === 'news', 'vorhandener Zugang beim Umstellen gleich zugeordnet (h)');
+r = await call('rooms', {}, TR.token);
+ok(r.rooms.find((x) => x.id === rlRoom).cw.news.n === aoSince, 'Mitglieder sehen cw.news.n');
+for (const [who, id, tok, label] of [[acc, accId, accToken, 'Besitzer'], [acc2, acc2Id, acc2Token, 'Administrator'], [TR, TR.id, TR.token, 'Mitglied']]) {
+  r = await call('room.post', { id: rlRoom, k: 'msg', c: 'news', d: await rlMsg(who, id, 'news', 'Hallo?') }, tok);
+  ok(!r.ok && r._status === 403 && /nur API-Zugänge/.test(r.error || ''), label + ' postet in #ankuendigungen → 403 mit Hinweis');
+}
+r = await call('room.post', { id: rlRoom, k: 'msg', c: 'news', rx: 1, d: await rlMsg(TR, TR.id, 'news', '', 'react') }, TR.token);
+ok(r.ok, 'Reaktion (rx) eines Mitglieds geht (mit „reagieren“)');
+r = await call('room.post', { id: rlRoom, k: 'msg', c: 'news', rx: 1, d: await rlMsg(acc, accId, 'news', '', 'react') }, accToken);
+ok(r.ok, 'Reaktion des Besitzers (rx) geht');
+r = await call('room.post', { id: rlRoom, k: 'msg', c: 'news', rx: 1, d: 'A'.repeat(5000) }, accToken);
+ok(!r.ok && r._status === 413, 'auch beim Besitzer: rx dort nur so groß wie eine Reaktion → 413');
+r = await call('room.post', { id: rlRoom, k: 'msg', c: 'news', rm: 1, d: await rlMsg(TR, TR.id, 'news', '', 'del') }, TR.token);
+const aoRmSeq = r.s;
+ok(r.ok, 'Löschhinweis (rm) eines Mitglieds wird angenommen (eigene ältere Nachricht löschen)');
+r = await call('room.post', { id: rlRoom, k: 'msg', c: 'news', rm: 1, d: 'A'.repeat(5000) }, TR.token);
+ok(!r.ok && r._status === 413, 'Löschhinweis größer als eine Reaktion → 413');
+r = await call('room.post', { id: rlRoom, k: 'msg', c: 'news', rx: 1, d: await rlMsg(TR, TR.id, 'news', '', 'react') }, TB.token);
+ok(!r.ok && r._status === 403, 'Nicht-Mitglied: Reaktion → 403');
+// API-Zugänge für den Kanal: Besitzer, Administrator, Rang mit „API-Zugänge“ – nicht ohne das Recht
+r = await call('hook.create', { id: rlRoom, hid: aoOwner, th: await C.hookTokenHash(aoTok), c: 'news' }, accToken);
+ok(r.ok, 'hook.create für #ankuendigungen: Besitzer');
+r = await call('hook.create', { id: rlRoom, hid: aoAdm, th: await C.hookTokenHash(aoTok), c: 'news' }, acc2Token);
+ok(r.ok, 'hook.create für #ankuendigungen: Administrator');
+await call('role.set', { id: rlRoom, r: MOD, p: modPerms }, accToken);   // Moderator ohne Administrator
+r = await call('hook.create', { id: rlRoom, hid: aoNo, th: await C.hookTokenHash(aoTok), c: 'news' }, acc2Token);
+ok(!r.ok && r._status === 403, 'hook.create durch Mitglied ohne „API-Zugänge“ → 403');
+const HKR2 = 'hookRang02';
+await call('role.set', { id: rlRoom, r: HKR2, p: P.HOOKS }, accToken);
+await call('role.assign', { id: rlRoom, r: HKR2, member: acc2Id, on: 1 }, accToken);
+r = await call('hook.create', { id: rlRoom, hid: aoRank, th: await C.hookTokenHash(aoTok), c: 'news' }, acc2Token);
+ok(r.ok, 'hook.create durch Rang mit „API-Zugänge“ (ohne Schreibrecht – dort schreibt ja niemand)');
+r = await call('room.post', { id: rlRoom, k: 'msg', c: 'news', d: await rlMsg(acc2, acc2Id, 'news', 'doch?') }, acc2Token);
+ok(!r.ok && r._status === 403, '… posten darf er selbst trotzdem nicht → 403');
+if (STORE) {
+  const hk = roomJson(rlRoom).hk;
+  ok(hk[aoOwner].ch === 'news' && hk[aoAdm].ch === 'news' && hk[aoRank].ch === 'news' && !hk[aoNo], 'Server: neue Zugänge #ankuendigungen zugeordnet');
+}
+r = await aoHook(aoOwner);
+ok(r.ok, 'hook.post in den Kanal: angenommen');
+const aoHookOld = await aoHook(aoOld);
+ok(aoHookOld.ok, 'hook.post des vorhandenen (zugeordneten) Zugangs: angenommen');
+r = await call('poll', { r: { [rlRoom]: { s: aoStart, o: 0, g: 0 } } }, accToken);
+const aoFeed = r.r[rlRoom].e.filter((e) => e.s > aoStart);
+const aoHooks = aoFeed.filter((e) => e.k === 'hook');
+ok(aoHooks.length === 2 && aoHooks.every((e) => e.c === 'news'), 'Beiträge der Zugänge tragen c = Kanal (auch der vorhandene)');
+const aoRm = aoFeed.find((e) => e.s === aoRmSeq);
+ok(aoRm && aoRm.r === 1 && aoRm.q === 1 && aoRm.c === 'news', 'Löschhinweis im Verlauf: r + q (Apps nehmen daraus nur „del“, ältere Apps nichts)');
+ok(aoFeed.length > 0 && !aoFeed.some((e) => e.k === 'msg' && e.c === 'news' && !e.r), 'kein Text von Personen in #ankuendigungen seit der Umstellung');
+r = await call('room.del', { id: rlRoom, s: [aoHooks[0].s] }, accToken);
+ok(r.ok, 'Besitzer löscht einen API-Beitrag (Nachrichten verwalten geht weiter)');
+// Zurück: Ränge (ohne n) bzw. alle
+r = await call('room.cperm', { id: rlRoom, c: 'news', w: [MOD] }, accToken);
+ok(r.ok && r.room.cw.news.r.join() === MOD && !('n' in r.room.cw.news), 'zurück auf „nur Moderatoren“: n weg');
+r = await call('room.post', { id: rlRoom, k: 'msg', c: 'news', d: await rlMsg(acc2, acc2Id, 'news', 'wieder da') }, acc2Token);
+ok(r.ok, 'Moderator schreibt wieder');
+r = await call('room.cperm', { id: rlRoom, c: 'news', w: [], n: 1 }, accToken);
+ok(r.ok && r.room.cw.news.n > 0, 'wieder „nur API-Zugänge“');
+r = await call('room.cperm', { id: rlRoom, c: 'news', w: null }, accToken);
+ok(r.ok && !r.room.cw.news, 'zurück auf „alle“');
+if (STORE) ok(Object.values(roomJson(rlRoom).hk).every((h) => !('ch' in h)), 'Zuordnungen der Zugänge vergessen (Kanal ohne eigene Rechte und Aufbewahrung)');
+r = await call('room.post', { id: rlRoom, k: 'msg', c: 'news', d: await rlMsg(TR, TR.id, 'news', 'Hallo alle') }, TR.token);
+ok(r.ok, 'Mitglied schreibt wieder');
+for (const h of [aoOld, aoOwner, aoAdm, aoRank]) await call('hook.del', { id: rlRoom, hid: h }, accToken);
+await call('role.del', { id: rlRoom, r: HKR2 }, accToken);
+await call('role.set', { id: rlRoom, r: MOD, p: modPerms | P.ADMIN }, accToken);
 // Nicht-Mitglieder, Gäste
 r = await call('role.set', { id: rlRoom, r: 'fremdRang1', p: 1 }, TB.token);
 ok(!r.ok && r._status === 403, 'Nicht-Mitglied: role.set → 403');
