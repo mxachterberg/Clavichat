@@ -105,8 +105,22 @@ function prefsFile() { return path.join(app.getPath('userData'), 'window.json');
 function loadWindowPrefs() {
   try { windowPrefs.tray = JSON.parse(fs.readFileSync(prefsFile(), 'utf8')).tray === true; } catch (e) { /* Standard: aus */ }
 }
+/* window.json hält beides: tray (hier) und die Farben der Titelleiste (chrome,
+   unten). Jede Änderung liest die Datei, setzt ihre eigenen Felder und
+   schreibt sie zurück – nacheinander, damit sich zwei Änderungen nicht
+   gegenseitig überschreiben (früher ging dabei tray oder die Farbe verloren). */
+let prefsWrite = Promise.resolve();
+function saveWindowJson(fields) {
+  prefsWrite = prefsWrite.then(async () => {
+    let saved = {};
+    try { saved = JSON.parse(await fs.promises.readFile(prefsFile(), 'utf8')); } catch (e) { /* noch keine Datei */ }
+    if (!saved || typeof saved !== 'object' || Array.isArray(saved)) saved = {};
+    await fs.promises.writeFile(prefsFile(), JSON.stringify(Object.assign(saved, fields)));
+  }).catch(() => { /* nächstes Mal */ });
+  return prefsWrite;
+}
 function saveWindowPrefs() {
-  fs.promises.writeFile(prefsFile(), JSON.stringify(windowPrefs)).catch(() => { /* nächstes Mal */ });
+  saveWindowJson({ tray: windowPrefs.tray });
 }
 function showWindow() {
   if (!win) return;
@@ -117,8 +131,10 @@ function showWindow() {
 /* Logo aus den Einstellungen der Oberfläche (LOGO, je Gerät): Fenster,
    Taskleiste und Infobereich zeigen es, solange die App läuft – die
    Oberfläche schickt es bei jedem Start neu (nur wenn nicht der Standard).
-   null = wieder das eingebaute Symbol. Programmdatei, Verknüpfungen und
-   Installer behalten build/icon.ico. */
+   null = wieder das eingebaute Symbol. Programmdatei und Installer behalten
+   build/icon.ico; die eigenen Verknüpfungen der installierten App zeigen
+   dagegen auf die .ico im Datenordner (setTaskbarIcon → updateShortcuts),
+   also auch auf das gewählte Logo. */
 let customIcon = null;
 
 /* Taskleiste: Windows nimmt das Symbol aus appIconPath (setAppDetails), nicht
@@ -187,7 +203,8 @@ function writeTaskbarIco(data) {
    Verknüpfungen (Startmenü, Desktop, angeheftet) auf die .ico umstellen –
    nur die, die genau auf diese Programmdatei zeigen. */
 function updateShortcuts(ico) {
-  if (!ico || PORTABLE) return;
+  // Selbsttest: nie echte Verknüpfungen des Nutzers anfassen.
+  if (!ico || PORTABLE || SMOKE) return;
   const exe = path.resolve(EXE).toLowerCase();
   const places = [
     path.join(app.getPath('appData'), 'Microsoft', 'Windows', 'Start Menu', 'Programs', 'Clavichat.lnk'),
@@ -255,17 +272,13 @@ function updateTray() {
 const TITLEBAR_H = 36;   // wie --nav-h in window.css
 let chrome = { color: '#0b0b0d', symbolColor: '#a2a2a7' };
 
-function chromeFile() {
-  return path.join(app.getPath('userData'), 'window.json');
-}
-
 function isColor(value) {
   return typeof value === 'string' && /^#[0-9a-f]{6}$/i.test(value);
 }
 
 function loadChrome() {
   try {
-    const saved = JSON.parse(fs.readFileSync(chromeFile(), 'utf8'));
+    const saved = JSON.parse(fs.readFileSync(prefsFile(), 'utf8'));
     if (isColor(saved.color) && isColor(saved.symbolColor)) chrome = { color: saved.color, symbolColor: saved.symbolColor };
   } catch (e) { /* erster Start: dunkel */ }
 }
@@ -285,7 +298,7 @@ ipcMain.on('securecom:chrome', (event, colors) => {
     w.setTitleBarOverlay(overlay());
     w.setBackgroundColor(chrome.color);
   }
-  fs.promises.writeFile(chromeFile(), JSON.stringify(chrome)).catch(() => { /* nächstes Mal */ });
+  saveWindowJson({ color: chrome.color, symbolColor: chrome.symbolColor });   // tray bleibt erhalten
 });
 
 /* ==========================================================================
@@ -479,8 +492,12 @@ function openPicker(list, audioRequested) {
       autoHideMenuBar: true,
       show: false,
       icon: ICON,
-      webPreferences: { preload: path.join(__dirname, 'picker-preload.js'), contextIsolation: true, sandbox: true, nodeIntegration: false }
+      webPreferences: { preload: path.join(__dirname, 'picker-preload.js'), contextIsolation: true, sandbox: true, nodeIntegration: false, devTools: !app.isPackaged }
     });
+    // Die Auswahl zeigt nur picker.html: keine anderen Seiten, keine neuen Fenster.
+    picker.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+    // (loadURL unten löst will-navigate nicht aus – jede andere Navigation ist fremd.)
+    picker.webContents.on('will-navigate', (event) => event.preventDefault());
     let done = false;
     const finish = (choice) => {
       if (done) return;
@@ -588,22 +605,49 @@ ipcMain.handle('securecom:window', (event, op, value) => {
 });
 
 // Logo-Wahl (Einstellungen → LOGO): PNG als Data-URL, höchstens 512 × 512.
-// Nur vom eigenen Fenster und nur PNG – alles andere wird ignoriert.
-const ICON_URL_MAX = 1024 * 1024;
-ipcMain.handle('securecom:icon', (event, dataUrl) => {
-  if (!win || event.sender !== win.webContents || !event.senderFrame || !isOurs(event.senderFrame.url)) return false;
-  if (dataUrl === null) {
-    customIcon = null;
-  } else {
-    if (typeof dataUrl !== 'string' || dataUrl.length > ICON_URL_MAX || !/^data:image\/png;base64,[A-Za-z0-9+/]+=*$/.test(dataUrl)) return false;
-    const img = nativeImage.createFromDataURL(dataUrl);
-    const size = img.getSize();
-    if (img.isEmpty() || size.width > 512 || size.height > 512 || size.width !== size.height) return false;
-    customIcon = img;
-  }
+// Nur vom eigenen Fenster und nur PNG – alles andere wird ignoriert. Breite
+// und Höhe stehen im PNG-Kopf (IHDR) und werden VOR dem Dekodieren geprüft:
+// Ein kleines PNG kann sonst riesige Maße angeben (Speicher). Dasselbe Bild
+// noch einmal: nichts tun. Höchstens ein neues Bild je Sekunde – schnellere
+// Wechsel sammeln sich, das letzte gilt nach Ablauf der Sekunde.
+const ICON_URL_MAX = 256 * 1024;
+const ICON_MIN_GAP = 1000;
+let iconLast = { hash: 'null', at: 0 };
+let iconQueued = null;   // { hash, img } – wartet auf ICON_MIN_GAP
+function pngSize(buf) {
+  // Signatur, dann der erste Block: Länge 13, Typ IHDR, Breite, Höhe (Big Endian)
+  if (buf.length < 24 || buf.readUInt32BE(0) !== 0x89504e47 || buf.readUInt32BE(4) !== 0x0d0a1a0a) return null;
+  if (buf.readUInt32BE(8) !== 13 || buf.toString('latin1', 12, 16) !== 'IHDR') return null;
+  return { width: buf.readUInt32BE(16), height: buf.readUInt32BE(20) };
+}
+function applyIcon(hash, img) {
+  iconLast = { hash: hash, at: Date.now() };
+  customIcon = img;
+  if (!win || win.isDestroyed()) return;
   win.setIcon(customIcon || ICON);
   setTaskbarIcon();
   if (tray) tray.setImage(trayImage());
+}
+ipcMain.handle('securecom:icon', (event, dataUrl) => {
+  if (!win || event.sender !== win.webContents || !event.senderFrame || !isOurs(event.senderFrame.url)) return false;
+  if (dataUrl !== null && (typeof dataUrl !== 'string' || dataUrl.length > ICON_URL_MAX)) return false;
+  const hash = dataUrl === null ? 'null' : require('crypto').createHash('sha256').update(dataUrl).digest('hex');
+  if (hash === (iconQueued ? iconQueued.hash : iconLast.hash)) return true;   // schon gesetzt bzw. vorgemerkt
+  let img = null;
+  if (dataUrl !== null) {
+    if (!/^data:image\/png;base64,[A-Za-z0-9+/]+=*$/.test(dataUrl)) return false;
+    const head = pngSize(Buffer.from(dataUrl.slice(22, 22 + 64), 'base64'));
+    if (!head || !head.width || head.width > 512 || head.height > 512 || head.width !== head.height) return false;
+    img = nativeImage.createFromDataURL(dataUrl);
+    const size = img.getSize();
+    if (img.isEmpty() || size.width > 512 || size.height > 512 || size.width !== size.height) return false;
+  }
+  const wait = ICON_MIN_GAP - (Date.now() - iconLast.at);
+  if (wait <= 0 && !iconQueued) { applyIcon(hash, img); return true; }
+  if (!iconQueued) {
+    setTimeout(() => { const q = iconQueued; iconQueued = null; if (q && q.hash !== iconLast.hash) applyIcon(q.hash, q.img); }, Math.max(wait, 0));
+  }
+  iconQueued = { hash: hash, img: img };
   return true;
 });
 
