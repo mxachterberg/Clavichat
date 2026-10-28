@@ -38,6 +38,9 @@ const SLOT_KIND = { mic: 'audio', cam: 'video', screen: 'video', screenAudio: 'a
 /* ==========================================================================
    Zustand
    ========================================================================== */
+// Start der App (ms): Ereignisse im Verlauf danach sind „frisch“ (Meldungen nur dafür).
+const APP_START = Date.now();
+
 const S = {
   cfg: null,
   token: null,
@@ -6761,26 +6764,36 @@ function hookApiUrl() {
   try { return new URL(API_URL, location.href).href; } catch (e) { return API_URL; }
 }
 
-/** fresh: { access, name, ch } direkt nach dem Anlegen – der Zugang erscheint nur dieses eine Mal. */
+/**
+ * fresh: { access, name, ch } direkt nach dem Anlegen – oder eine Liste
+ * davon nach „Zugänge erneuern“. Ein Zugang erscheint nur dieses eine Mal.
+ */
 function hooksDialog(room, fresh) {
+  const freshList = Array.isArray(fresh) ? fresh : fresh ? [fresh] : [];
   openModal({
     title: 'API-ZUGANG',
     build: (body, close) => {
       const chName = (id) => { const c = room.meta.ch.find((x) => x.id === id) || room.meta.ch[0]; return c ? c.name : ''; };
       appendAll(body, el('p', { class: 'sc-p', text: 'Skripte oder Claude posten über einen Zugang in einen Textkanal. Der Zugang kann nur posten: Er liest nichts, sieht keine Mitglieder und kennt den Raumschlüssel nicht. Beiträge sind Ende-zu-Ende verschlüsselt.' }));
 
-      if (fresh) {
+      freshList.forEach((f, i) => {
         const input = el('textarea', { class: 'sc-hook-secret', rows: '6', readonly: true, spellcheck: 'false' });
-        input.value = fresh.access;
+        input.value = f.access;
         appendAll(body, el('div', { class: 'sc-hook-new tickbox' },
-          el('p', { class: 'sc-hook-new-head' }, icon('check', 14), 'Zugang „' + fresh.name + '“ für #' + chName(fresh.ch) + ' angelegt'),
+          el('p', { class: 'sc-hook-new-head' }, icon('check', 14), 'Zugang „' + f.name + '“ für #' + chName(f.ch) + (f.renewed ? ' erneuert' : ' angelegt')),
           input,
           el('div', { class: 'sc-card-actions' },
-            el('button', { type: 'button', class: 'btn btn--primary', onclick: () => copyText(fresh.access, 'Zugang') }, icon('copy', 14), 'Kopieren')),
-          el('p', { class: 'sc-note', text: 'Wird nur jetzt angezeigt – danach nie wieder (nur widerrufen und neu anlegen). Wer ihn hat, kann in #' + chName(fresh.ch) + ' posten: Aufbewahren wie ein Passwort, nicht in Code oder Protokolle schreiben.' }),
-          el('p', { class: 'sc-note', text: 'So nutzt du ihn: Zugang in die Umgebungsvariable CLAVICHAT_HOOK legen und mit dem Werkzeug aus dem Clavichat-Repository posten (Node 18 oder neuer, keine Installation):' }),
-          hookCodeLine('echo "Hallo" | CLAVICHAT_HOOK="<zugang>" node tools/clavichat-post.mjs')));
-        setTimeout(() => input.select(), 60);
+            el('button', { type: 'button', class: 'btn btn--primary', onclick: () => copyText(f.access, 'Zugang') }, icon('copy', 14), 'Kopieren')),
+          i ? null : el('p', { class: 'sc-note', text: 'Wird nur jetzt angezeigt – danach nie wieder (nur widerrufen und neu anlegen). Wer ihn hat, kann in #' + chName(f.ch) + ' posten: Aufbewahren wie ein Passwort, nicht in Code oder Protokolle schreiben.' +
+            (f.renewed ? ' Der bisherige Zugang postet nicht mehr – trage den neuen in deinen Skripten ein.' : '') }),
+          i ? null : el('p', { class: 'sc-note', text: 'So nutzt du ihn: Zugang in die Umgebungsvariable CLAVICHAT_HOOK legen und mit dem Werkzeug aus dem Clavichat-Repository posten (Node 18 oder neuer, keine Installation):' }),
+          i ? null : hookCodeLine('echo "Hallo" | CLAVICHAT_HOOK="<zugang>" node tools/clavichat-post.mjs')));
+        if (!i) setTimeout(() => input.select(), 60);
+      });
+      // Seit dem Anlegen hat jemand den Raum verlassen: Er kennt die Leseschlüssel weiterhin.
+      if (room.hookStale && hookCount(room) && !freshList.length) {
+        appendAll(body, el('p', { class: 'sc-gate-invite sc-hook-stale' }, icon('alert', 15),
+          'Seit dem Anlegen hat jemand den Raum verlassen oder wurde entfernt. Die Leseschlüssel der Zugänge kennt er weiterhin – „Zugänge erneuern“ gibt allen neue.'));
       }
 
       // Liste: Namen aus den Raumdaten, angelegt/zuletzt benutzt vom Server
@@ -6827,8 +6840,12 @@ function hooksDialog(room, fresh) {
       } else {
         appendAll(body, el('p', { class: 'sc-note', text: 'Mehr als ' + HOOK_LIMIT + ' Zugänge je Raum gehen nicht – widerrufe einen, um einen neuen anzulegen.' }));
       }
-      appendAll(body, hookGuide(!hookCount(room) && !fresh),
-        el('p', { class: 'sc-note sc-hook-foot', text: 'Den Leseschlüssel eines Zugangs kennen alle Mitglieder – auch ehemalige. Nach dem Entfernen von Mitgliedern Zugang bei Bedarf widerrufen und neu anlegen.' }));
+      if (hookCount(room)) {
+        appendAll(body, el('button', { type: 'button', class: 'btn btn--block sc-hook-renew', onclick: () => { close(); renewHooks(room); } },
+          icon('refresh', 14), hookCount(room) === 1 ? 'Zugang erneuern' : 'Zugänge erneuern'));
+      }
+      appendAll(body, hookGuide(!hookCount(room) && !freshList.length),
+        el('p', { class: 'sc-note sc-hook-foot', text: 'Den Leseschlüssel eines Zugangs kennen alle Mitglieder – auch ehemalige – und alle mit einem gültigen Einladungslink. Nach dem Entfernen von Mitgliedern: „Zugänge erneuern“ (neue Schlüssel und Tokens, die alten posten nicht mehr).' }));
     }
   });
 }
@@ -6889,6 +6906,51 @@ async function createHook(room, name, ch) {
     throw e;
   }
   return C.hookAccess({ u: hookApiUrl(), r: room.id, h: hid, t: token, k: keys.pub });
+}
+
+/**
+ * Alle Zugänge erneuern: je Zugang neues Schlüsselpaar und Token (gleicher
+ * Name und Kanal), der alte wird beim Server widerrufen. Ehemalige
+ * Mitglieder kennen die neuen Leseschlüssel nicht (sie bekommen die neuen
+ * Raumdaten nicht mehr). Erst den alten widerrufen, dann neu anlegen – der
+ * Server erlaubt höchstens fünf je Raum.
+ */
+async function renewHooks(room) {
+  room = S.rooms.get(room.id) || room;
+  const list = Object.entries(room.meta.hooks || {});
+  if (!list.length) { hooksDialog(room); return; }
+  const ok = await confirmBox(list.length === 1 ? 'ZUGANG ERNEUERN' : 'ZUGÄNGE ERNEUERN',
+    (list.length === 1 ? 'Der Zugang bekommt' : 'Alle ' + list.length + ' Zugänge bekommen') + ' einen neuen Schlüssel und ein neues Token – der bisherige postet ab sofort nicht mehr. ' +
+    'Ehemalige Mitglieder kennen die neuen Leseschlüssel nicht. Die neuen Zugänge erscheinen nur jetzt: danach in deinen Skripten eintragen. Bisherige Beiträge der Zugänge verschwinden aus der Ansicht.', 'Erneuern', true);
+  if (!ok) { hooksDialog(room); return; }
+  const hooks = Object.assign({}, room.meta.hooks);
+  const made = [];
+  const fresh = [];
+  try {
+    for (const [hid, h] of list) {
+      await api('hook.del', { id: room.id, hid: hid });
+      delete hooks[hid];
+      const keys = await C.newHookKeys();
+      const token = C.newHookToken();
+      const nid = C.randomId();
+      await api('hook.create', Object.assign({ id: room.id, hid: nid, th: await C.hookTokenHash(token) }, chanParam(room, h.ch)));
+      made.push(nid);
+      hooks[nid] = { n: h.n, ch: h.ch, k: keys.priv, c: Date.now() };
+      fresh.push({ access: C.hookAccess({ u: hookApiUrl(), r: room.id, h: nid, t: token, k: keys.pub }), name: h.n, ch: h.ch, renewed: true });
+    }
+    await updateMeta(room, metaOf(room, { hooks: hooks }));
+  } catch (e) {
+    // Neue ohne Leseschlüssel sind nutzlos: zurücknehmen; widerrufene alte aus den Raumdaten nehmen.
+    for (const nid of made) { await api('hook.del', { id: room.id, hid: nid }).catch(() => {}); delete hooks[nid]; }
+    await updateMeta(S.rooms.get(room.id) || room, metaOf(S.rooms.get(room.id) || room, { hooks: hooks })).catch(() => {});
+    toast(e.message, 'error');
+    hooksDialog(S.rooms.get(room.id) || room);
+    return;
+  }
+  const cur = S.rooms.get(room.id) || room;
+  cur.hookStale = false;
+  toast(fresh.length === 1 ? 'Zugang erneuert.' : fresh.length + ' Zugänge erneuert.', 'ok');
+  hooksDialog(cur, fresh);
 }
 
 async function revokeHook(room, hid, name) {
@@ -7787,6 +7849,12 @@ async function roomHook(room, e) {
   const ts = e.t * 1000;
   const ch = room.meta.ch.some((c) => c.id === hook.ch) ? hook.ch : room.meta.ch[0].id;
   if (ts + chanTtl(room, ch) * 1000 < serverNow()) return;
+  // Ohne „Verlauf für Neue“: Beiträge von vor dem eigenen Beitritt ausblenden – wie Nachrichten
+  // älterer Generationen. Nur die Ansicht: Den Leseschlüssel des Zugangs hat man trotzdem.
+  if (!room.meta.hist) {
+    const mine = room.members.find((m) => m.id === S.me.id);
+    if (mine && mine.j && e.t < mine.j) return;
+  }
   const k = await hookKey(e.h, hook.k);
   if (!k) return;
   let obj;
@@ -7828,6 +7896,18 @@ function roomSys(room, e) {
   // – solange Links offen sind, käme er damit ohnehin wieder hinein. Ein
   // neuer Schlüssel machte nur alle geteilten Links ungültig (Gäste kämen
   // nicht mehr hinein). Entfernen erneuert ihn weiterhin.
+  // API-Zugänge: Wer geht, kennt ihre Leseschlüssel weiter (stehen in den Raumdaten). Hinweis an
+  // alle, die Zugänge verwalten – im Dialog immer, als Meldung nur bei frischen Ereignissen.
+  if ((e.ev === 'leave' || e.ev === 'kick') && e.id !== S.me.id && hooksOk(room)) {
+    const hooks = Object.values(room.meta.hooks || {});
+    if (hooks.some((h) => !h.c || h.c < ts)) {
+      room.hookStale = true;
+      if (ts > APP_START + (S.skew || 0) - 10000) {
+        toast(who + (e.ev === 'kick' ? ' wurde entfernt' : ' ist gegangen') + ' und kennt die Leseschlüssel der API-Zugänge von „' + room.meta.name +
+          '“ weiterhin. Raum-Menü → API-Zugang → „Zugänge erneuern“.', 'ok', 9000);
+      }
+    }
+  }
   const keepLinks = e.ev === 'leave' && room.meta.meet && room.iv;
   if ((e.ev === 'leave' || e.ev === 'kick') && room.owner === S.me.id && e.id !== S.me.id && !keepLinks) {
     const rot = (S.vault.rooms[room.id] && S.vault.rooms[room.id].rot) || 0;

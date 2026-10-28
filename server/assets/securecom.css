@@ -1445,6 +1445,8 @@ html[data-theme="light"] .sc-modal { background: rgba(40, 40, 40, .3); }
 .sc-hook-new .sc-card-actions { margin: 8px 0 10px; }
 .sc-hook-new .sc-note { margin-bottom: 8px; }
 .sc-hook-foot { margin-top: 14px; }
+.sc-hook-renew { margin-top: 12px; }
+.sc-hook-stale { margin: 2px 0 12px; }
 /* Befehlszeile mit Kopier-Knopf */
 .sc-hook-code { display: flex; align-items: center; gap: 6px; margin: 2px 0 8px; padding: 4px 4px 4px 10px; border: 1px solid var(--border-soft); background: color-mix(in srgb, var(--text) 4%, transparent); }
 .sc-hook-code code { flex: 1; min-width: 0; font-family: var(--mono); font-size: 11px; line-height: 1.5; color: var(--text-body); overflow-wrap: anywhere; }
