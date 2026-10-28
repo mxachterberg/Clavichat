@@ -4792,6 +4792,8 @@ function handleDm(obj, from, e) {
       const existing = conv.byId.get(obj.id);
       if (existing) {
         // Eigene Nachricht kommt als Kopie zurück: jetzt mit Serverzeit.
+        // Gleiche Kennung von jemand anderem: verwerfen.
+        if (existing.from !== from.id) break;
         existing.state = null;
         existing.seq = e.s;
         if (existing.ts !== ts) { existing.ts = ts; conv.msgs.sort((a, b) => a.ts - b.ts); }
@@ -7725,12 +7727,22 @@ function roomMessage(room, obj, from, e) {
   if (obj.t !== 'msg') return;
   const existing = room.byId.get(obj.id);
   if (existing) {
+    // Gleiche Kennung: nur das Echo der eigenen ausstehenden Nachricht oder
+    // dieselbe Nachricht desselben Absenders noch einmal. Fremde Duplikate
+    // verwerfen – sonst übernähme ein anderer Nummer und Zeit der Nachricht
+    // („Nachricht löschen“ träfe dann seinen Eintrag statt des echten).
+    if (existing.from !== from.id) return;
     existing.state = null;
-    if (e.s) existing.seq = e.s;
-    if (existing.ts !== ts) {
-      existing.ts = ts;
-      const list = room.msgs.get(ch);
-      if (list) list.sort((a, b) => a.ts - b.ts);
+    if (e.s && existing.seq && existing.seq !== e.s) {
+      // Mehrere Einträge derselben Nachricht: alle Nummern merken (room.del löscht sie mit).
+      if (!(existing.xs || (existing.xs = [])).includes(e.s)) existing.xs.push(e.s);
+    } else if (e.s && !existing.seq) {
+      existing.seq = e.s;
+      if (existing.ts !== ts) {
+        existing.ts = ts;
+        const list = room.msgs.get(ch);
+        if (list) list.sort((a, b) => a.ts - b.ts);
+      }
     }
     scheduleRender();
     return;
