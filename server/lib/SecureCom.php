@@ -116,7 +116,7 @@ class SecureCom
     const P_SEND      = 1;      // Nachrichten schreiben
     const P_REACT     = 2;      // auf Nachrichten reagieren
     const P_VOICE     = 4;      // Sprachkanäle betreten
-    const P_INVITE    = 8;      // Einladungslinks erstellen
+    const P_INVITE    = 8;      // nur noch in Einmal-Meetings: Links teilen (sonst laden Besitzer und Administratoren ein)
     const P_CHANNELS  = 16;     // Kanäle anlegen/umbenennen/löschen/verschieben, Kanal-Aufbewahrung und -Rechte
     const P_ROOM      = 32;     // Name, Bild, Aufbewahrung, Sprachqualität des Raums
     const P_MESSAGES  = 64;     // fremde Nachrichten löschen (room.del)
@@ -125,7 +125,7 @@ class SecureCom
     const P_ROLES     = 512;    // Ränge unterhalb des eigenen verwalten und vergeben
     const P_ADMIN     = 1024;   // alle Rechte, Kanal-Beschränkungen gelten nicht
     const P_ALL       = 2047;
-    const P_BASE      = 15;     // Rang „@alle“ ohne eigene Einstellung: schreiben, reagieren, Sprache, einladen
+    const P_BASE      = 15;     // Rang „@alle“ ohne eigene Einstellung: schreiben, reagieren, Sprache (+ Bit 8, ohne Wirkung außer in Meetings)
     // Wer davon eins hat, darf die (verschlüsselten) Raumdaten neu schreiben.
     const P_META      = self::P_CHANNELS | self::P_ROOM | self::P_HOOKS | self::P_ROLES | self::P_ADMIN;
     const MAX_SIGNAL    = 49152;
@@ -533,7 +533,39 @@ class SecureCom
     private static function inviteValid(array $room, $code)
     {
         $inv = is_string($code) ? ($room['inv'][$code] ?? null) : null;
-        return is_array($inv) && (int)$inv['x'] >= time() && (int)$inv['n'] < (int)$inv['max'];
+        return is_array($inv) && self::inviteOpen($room, $inv);
+    }
+
+    /**
+     * Offen und gültig: nicht abgelaufen, nicht aufgebraucht – und (außer in
+     * Einmal-Meetings) vom Besitzer oder einem Administrator erstellt, und
+     * zwar nach heutigem Stand. Links von Mitgliedern, die nicht (mehr)
+     * Administrator sind, gelten nicht (auch ältere von vor dieser Regel).
+     */
+    private static function inviteOpen(array $room, array $inv)
+    {
+        if ((int)($inv['x'] ?? 0) < time() || (int)($inv['n'] ?? 0) >= (int)($inv['max'] ?? 0)) return false;
+        return !empty($room['ot']) || self::isAdmin($room, (string)($inv['b'] ?? ''));
+    }
+
+    /** Besitzer oder Rang mit „Administrator“ (nur sie laden in Räume ein). */
+    private static function isAdmin(array $room, $id)
+    {
+        if ($id === '' || !isset($room['mem'][$id])) return false;
+        return $room['o'] === $id || (bool)(self::permsOf($room, $id) & self::P_ADMIN);
+    }
+
+    /**
+     * Einladungen, deren Ersteller nicht (mehr) einladen darf, entfernen –
+     * bei jedem Schreibzugriff auf den Raum (roomMutate). Einmal-Meetings
+     * nicht: Dort teilen Teilnehmer Links, der Gastgeber bestätigt.
+     */
+    private static function dropForeignInvites(array &$room)
+    {
+        if (!empty($room['ot']) || empty($room['inv']) || !is_array($room['inv'])) return;
+        foreach ($room['inv'] as $code => $inv) {
+            if (!is_array($inv) || !self::isAdmin($room, (string)($inv['b'] ?? ''))) unset($room['inv'][$code]);
+        }
     }
 
     private static function isGuest(array $ident)
@@ -1144,7 +1176,15 @@ class SecureCom
                 throw new SecureComException('Gäste eines Meetings können nur Links zu ihrem Meeting erstellen.', 403);
             }
             self::requireMember($room, $me['id']);
-            self::requirePerm($room, $me['id'], self::P_INVITE, 'Du darfst in diesem Raum niemanden einladen.');
+            if (empty($room['ot'])) {
+                // Räume: Einladungslinks und Direkt-Einladungen nur Besitzer und Administratoren.
+                if (!self::isAdmin($room, $me['id'])) {
+                    throw new SecureComException('Einladungen erstellt der Besitzer oder ein Admin.', 403);
+                }
+            } else {
+                // Meetings wie bisher: Teilnehmer teilen Links, der Gastgeber bestätigt den Beitritt.
+                self::requirePerm($room, $me['id'], self::P_INVITE, 'Du darfst in diesem Raum niemanden einladen.');
+            }
             $now = time();
             foreach ($room['inv'] as $code => $inv) {
                 if ((int)$inv['x'] < $now || (int)$inv['n'] >= (int)$inv['max']) unset($room['inv'][$code]);
@@ -2667,11 +2707,15 @@ class SecureCom
         foreach ($room['mem'] as $id => $joined) $members[] = ['id' => $id, 'j' => (int)$joined];
         // Offene Einladungen: Solange es welche gibt, wechselt der Besitzer den
         // Raumschlüssel nicht von selbst – das machte die Links ungültig.
+        // Nur gültige zählen: Links von Mitgliedern ohne Administrator halten ihn nicht auf.
         $open = 0;
-        $now  = time();
         foreach ((array)($room['inv'] ?? []) as $inv) {
-            if ((int)$inv['x'] >= $now && (int)$inv['n'] < (int)$inv['max']) $open++;
+            if (is_array($inv) && self::inviteOpen($room, $inv)) $open++;
         }
+        // Eigene Rechte: „Einladen“ (8) nur, wer wirklich einladen darf – so
+        // blenden auch ältere Apps (bis 1.9.2) Einladen-Knöpfe sonst aus.
+        $perm = self::permsOf($room, $selfId);
+        if (empty($room['ot']) && !self::isAdmin($room, $selfId)) $perm &= ~self::P_INVITE;
         return [
             'id'      => $room['id'],
             'owner'   => $room['o'],
@@ -2690,7 +2734,7 @@ class SecureCom
             'iv'      => $open,                             // offene Einladungen
             'vc'      => self::voiceList($room),            // erster Sprachkanal (ältere Apps)
             'vcs'     => (object)self::voiceMap($room),     // alle: Kanal => wer drin ist
-            'perm'    => self::permsOf($room, $selfId),     // eigene Rechte (Bits)
+            'perm'    => $perm,                             // eigene Rechte (Bits)
         ] + self::publicRoles($room);                       // Ränge, Vergabe, Kanal-Rechte
     }
 
@@ -2979,6 +3023,8 @@ class SecureCom
         self::mutate($file, function (&$room) use ($fn, &$result, &$found) {
             if (!is_array($room)) { $found = false; return; }
             $result = $fn($room);
+            // Einladungen von Mitgliedern ohne Administrator (mehr) entfernen.
+            if (is_array($room)) self::dropForeignInvites($room);
         });
         if (!$found) throw new SecureComException('Raum nicht gefunden.', 404);
         if ($returnRoom) return is_array($result) ? $result : self::readJson($file, true);

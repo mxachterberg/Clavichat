@@ -1119,7 +1119,7 @@ r = await call('room.create', { id: rlRoom, meta: await rlMeta(acc, 'Verein') },
 ok(r.ok && r.room.perm === 2047 && r.room.dp === 15 && Object.keys(r.room.rl).length === 0, 'Besitzer hat alle Rechte, „@alle“ ohne Einstellung: schreiben, reagieren, Sprache, einladen (15)');
 const rlInv = (await call('room.invite', { id: rlRoom, max: 10 }, accToken)).code;
 r = await call('room.join', { id: rlRoom, code: rlInv }, acc2Token);
-ok(r.ok && r.room.perm === 15, 'Mitglied (Konto 2) tritt bei, Rechte 15');
+ok(r.ok && r.room.perm === 7, 'Mitglied (Konto 2) tritt bei, Rechte 7 (Einladen nur Besitzer/Admin – Bit 8 ausgeblendet)');
 const TR = await makeTemp('Rita');
 r = await call('room.join', { id: rlRoom, code: rlInv }, TR.token);
 ok(r.ok, 'Rita (temporär) tritt bei');
@@ -1141,7 +1141,7 @@ r = await call('role.assign', { id: rlRoom, r: MOD, member: acc2Id, on: 1 }, acc
 ok(r.ok && r.room.mr[acc2Id].join() === MOD, 'Besitzer vergibt „Moderator“ an Konto 2');
 r = await call('rooms', {}, acc2Token);
 const rl2 = r.rooms.find((x) => x.id === rlRoom);
-ok(rl2.perm === (modPerms | 15) && rl2.mr[acc2Id][0] === MOD && !('n' in rl2.rl[MOD]), 'Moderator sieht seine Rechte; der Server kennt keine Rang-Namen');
+ok(rl2.perm === ((modPerms | 15) & ~P.INVITE) && rl2.mr[acc2Id][0] === MOD && !('n' in rl2.rl[MOD]), 'Moderator sieht seine Rechte (ohne Einladen); der Server kennt keine Rang-Namen');
 // Rechte wirken
 r = await call('room.meta', { id: rlRoom, meta: await rlMeta(acc2, 'Verein (neu)'), e: 1 }, acc2Token);
 ok(r.ok, 'Moderator ändert die Raumdaten (Kanäle/Raum verwalten)');
@@ -1196,13 +1196,56 @@ r = await call('room.kick', { id: rlRoom, member: TR.id }, acc2Token);
 ok(!r.ok && r._status === 403, 'Rita hat jetzt „VIP“ (über dem Moderator) – entfernen → 403');
 r = await call('role.assign', { id: rlRoom, r: VIP, member: TR.id, on: 0 }, accToken);
 ok(r.ok && r.room.mr[TR.id].join() === HELP, 'Besitzer nimmt „VIP“ wieder weg');
-// Einladen über „@alle“
-r = await call('role.set', { id: rlRoom, r: '', p: P.SEND | P.REACT | P.VOICE }, acc2Token);
-ok(r.ok && r.room.dp === 7, 'Moderator nimmt „@alle“ das Einladen');
+// Einladen: nur Besitzer und Administratoren (Bit 8 wirkt in Räumen nicht mehr)
 r = await call('room.invite', { id: rlRoom }, TR.token);
-ok(!r.ok && r._status === 403, 'Rita lädt nicht mehr ein → 403');
-r = await call('room.invite', { id: rlRoom }, acc2Token);
-ok(r.ok && r.code, 'Moderator schon (eigenes Recht)');
+ok(!r.ok && r._status === 403 && /Besitzer oder ein Admin/.test(r.error || ''), 'Mitglied (Rita, „@alle“ mit Bit 8) lädt nicht ein → 403');
+r = await call('room.invite', { id: rlRoom, max: 1 }, acc2Token);
+ok(!r.ok && r._status === 403, 'Moderator mit Bit „Einladen“, ohne Administrator → 403 (auch Direkt-Einladung, max 1)');
+r = await call('role.set', { id: rlRoom, r: '', p: P.SEND | P.REACT | P.VOICE }, acc2Token);
+ok(r.ok && r.room.dp === 7, 'Bit 8 bei „@alle“ lässt sich weiter setzen/entfernen (ältere Apps)');
+r = await call('role.set', { id: rlRoom, r: '', p: 15 }, accToken);
+const ADM = 'adminRang1';
+r = await call('role.set', { id: rlRoom, r: ADM, p: P.ADMIN }, accToken);
+r = await call('role.assign', { id: rlRoom, r: ADM, member: TR.id, on: 1 }, accToken);
+r = await call('rooms', {}, TR.token);
+ok(r.rooms.find((x) => x.id === rlRoom).perm === 2047, 'Rita als Administrator: alle Rechte samt Einladen');
+r = await call('room.invite', { id: rlRoom, days: 30 }, TR.token);
+ok(r.ok && r.code, 'Administrator lädt ein');
+const admCode = r.code;
+r = await call('rooms', {}, accToken);
+const ivBefore = r.rooms.find((x) => x.id === rlRoom).iv;
+r = await call('invite.info', { id: rlRoom, code: admCode });
+ok(r.ok && typeof r.m === 'string' && r.n === 3, 'invite.info zum Link des Administrators: gültig (Vorschau)');
+// Altbestand: Link eines Mitglieds, das heute kein Admin ist (z. B. von vor dieser Regel) – direkt in die Ablage geschrieben
+let foreignCode = null;
+if (STORE) {
+  const file = STORE + '/securecom/rooms/' + rlRoom + '.json';
+  const room = roomJson(rlRoom);
+  foreignCode = C.randomId();
+  room.inv[foreignCode] = { b: acc2Id, c: Math.floor(Date.now() / 1000), x: Math.floor(Date.now() / 1000) + 86400, n: 0, max: 25 };
+  fs.writeFileSync(file, JSON.stringify(room));
+  r = await call('invite.info', { id: rlRoom, code: foreignCode });
+  ok(r.ok && r.ao === false && !('m' in r), 'alter Link eines Moderators ohne Admin: invite.info wie ungültig');
+  r = await call('rooms', {}, accToken);
+  ok(r.rooms.find((x) => x.id === rlRoom).iv === ivBefore, 'offene Einladungen (iv) zählen ihn nicht – er hält den Wochenwechsel nicht auf');
+}
+// Herabstufen: Der Link des Administrators gilt danach nicht mehr
+r = await call('role.assign', { id: rlRoom, r: ADM, member: TR.id, on: 0 }, accToken);
+r = await call('invite.info', { id: rlRoom, code: admCode });
+ok(r.ok && !('m' in r), 'Rita herabgestuft: ihr Link gilt nicht mehr (invite.info)');
+// Bob (temporär, kein Mitglied) versucht es – eine weitere temporäre Sitzung sprengte die Grenze je Stunde
+// Der Test hat die Grenze für Beitritte je Adresse (30 je Stunde) fast aufgebraucht:
+// mit Zugriff auf die Ablage des Testservers die Zähler leeren.
+if (STORE) for (const f of fs.readdirSync(STORE + '/ratelimit')) fs.rmSync(STORE + '/ratelimit/' + f, { force: true });
+r = await call('room.join', { id: rlRoom, code: admCode }, TB.token);
+ok(STORE ? r._status === 403 : r._status === 403 || r._status === 429, 'Beitritt mit dem Link der Herabgestuften → 403');
+if (STORE) {
+  const room = roomJson(rlRoom);
+  ok(!room.inv[admCode] && !room.inv[foreignCode], 'beim nächsten Schreibzugriff aus der Liste der Einladungen entfernt');
+  r = await call('room.join', { id: rlRoom, code: foreignCode }, TB.token);
+  ok(!r.ok && r._status === 403, 'Beitritt mit dem alten Moderator-Link → 403');
+}
+r = await call('role.del', { id: rlRoom, r: ADM }, accToken);
 // Kanal-Schreibrechte
 r = await call('room.cperm', { id: rlRoom, c: 'news', w: [MOD] }, TR.token);
 ok(!r.ok && r._status === 403, 'Kanal-Rechte ohne „Kanäle verwalten“ → 403');

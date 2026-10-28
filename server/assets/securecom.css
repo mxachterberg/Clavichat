@@ -1308,6 +1308,11 @@ html[data-theme="light"] .sc-modal { background: rgba(40, 40, 40, .3); }
 }
 .sc-rm-facts > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .sc-rm-hint { margin: 8px 0 0; font-size: 12px; line-height: 1.55; color: var(--muted); }
+/* Einladen nur Besitzer/Admin: Hinweis statt Knopf (Raum-Menü, Rang-Editor) */
+.sc-invite-note, .sc-role-invite-note { display: flex; align-items: center; gap: 7px; }
+.sc-invite-note { margin: 0 0 8px; }
+.sc-role-invite-note { margin: 8px 0 14px; }
+.sc-invite-note svg, .sc-role-invite-note svg { flex: none; opacity: .8; }
 
 /* Paare als Kacheln nebeneinander (auf sehr schmalen Fenstern untereinander) */
 .sc-rm-pair, .sc-rm-danger { display: grid; grid-template-columns: repeat(auto-fit, minmax(128px, 1fr)); gap: 6px; }

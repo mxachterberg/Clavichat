@@ -3303,7 +3303,7 @@ function renderMainHead() {
         : (room.meta.meet ? (room.vc.length ? 'Call beitreten (' + room.vc.length + ' drin)' : 'Call starten') : 'Sprachkanal „' + room.meta.vch[0].name + '“ betreten'),
         () => (S.voice && S.voice.rid === room.id ? leaveVoice() : joinVoice(room.id)),
         room.meta.meet && room.vc.length && !(S.voice && S.voice.rid === room.id) ? { class: 'sc-ibtn is-live' } : undefined),
-      room.meta.meet ? iconBtn('link', 'Meeting-Link teilen', () => meetingDialog(room)) : can(room, RIGHT.INVITE) ? iconBtn('userPlus', 'Einladen', () => inviteDialog(room)) : null,
+      room.meta.meet ? iconBtn('link', 'Meeting-Link teilen', () => meetingDialog(room)) : canInvite(room) ? iconBtn('userPlus', 'Einladen', () => inviteDialog(room)) : null,
       iconBtn('users', 'Mitglieder', () => { S.membersOpen = !S.membersOpen; renderAll(); }, { 'aria-pressed': S.membersOpen ? 'true' : 'false' }));
   } else {
     head.append(el('span', { class: 'sc-head-text' },
@@ -5435,11 +5435,14 @@ async function decryptMeta(room) {
 const RIGHT = { SEND: 1, REACT: 2, VOICE: 4, INVITE: 8, CHANNELS: 16, ROOM: 32, MESSAGES: 64, KICK: 128, HOOKS: 256, ROLES: 512, ADMIN: 1024 };
 const P_ALL = 2047;
 const P_BASE = 15;   // „@alle“ ohne eigene Einstellung (so verhalten sich auch Räume älterer Server)
+// „Einladen“ (Bit 8) steht nicht mehr zur Wahl: In Räume laden nur der
+// Besitzer und Ränge mit „Administrator“ ein (der Server prüft es, auch für
+// ältere Links). Gespeicherte Bits bleiben unverändert – der Editor ändert
+// nur die Schalter unten, Bit 8 wirkt nur noch in Meetings.
 const PERMS = [
   { bit: RIGHT.SEND, label: 'Nachrichten schreiben', note: 'In Textkanälen schreiben – einzelne Kanäle können das weiter einschränken.' },
   { bit: RIGHT.REACT, label: 'Reagieren', note: 'Mit Symbolen auf Nachrichten reagieren.' },
   { bit: RIGHT.VOICE, label: 'Sprachkanäle betreten', note: 'Sprechen, Video und Bildschirm teilen.' },
-  { bit: RIGHT.INVITE, label: 'Einladen', note: 'Einladungslinks erstellen und Leute direkt einladen.' },
   { bit: RIGHT.CHANNELS, label: 'Kanäle verwalten', note: 'Anlegen, umbenennen, löschen, verschieben; Aufbewahrung und Rechte je Kanal.' },
   { bit: RIGHT.ROOM, label: 'Raum verwalten', note: 'Name, Raumbild, Aufbewahrung und Sprachqualität.' },
   { bit: RIGHT.MESSAGES, label: 'Nachrichten verwalten', note: 'Nachrichten anderer für alle löschen.' },
@@ -5462,9 +5465,9 @@ const ROLE_COLORS = [
 ];
 // Vorlagen beim Anlegen (nur Rechte, die man selbst vergeben darf, werden übernommen)
 const ROLE_TEMPLATES = [
-  { n: 'Moderator', c: 'blue', p: RIGHT.SEND | RIGHT.REACT | RIGHT.VOICE | RIGHT.INVITE | RIGHT.MESSAGES | RIGHT.KICK, note: 'Löscht Nachrichten, entfernt Störer' },
-  { n: 'Redaktion', c: 'orange', p: RIGHT.SEND | RIGHT.REACT | RIGHT.VOICE | RIGHT.INVITE, note: 'Für Ankündigungs-Kanäle: dort schreibt nur sie' },
-  { n: 'Admin', c: 'red', p: RIGHT.ADMIN | RIGHT.SEND | RIGHT.REACT | RIGHT.VOICE | RIGHT.INVITE | RIGHT.CHANNELS | RIGHT.ROOM | RIGHT.MESSAGES | RIGHT.KICK | RIGHT.HOOKS | RIGHT.ROLES, note: 'Alle Rechte außer den Schlüsseln' }
+  { n: 'Moderator', c: 'blue', p: RIGHT.SEND | RIGHT.REACT | RIGHT.VOICE | RIGHT.MESSAGES | RIGHT.KICK, note: 'Löscht Nachrichten, entfernt Störer' },
+  { n: 'Redaktion', c: 'orange', p: RIGHT.SEND | RIGHT.REACT | RIGHT.VOICE, note: 'Für Ankündigungs-Kanäle: dort schreibt nur sie' },
+  { n: 'Admin', c: 'red', p: RIGHT.ADMIN | RIGHT.SEND | RIGHT.REACT | RIGHT.VOICE | RIGHT.CHANNELS | RIGHT.ROOM | RIGHT.MESSAGES | RIGHT.KICK | RIGHT.HOOKS | RIGHT.ROLES, note: 'Alle Rechte außer den Schlüsseln – lädt auch ein' }
 ];
 
 /** Ränge-Stand vom Server übernehmen (ältere Server: nichts davon – Besitzer alles, sonst „@alle“). */
@@ -5502,6 +5505,9 @@ function applyRoleState(room, raw) {
 function rolesOk(room) { return !!(S.cfg && S.cfg.roles) && !!room && !room.meta.meet && !room.ot; }
 /** Eigenes Recht im Raum (Besitzer: immer). */
 function can(room, bit) { return !!room && (room.owner === S.me.id || !!(room.perm & bit)); }
+/** In den Raum einladen (Link oder direkt): nur Besitzer und Administratoren. Meetings: siehe canShareLink. */
+function canInvite(room) { return !!room && (room.owner === S.me.id || !!(room.perm & RIGHT.ADMIN)); }
+const INVITE_NOTE = 'Einladungen erstellt der Besitzer oder ein Admin.';
 /** Ränge eines Mitglieds, höchster zuerst. */
 function memberRoles(room, id) { return (room.mr[id] || []).filter((r) => room.rl[r]).sort((a, b) => room.rl[b].o - room.rl[a].o); }
 /** Wirksame Rechte eines Mitglieds (wie beim Server). */
@@ -5688,7 +5694,7 @@ function roleEditor(room, rid, tpl) {
   const fresh = rid === null;
   const myPerms = room.owner === S.me.id ? P_ALL : room.perm;
   const editable = base ? can(room, RIGHT.ROLES) : fresh ? can(room, RIGHT.ROLES) : roleManageable(room, rid);
-  let p = base ? room.dp : fresh ? ((tpl ? tpl.p : RIGHT.SEND | RIGHT.REACT | RIGHT.VOICE | RIGHT.INVITE) & myPerms) : room.rl[rid].p;
+  let p = base ? room.dp : fresh ? ((tpl ? tpl.p : RIGHT.SEND | RIGHT.REACT | RIGHT.VOICE) & myPerms) : room.rl[rid].p;
   let color = fresh ? (tpl ? tpl.c : ROLE_COLORS[4].id) : base ? '' : ((room.meta.roles[rid] && room.meta.roles[rid].c) || ROLE_COLORS[9].id);
   openModal({
     title: base ? 'RANG @ALLE' : fresh ? 'RANG ANLEGEN' : 'RANG BEARBEITEN',
@@ -5734,7 +5740,8 @@ function roleEditor(room, rid, tpl) {
         }
       };
       drawPerms();
-      appendAll(body, sectionHead('RECHTE'), box);
+      appendAll(body, sectionHead('RECHTE'), box,
+        el('p', { class: 'sc-note sc-role-invite-note' }, icon('userPlus', 13), 'Einladen: nur der Besitzer und Ränge mit „Administrator“.'));
 
       // Mitglieder mit diesem Rang (nur bestehende Ränge)
       if (!base && !fresh) {
@@ -6646,7 +6653,7 @@ function roomMenu(room) {
       const mRoles = rolesOk(room) && can(room, RIGHT.ROLES);
       const nRoles = Object.keys(room.rl).length;
       const settings = mRoom || aoOk || hooksOk(room) || mRoles;
-      const invite = meet || can(room, RIGHT.INVITE);
+      const invite = meet || canInvite(room);
       const voiceOk = inVoice || canEnterVoice(room, S.me.id, '');
       const myRoles = rolesOk(room) && !owner ? memberRoles(room, S.me.id) : [];
       appendAll(body, el('div', { class: 'sc-rm' },
@@ -6654,6 +6661,7 @@ function roomMenu(room) {
         myRoles.length ? el('p', { class: 'sc-rm-hint sc-rm-myroles' }, 'DEIN RANG', ...myRoles.slice(0, 3).map((rid) => el('span', { class: 'sc-role-badge', style: '--role:' + roleColor(room, rid) }, el('span', { class: 'sc-role-dot' }), roleName(room, rid)))) : null,
         expiry ? el('p', { class: 'sc-rm-hint', text: expiry }) : null,
         sectionHead(meet ? 'TEILNEHMER & CALL' : 'MITGLIEDER & SPRACHE'),
+        invite ? null : el('p', { class: 'sc-rm-hint sc-invite-note' }, icon('userPlus', 13), INVITE_NOTE),
         invite || voiceOk ? pair(invite ? (meet ? tile('link', 'Meeting-Link teilen', () => meetingDialog(room), 'is-accent') : tile('userPlus', 'Einladen', () => inviteDialog(room), 'is-accent')) : null,
           inVoice ? tile('leave', 'Sprachkanal verlassen', () => leaveVoice()) : voiceOk ? tile(meet ? 'phone' : 'speaker', meet ? 'Call beitreten' : 'Sprachkanal betreten', () => joinVoice(room.id)) : null) : null,
         mChan ? sectionHead('KANÄLE') : null,
@@ -6847,6 +6855,7 @@ async function revokeHook(room, hid, name) {
 }
 
 function inviteDialog(room) {
+  if (!canInvite(room)) { toast(INVITE_NOTE, 'error'); return; }
   openModal({
     title: 'EINLADEN',
     build: (body) => {
