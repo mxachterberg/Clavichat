@@ -4,6 +4,29 @@ Was sich von Version zu Version ändert. Beim Veröffentlichen wird der
 Abschnitt einer Version zum Text des GitHub-Releases
 (`.github/workflows/windows.yml`).
 
+## 1.9.4 – 28.10.2026
+
+Restliche Funde der Sicherheitsprüfung. Für installierte Apps ein kleines
+Update.
+
+- **Updates noch robuster:** Das Hilfsskript fürs Austauschen bekommt keine
+  Pfade mehr als Text eingesetzt (Sonderzeichen im Dateinamen sind wirkungslos,
+  Ordner mit Apostroph funktionieren). Update-Listen werden begrenzt gelesen,
+  Weiterleitungen nur zu bekannten Adressen befolgt, und jeder Signierschlüssel
+  gilt nur für seine Quelle.
+- **Dateien:** „Nachricht löschen“ entfernt nur Dateien, die in diesen Raum
+  hochgeladen wurden.
+- **API-Zugänge und Kanalrechte:** Zugänge lassen sich nur für Kanäle
+  anlegen, in denen man schreiben darf; Ändern, Löschen und Reagieren prüfen
+  den Kanal der Originalnachricht; wieder eingespielte alte Beiträge werden
+  verworfen.
+- **Namen** ohne unsichtbare Steuerzeichen (gegen Verwechslungen).
+- **Kommandozeile:** `--access-file`, nur https (außer localhost), keine
+  Steuerzeichen aus Server-Antworten.
+- **Windows-App:** strengere Prüfung des Logo-Bilds, „In den Infobereich“
+  und Fensterfarben überschreiben sich nicht mehr gegenseitig, der
+  Selbsttest ändert keine Verknüpfungen.
+
 ## 1.9.3 – 28.10.2026
 
 Sicherheits-Update nach einer Prüfung der neuen Funktionen. Für installierte
