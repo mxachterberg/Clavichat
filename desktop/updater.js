@@ -44,14 +44,22 @@ const zlib = require('node:zlib');
 // direkt beim Tag der Fassung (vX.Y.Z) – so passt der Download auch dann
 // noch, wenn zwischen Suchen und Installieren ein neueres Release erscheint.
 // GitHub leitet zweimal weiter (Tag, dann *.githubusercontent.com); die
-// eigene Sitzung folgt dem, die Echtheit sichern Signatur und SHA-256.
+// eigene Sitzung folgt dem nur zu den Adressen in ALLOWED_HOSTS (https), die
+// Echtheit sichern Signatur und SHA-256.
+// `keys`: welche der PUBLIC_KEYS für diese Quelle gelten – clavichat.de nur
+// der lokale Schlüssel des Herausgebers, GitHub nur der von GitHub Actions.
+// So taugt ein abhanden gekommener Schlüssel nur für seine eigene Quelle.
 const GITHUB = 'https://github.com/mxachterberg/Clavichat/releases';
 const SOURCES = [
-  { name: 'GitHub', url: GITHUB + '/latest/download/update.json', files: (m) => GITHUB + '/download/v' + m.version + '/', github: true },
-  { name: 'clavichat.de', url: 'https://clavichat.de/downloads/clavichat/update.json' }
+  { name: 'GitHub', url: GITHUB + '/latest/download/update.json', files: (m) => GITHUB + '/download/v' + m.version + '/', github: true, keys: [1] },
+  { name: 'clavichat.de', url: 'https://clavichat.de/downloads/clavichat/update.json', keys: [0] }
 ];
+// Liste und Dateien kommen nur von hier (auch nach Weiterleitungen), nur über https.
+const ALLOWED_HOSTS = new Set(['github.com', 'objects.githubusercontent.com', 'release-assets.githubusercontent.com', 'clavichat.de']);
+const LIST_MAX = 65536;             // größer ist keine Update-Liste
 // Öffentliche Schlüssel (Ed25519, SPKI/DER, Base64) – eine Liste gilt, wenn
-// einer davon passt. Die privaten erzeugt und zeigt scripts/update-key.js.
+// einer der für ihre Quelle zugelassenen passt (SOURCES.keys). Die privaten
+// erzeugt und zeigt scripts/update-key.js.
 const PUBLIC_KEYS = [
   // Herausgeber, lokal (%USERPROFILE%\.securecom\update-key.pem) – clavichat.de
   'MCowBQYDK2VwAyEAlGx6CauvrfaZJAUtLpqsw19KVCrB2hk2vpfBkKCYnwI=',
@@ -95,6 +103,13 @@ function init(opts) {
   // Eigene Sitzung nur im Speicher: kein Zertifikats-Pinning des
   // Clavichat-Servers, keine Cookies, kein Zwischenspeicher.
   ses = session.fromPartition('securecom-updates');
+  // Jede Anfrage dieser Sitzung – auch jede Weiterleitung – nur zu erlaubten Adressen.
+  // (Electron-fetch kennt redirect: 'manual' nicht; webRequest sieht jeden Schritt.)
+  ses.webRequest.onBeforeRequest((details, callback) => {
+    const ok = allowedUrl(details.url);
+    if (!ok) writeLog('Update-Anfrage blockiert: ' + String(details.url).slice(0, 200));
+    callback({ cancel: !ok });
+  });
   removeLeftovers();
   ipcMain.handle('securecom:update', handle);
   if (state.mode && state.auto && !opts.smoke) setTimeout(() => check(true), START_DELAY);
@@ -108,13 +123,37 @@ function detectMode() {
   return fs.existsSync(uninstaller) ? 'installed' : '';
 }
 
-function sources() {
+/**
+ * Nur zum Testen: eigene Quelle (statt aller anderen), unverschlüsselt nur
+ * auf diesem Rechner. Die Signatur gilt trotzdem (beide Schlüssel) – fremde
+ * Fassungen installiert die App nie. Geprüft wird der echte Rechnername
+ * (new URL), nicht der Anfang des Texts: http://localhost:x@evil.example/
+ * ginge sonst zu evil.example.
+ */
+function testSource() {
   const custom = process.env.SECURECOM_UPDATE_URL || '';
-  // Nur zum Testen: eigene Quelle (statt aller anderen), unverschlüsselt nur
-  // auf diesem Rechner. Die Signatur gilt trotzdem – fremde Fassungen
-  // installiert die App nie.
-  if (custom && /^(https:\/\/|http:\/\/(127\.0\.0\.1|localhost)[:/])/i.test(custom)) return [{ name: 'Test', url: custom }];
-  return SOURCES;
+  if (!custom) return null;
+  let u;
+  try { u = new URL(custom); } catch (e) { return null; }
+  if (u.username || u.password) return null;
+  const local = ['127.0.0.1', 'localhost', '[::1]'].includes(u.hostname);
+  if (u.protocol !== 'https:' && !(u.protocol === 'http:' && local)) return null;
+  return { name: 'Test', url: u.href, origin: u.origin, keys: [0, 1] };
+}
+
+function sources() {
+  const test = testSource();
+  return test ? [test] : SOURCES;
+}
+
+/** Darf die Update-Sitzung diese Adresse laden? */
+function allowedUrl(url) {
+  let u;
+  try { u = new URL(url); } catch (e) { return false; }
+  if (u.username || u.password) return false;
+  const test = testSource();
+  if (test) return u.origin === test.origin;
+  return u.protocol === 'https:' && u.port === '' && ALLOWED_HOSTS.has(u.hostname);
 }
 
 function readSettings() {
@@ -234,9 +273,8 @@ async function fetchFrom(src) {
     const res = await ses.fetch(url, { cache: 'no-store', redirect: 'follow', signal: ctrl.signal });
     if (res.status === 404) throw Object.assign(new Error('Auf dem Server liegt noch keine Update-Liste.'), { notFound: true });
     if (!res.ok) throw new Error('Der Update-Server antwortet mit ' + res.status + '.');
-    const text = await res.text();
-    if (text.length > 65536) throw new Error('Die Update-Liste ist ungültig.');
-    const m = verifyManifest(text);
+    const text = await readLimited(res, LIST_MAX);
+    const m = verifyManifest(text, src.keys);
     m.base = src.files ? src.files(m) : src.url;
     m.cacheBust = !src.github;
     m.source = src.name;
@@ -246,9 +284,30 @@ async function fetchFrom(src) {
   }
 }
 
-/** Passt die Signatur zu einem der öffentlichen Schlüssel? */
-function signedByUs(data, sig) {
-  return PUBLIC_KEYS.some((k) => {
+/** Antwort lesen, aber höchstens max Bytes – sonst abbrechen (nicht erst alles laden). */
+async function readLimited(res, max) {
+  const len = Number(res.headers.get('content-length'));
+  if (Number.isFinite(len) && len > max) throw new Error('Die Update-Liste ist ungültig (zu groß).');
+  if (!res.body) return '';
+  const reader = res.body.getReader();
+  const parts = [];
+  let size = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    size += value.length;
+    if (size > max) {
+      reader.cancel().catch(() => {});
+      throw new Error('Die Update-Liste ist ungültig (zu groß).');
+    }
+    parts.push(Buffer.from(value));
+  }
+  return Buffer.concat(parts).toString('utf8');
+}
+
+/** Passt die Signatur zu einem der für die Quelle zugelassenen Schlüssel (Nummern in PUBLIC_KEYS)? */
+function signedByUs(data, sig, keys) {
+  return (keys || []).map((i) => PUBLIC_KEYS[i]).filter(Boolean).some((k) => {
     try {
       const key = crypto.createPublicKey({ key: Buffer.from(k, 'base64'), format: 'der', type: 'spki' });
       return crypto.verify(null, Buffer.from(data, 'utf8'), key, Buffer.from(sig, 'base64'));
@@ -257,11 +316,11 @@ function signedByUs(data, sig) {
 }
 
 /** Signatur prüfen, dann die Angaben – erst danach wird irgendetwas davon benutzt. */
-function verifyManifest(text) {
+function verifyManifest(text, keys) {
   let env = null;
   try { env = JSON.parse(text); } catch (e) { /* unten */ }
   if (!env || typeof env.data !== 'string' || typeof env.sig !== 'string') throw new Error('Die Update-Liste ist ungültig.');
-  if (!signedByUs(env.data, env.sig)) throw new Error('Die Signatur der Update-Liste stimmt nicht – es wird nichts installiert.');
+  if (!signedByUs(env.data, env.sig, keys)) throw new Error('Die Signatur der Update-Liste stimmt nicht – es wird nichts installiert.');
 
   const m = JSON.parse(env.data);
   if (!m || m.app !== 'clavichat' || !VERSION.test(String(m.version))) throw new Error('Die Update-Liste gehört nicht zu Clavichat.');
