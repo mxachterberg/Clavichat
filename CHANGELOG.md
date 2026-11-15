@@ -4,7 +4,9 @@ Was sich von Version zu Version ändert. Beim Veröffentlichen wird der
 Abschnitt einer Version zum Text des GitHub-Releases
 (`.github/workflows/windows.yml`).
 
-## Unveröffentlicht
+## 1.9.6 – 15.11.2026
+
+Räume und Kanäle stummschalten. Für installierte Apps ein kleines Update.
 
 - **Stummschalten:** Räume und einzelne Textkanäle lassen sich stumm
   schalten, Ton und Benachrichtigung getrennt. Für den ganzen Raum im
