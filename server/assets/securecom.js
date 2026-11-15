@@ -169,6 +169,10 @@ const ICONS = {
   camSwitch: '<path d="M3 8h3.5L8 5.5h8L17.5 8H21v11H3z"/><path d="M8.6 12.6a3.5 3.5 0 0 1 6.2-1.4"/><path d="M15.4 14.4a3.5 3.5 0 0 1-6.2 1.4"/><path d="M15.2 9.4v2h-2M8.8 17.6v-2h2"/>',
   // Ränge (Raum-Menü)
   tag: '<path d="M3.5 12.5V4h8.5l9 9-8.5 8.5z"/><circle cx="8" cy="8.5" r="1.4"/>',
+  // Stummschalten (Raum-Menü, Kanal-Menü, Seitenleiste)
+  bell: '<path d="M6 16v-5a6 6 0 0 1 12 0v5l2 2H4z"/><path d="M10 20.5a2 2 0 0 0 4 0"/>',
+  bellOff: '<path d="M6 16v-5a6 6 0 0 1 12 0v5l2 2H4z"/><path d="M10 20.5a2 2 0 0 0 4 0"/><path d="M3 3l18 18"/>',
+  speakerOff: '<path d="M4 9h4l5-4v14l-5-4H4z"/><path d="M16.5 9.5l5 5M21.5 9.5l-5 5"/>',
   // Reagieren: Gesicht mit Plus
   react: '<circle cx="10.5" cy="13.5" r="7.5"/><path d="M7.6 15.6a3.6 3.6 0 0 0 5.8 0M8 11.6v.4M13 11.6v.4"/><path d="M19.5 2.5v5M17 5h5"/>'
 };
@@ -740,7 +744,7 @@ function idbSet(key, value) {
    Tresor: Kontakte, Raumschlüssel, Gelesen-Stand, Einstellungen
    ========================================================================== */
 function emptyVault() {
-  return { v: 1, contacts: {}, rooms: {}, blocked: {}, reads: {}, cleared: {}, friends: {}, ttl: {}, reqs: {}, ik: null, settings: { hideIp: false, sound: true, mic: '', status: 'on' } };
+  return { v: 1, contacts: {}, rooms: {}, blocked: {}, reads: {}, cleared: {}, friends: {}, ttl: {}, reqs: {}, mute: {}, ik: null, settings: { hideIp: false, sound: true, mic: '', status: 'on' } };
 }
 
 function mergeVault(a, b) {
@@ -771,8 +775,8 @@ function mergeVault(a, b) {
     Object.assign(out.blocked, src.blocked || {});
     for (const [k, t] of Object.entries(src.reads || {})) out.reads[k] = Math.max(out.reads[k] || 0, t || 0);
     for (const [k, t] of Object.entries(src.cleared || {})) out.cleared[k] = Math.max(out.cleared[k] || 0, t || 0);
-    // Freunde, Aufbewahrung und Anfragen: je Person gilt der jüngste Stand.
-    for (const key of ['friends', 'ttl', 'reqs']) {
+    // Freunde, Aufbewahrung, Anfragen und Stummschalten: je Eintrag gilt der jüngste Stand.
+    for (const key of ['friends', 'ttl', 'reqs', 'mute']) {
       for (const [id, f] of Object.entries(src[key] || {})) {
         if (!f || typeof f !== 'object') continue;
         const prev = out[key][id];
@@ -2943,10 +2947,11 @@ function renderRail() {
     if (!room) { box.appendChild(el('span', { class: 'sc-rail-sep', 'aria-hidden': 'true' })); continue; }
     let u = 0;
     for (const n of room.unread.values()) u += n;
+    const rmt = mutedFor(room.id);
     const b = el('button', {
       type: 'button',
-      class: 'sc-rail-btn sc-rail-room' + (u ? ' has-unread' : '') + (room.vc.length ? ' has-voice' : '') + (room.meta.img ? ' has-img' : '') + (room.meta.meet ? ' is-meeting' : ''),
-      title: room.meta.meet ? room.meta.name + (room.vc.length ? ' – Call läuft' : '') : room.meta.name,
+      class: 'sc-rail-btn sc-rail-room' + (u ? ' has-unread' : '') + (rmt.s && rmt.n ? ' is-muted' : '') + (room.vc.length ? ' has-voice' : '') + (room.meta.img ? ' has-img' : '') + (room.meta.meet ? ' is-meeting' : ''),
+      title: (room.meta.meet ? room.meta.name + (room.vc.length ? ' – Call läuft' : '') : room.meta.name) + (rmt.s || rmt.n ? ' – ' + muteTitle(rmt) : ''),
       'aria-current': S.view.kind === 'room' && S.view.rid === room.id ? 'true' : 'false',
       onclick: () => openRoom(room.id)
     }, room.meta.img
@@ -2955,6 +2960,7 @@ function renderRail() {
         ? el('span', { class: 'sc-rail-initials' }, icon('group', 19))
         : el('span', { class: 'sc-rail-initials', text: initials(room.meta.name) }));
     b.style.setProperty('--hue', hueOf(C.toHex(C.unb64url(room.id)).slice(-6)));
+    if (!S.guest) withMenu(b, () => [...muteItems(room), { icon: 'more', label: room.meta.meet ? 'Meeting-Menü' : 'Raum-Menü', run: () => roomMenu(room) }]);
     box.appendChild(b);
   }
 }
@@ -3182,15 +3188,17 @@ function renderRoomSide(head, body, room) {
   const chl = el('div', { class: 'sc-list' });
   for (const ch of room.meta.ch) {
     const u = room.unread.get(ch.id) || 0;
+    const mt = mutedFor(room.id, ch.id);
     const btn = el('button', {
       type: 'button',
-      class: 'sc-chan' + (u ? ' has-unread' : ''),
+      class: 'sc-chan' + (u ? ' has-unread' : '') + (mt.s || mt.n ? ' is-muted' : ''),
       'aria-current': S.view.ch === ch.id ? 'true' : 'false',
       onclick: () => openRoom(room.id, ch.id)
     }, icon('hash', 15), el('span', { class: 'sc-chan-name', text: ch.name }),
     room.cw[ch.id] && rolesOk(room) ? (room.cw[ch.id].n
       ? chanLock('Niemand schreibt hier', false, '', 'nur automatische Beiträge (API-Zugänge), reagieren geht')
       : chanLock('Schreiben: ' + channelWho(room, room.cw[ch.id].r), canWriteIn(room, S.me.id, ch.id), 'du darfst schreiben', 'du darfst hier nicht schreiben')) : null,
+    mt.s || mt.n ? el('span', { class: 'sc-chan-mute', title: muteTitle(mt), 'aria-label': muteTitle(mt) }, icon(mt.n ? 'bellOff' : 'speakerOff', 13)) : null,
     u ? el('span', { class: 'sc-count', text: String(u) }) : null);
     withMenu(btn, () => textChannelMenu(room, ch));
     if (isOwner) { sortable(btn, room, 'ch', ch.id); dropTarget(btn, room, 'ch', ch.id); }
@@ -4379,10 +4387,69 @@ function noteArrival(key, ts, viewing, countUnread, notice, quiet) {
   } else {
     countUnread();
     if (S.cursorLoaded) {
-      if (!quiet) notifySound();
-      if (notice) notify('Clavichat', notice, key);
+      // Stumm geschaltet: Ungelesen zählt weiter, nur Ton bzw. Benachrichtigung entfallen.
+      const muted = mutedForKey(key);
+      if (!quiet && !muted.s) notifySound();
+      if (notice && !muted.n) notify('Clavichat', notice, key);
     }
   }
+}
+
+/* ---------- Stummschalten -------------------------------------------------
+   Je Raum und je Textkanal, Ton und Systembenachrichtigung getrennt. Tresor
+   mute['room:<rid>'] bzw. mute['room:<rid>:<ch>'] = {s, n, t}: s = Ton aus,
+   n = Benachrichtigung aus, t = Zeitpunkt (jüngster Stand gilt, auch beim
+   Wieder-Einschalten). Ein stummer Raum gilt für alle seine Kanäle. Ältere
+   Apps kennen das Feld nicht: Speichern sie den Tresor, geht es verloren. */
+function muteOf(key) {
+  const m = S.vault.mute && S.vault.mute[key];
+  return { s: !!(m && m.s), n: !!(m && m.n) };
+}
+
+function setMute(key, patch) {
+  if (!S.vault.mute) S.vault.mute = {};
+  const next = Object.assign(muteOf(key), patch);
+  S.vault.mute[key] = { s: next.s, n: next.n, t: Date.now() };
+  saveVault();
+  renderAll();
+}
+
+/** Was für Nachrichten in diesem Kanal gilt: stumm, wenn Raum oder Kanal stumm ist. */
+function mutedFor(rid, ch) {
+  const r = muteOf('room:' + rid);
+  const c = ch === undefined ? { s: false, n: false } : muteOf('room:' + rid + ':' + ch);
+  return { s: r.s || c.s, n: r.n || c.n };
+}
+
+function mutedForKey(key) {
+  if (!key.startsWith('room:')) return { s: false, n: false };
+  const rest = key.slice(5);
+  const i = rest.indexOf(':');
+  return i < 0 ? mutedFor(rest) : mutedFor(rest.slice(0, i), rest.slice(i + 1));
+}
+
+function muteTitle(m) {
+  return m.s && m.n ? 'Stumm: kein Ton, keine Benachrichtigung' : m.s ? 'Ton aus' : 'Benachrichtigungen aus';
+}
+
+/** Kontextmenü-Einträge für einen Raum (Leiste links) oder einen Kanal. */
+function muteItems(room, ch) {
+  const rk = 'room:' + room.id;
+  const rm = muteOf(rk);
+  if (ch === undefined) {
+    return [
+      { icon: rm.s ? 'speaker' : 'speakerOff', label: rm.s ? 'Ton wieder an' : 'Ton stummschalten', note: 'Für alle Kanäle dieses Raums', run: () => setMute(rk, { s: !rm.s }) },
+      { icon: rm.n ? 'bell' : 'bellOff', label: rm.n ? 'Benachrichtigungen wieder an' : 'Benachrichtigungen aus', note: 'Für alle Kanäle dieses Raums', run: () => setMute(rk, { n: !rm.n }) }
+    ];
+  }
+  const ck = rk + ':' + ch;
+  const cm = muteOf(ck);
+  return [
+    rm.s ? { icon: 'speakerOff', label: 'Ton stummgeschaltet', note: 'Der ganze Raum ist stumm (Raum-Menü)', disabled: true }
+      : { icon: cm.s ? 'speaker' : 'speakerOff', label: cm.s ? 'Ton wieder an' : 'Ton stummschalten', run: () => setMute(ck, { s: !cm.s }) },
+    rm.n ? { icon: 'bellOff', label: 'Benachrichtigungen aus', note: 'Für den ganzen Raum (Raum-Menü)', disabled: true }
+      : { icon: cm.n ? 'bell' : 'bellOff', label: cm.n ? 'Benachrichtigungen wieder an' : 'Benachrichtigungen aus', run: () => setMute(ck, { n: !cm.n }) }
+  ];
 }
 
 /* ---------- Systembenachrichtigungen -------------------------------------- */
@@ -6893,6 +6960,14 @@ function roomMenu(room) {
         invite ? null : el('p', { class: 'sc-rm-hint sc-invite-note' }, icon('userPlus', 13), INVITE_NOTE),
         invite || voiceOk ? pair(invite ? (meet ? tile('link', 'Meeting-Link teilen', () => meetingDialog(room), 'is-accent') : tile('userPlus', 'Einladen', () => inviteDialog(room), 'is-accent')) : null,
           inVoice ? tile('leave', 'Sprachkanal verlassen', () => leaveVoice()) : voiceOk ? tile(meet ? 'phone' : 'speaker', meet ? 'Call beitreten' : 'Sprachkanal betreten', () => joinVoice(room.id)) : null) : null,
+        sectionHead('BENACHRICHTIGUNGEN'),
+        el('div', { class: 'sc-rm-rows' },
+          toggle('speaker', 'Ton bei neuen Nachrichten', !muteOf('room:' + room.id).s,
+            () => { setMute('room:' + room.id, { s: !muteOf('room:' + room.id).s }); roomMenu(room); },
+            'Für alle Kanäle. Einzelne Kanäle: Rechtsklick auf den Kanal.'),
+          toggle('bell', 'Benachrichtigungen', !muteOf('room:' + room.id).n,
+            () => { setMute('room:' + room.id, { n: !muteOf('room:' + room.id).n }); roomMenu(room); },
+            notifyAllowed() ? 'Hinweise des Systems, wenn das Fenster nicht im Blick ist.' : 'Systembenachrichtigungen sind in den Einstellungen aus.')),
         mChan ? sectionHead('KANÄLE') : null,
         mChan ? pair(tile('hash', 'Textkanal anlegen', () => addChannel(room)), tile('speaker', 'Sprachkanal anlegen', () => addVoiceChannel(room))) : null,
         settings ? sectionHead('EINSTELLUNGEN') : null,
@@ -7534,6 +7609,7 @@ function textChannelMenu(room, ch) {
   const owner = can(room, RIGHT.CHANNELS);   // Besitzer oder Recht „Kanäle verwalten“
   return [
     { icon: 'check', label: 'Als gelesen markieren', disabled: !(room.unread.get(ch.id) || 0), run: () => markChannelRead(room, ch.id) },
+    ...muteItems(room, ch.id),
     owner ? { icon: 'edit', label: 'Kanal umbenennen', run: () => renameChannel(room, 'ch', ch) } : null,
     ...moveItems(room, 'ch', ch.id),
     owner && rolesOk(room) ? { icon: 'lock', label: 'Berechtigungen', note: 'Schreiben: ' + chanWriters(room, ch.id), run: () => channelPermDialog(room, 'ch', ch) } : null,

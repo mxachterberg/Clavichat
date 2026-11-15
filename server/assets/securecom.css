@@ -317,6 +317,11 @@
 .sc-chan.drop-before { box-shadow: inset 0 2px 0 var(--accent); }
 .sc-chan.drop-after { box-shadow: inset 0 -2px 0 var(--accent); }
 .sc-chan-meta { font-size: 10px; color: var(--muted); }
+/* Stumm geschaltet: blasser, mit Zeichen; Ungelesen zählt trotzdem */
+.sc-chan.is-muted:not([aria-current="true"]) { color: var(--muted); }
+.sc-chan-mute { display: inline-flex; flex: none; color: var(--muted); }
+.sc-rail-room.is-muted { opacity: .55; }
+.sc-rail-room.is-muted:hover, .sc-rail-room.is-muted[aria-current="true"] { opacity: 1; }
 .sc-chan--voice.is-joined { color: var(--green); }
 .sc-vmember { display: flex; align-items: center; gap: 8px; padding: 4px 8px 4px 30px; font-size: 12.5px; color: var(--text-body); }
 .sc-vmember .sc-ic { color: var(--sc-danger); }

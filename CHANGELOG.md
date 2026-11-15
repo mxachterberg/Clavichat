@@ -4,6 +4,16 @@ Was sich von Version zu Version ändert. Beim Veröffentlichen wird der
 Abschnitt einer Version zum Text des GitHub-Releases
 (`.github/workflows/windows.yml`).
 
+## Unveröffentlicht
+
+- **Stummschalten:** Räume und einzelne Textkanäle lassen sich stumm
+  schalten, Ton und Benachrichtigung getrennt. Für den ganzen Raum im
+  Raum-Menü unter BENACHRICHTIGUNGEN oder per Rechtsklick auf den Raum in
+  der Leiste, für einen Kanal per Rechtsklick auf den Kanal. Ungelesene
+  Nachrichten werden weiter gezählt. Die Einstellung liegt verschlüsselt im
+  eigenen Tresor und gilt auf allen Geräten des Kontos. Geräte mit einer
+  älteren App können sie beim Speichern wieder entfernen.
+
 ## 1.9.5 – 28.10.2026
 
 Kanäle nur für automatische Beiträge. Für installierte Apps ein kleines
